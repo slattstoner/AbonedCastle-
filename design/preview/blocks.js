@@ -114,6 +114,16 @@
     brown_banner: { n: 'Шкура (бурый флаг)', c: '#8b5a34', s: 'thin' },
     red_bed: { n: 'Кровать', c: '#9e2b25', s: 'bed' },
     brown_bed: { n: 'Кровать (бурая)', c: '#724828', s: 'bed' },
+    farmland: { n: 'Пашня', c: '#5b3b20' },
+    potatoes: { n: 'Картофель', c: '#4f8a34', s: 'plant' },
+    carrots: { n: 'Морковь', c: '#5f9a30', s: 'plant' },
+    beetroot: { n: 'Свёкла', c: '#6a7d33', s: 'plant' },
+    pumpkin: { n: 'Тыква', c: '#c9771f' },
+    carved_pumpkin: { n: 'Голова пугала', c: '#b86a1a' },
+    target: { n: 'Мишень', c: '#d8c8b4' },
+    iron_chain: { n: 'Цепь', c: '#5a5f66', s: 'torch' },
+    short_grass: { n: 'Трава', c: '#5f8a3c', s: 'plant' },
+    mossy_cobblestone_slab: { n: 'Замшелая плита', c: '#667559', s: 'slab' },
     cake: { n: 'Пирог на столе', c: '#efe3cf', s: 'small' },
   };
   window.BLOCKS = B;

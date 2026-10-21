@@ -124,7 +124,7 @@
     const items = { o: [], t: [] };
     for (const blk of b.blocks.values()) {
       if (blk.y > state.cut) continue;
-      if (blk.env && !state.env) continue;
+      if ((blk.env || blk.g) && !state.env) continue;
       const def = BLOCKS[blk.id] || { c: '#ff00ff' };
       const list = def.t ? items.t : items.o;
       for (const bx of boxesFor(blk, get)) list.push({ blk, bx, c: def.c });
@@ -134,6 +134,7 @@
       const list = items[key];
       if (!list.length) continue;
       const mesh = new THREE.InstancedMesh(unit, mat, list.length);
+      mesh.frustumCulled = false;
       mesh.userData.blocks = [];
       list.forEach(({ blk, bx, c }, i) => {
         const [x0, y0, z0, x1, y1, z1] = bx;
@@ -259,7 +260,7 @@
 
   function palette(b) {
     const count = {};
-    for (const v of b.blocks.values()) if (!v.env) count[v.id] = (count[v.id] || 0) + 1;
+    for (const v of b.blocks.values()) if (!v.env && !v.g) count[v.id] = (count[v.id] || 0) + 1;
     return Object.entries(count).sort((a, c) => c[1] - a[1]).slice(0, 10);
   }
 

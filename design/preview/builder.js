@@ -19,6 +19,7 @@
     constructor(seed = 1) {
       this.blocks = new Map();
       this.marks = [];
+      this.anchors = {};
       this.r = rng(seed);
     }
     k(x, y, z) { return x + ',' + y + ',' + z; }
@@ -58,37 +59,53 @@
         if (x === ax || x === bx || z === az || z === bz) this.set(x, y, z, id, p);
       });
     }
+    // Сруб: горизонтальные брёвна вдоль стен, обтёсанные столбы по углам.
+    logRing(x1, y1, z1, x2, y2, z2, id = 'spruce_log', corner = 'stripped_spruce_log') {
+      return this.each(x1, y1, z1, x2, y2, z2, (x, y, z, ax, bx, az, bz) => {
+        const ex = x === ax || x === bx, ez = z === az || z === bz;
+        if (!ex && !ez) return;
+        if (ex && ez) this.set(x, y, z, corner);
+        else this.set(x, y, z, id, { a: ez ? 'x' : 'z' });
+      });
+    }
+    // Грядки: пашня в верхнем слое земли и посадки над ней.
+    crops(x1, z1, x2, z2, crop) {
+      this.surface(x1, z1, x2, z2, 'farmland');
+      return this.fill(x1, 0, z1, x2, 0, z2, crop);
+    }
     // Вертикальные бревна по углам прямоугольника.
     corners(x1, y1, z1, x2, y2, z2, id) {
       for (const [x, z] of [[x1, z1], [x2, z1], [x1, z2], [x2, z2]]) this.fill(x, y1, z, x, y2, z, id);
       return this;
     }
-    // Участок земли: верхний слой из смеси тайги, ниже земля. Помечается env.
-    ground(x1, z1, x2, z2, top = TAIGA_TOP, depth = 4) {
+    // Верхний слой земли (y = -1) — нижний слой шаблона. В мире он ляжет
+    // вровень с рельефом, а игра подсыплет землю под ним (beard_thin).
+    ground(x1, z1, x2, z2, top = TAIGA_TOP) {
       for (let x = x1; x <= x2; x++)
-        for (let z = z1; z <= z2; z++) {
-          this.set(x, -1, z, top, { env: 1 });
-          for (let y = -2; y >= -depth; y--) this.set(x, y, z, y < -2 && this.chance(0.3) ? 'stone' : 'dirt', { env: 1 });
-        }
+        for (let z = z1; z <= z2; z++) this.set(x, -1, z, top, { g: 1 });
+      this.area = [x1, z1, x2, z2];
       return this;
     }
-    // Заменить верхний слой грунта (тропы, пятна гари).
+    // Заменить верхний слой (тропы, гарь, отмостка).
     surface(x1, z1, x2, z2, id, p = 1) {
       return this.each(x1, -1, z1, x2, -1, z2, (x, y, z) => {
-        if (this.chance(p)) this.set(x, y, z, id, { env: 1 });
+        if (this.chance(p)) this.set(x, y, z, id, { g: 1 });
       });
     }
-    // Растения на открытой земле.
-    scatter(x1, z1, x2, z2, id, p) {
+    // Растения на открытой земле. keep — посадки, которые входят в шаблон;
+    // без keep это только оформление превью (в мире растительность своя).
+    scatter(x1, z1, x2, z2, id, p, keep = false) {
       return this.each(x1, 0, z1, x2, 0, z2, (x, y, z) => {
         const below = this.get(x, -1, z);
-        if (!this.get(x, 0, z) && below && below.env && below.id !== 'grass_path' && this.chance(p))
-          this.set(x, 0, z, id, { env: 1 });
+        if (!this.get(x, 0, z) && below && below.g && /grass|podzol|moss/.test(below.id) && this.chance(p))
+          this.set(x, 0, z, id, keep ? {} : { env: 1 });
       });
     }
     // Ель: ствол и хвоя ярусами. dead — сухое дерево без хвои.
-    spruce(x, z, h = 10, y = 0, dead = false) {
-      this.fill(x, y, z, x, y + h - 1, z, 'spruce_log', { env: 1 });
+    // keep — дерево входит в шаблон (хвоя ставится неопадающей).
+    spruce(x, z, h = 10, y = 0, dead = false, keep = false) {
+      const p = keep ? {} : { env: 1 };
+      this.fill(x, y, z, x, y + h - 1, z, 'spruce_log', p);
       if (dead) return this;
       for (let i = 2; i <= h; i++) {
         const fromTop = h - i;
@@ -97,10 +114,10 @@
           for (let dz = -rad; dz <= rad; dz++) {
             if (dx === 0 && dz === 0 && i < h) continue;
             if (Math.abs(dx) + Math.abs(dz) > rad + (rad > 1 ? 1 : 0)) continue;
-            if (!this.get(x + dx, y + i, z + dz)) this.set(x + dx, y + i, z + dz, 'spruce_leaves', { env: 1 });
+            if (!this.get(x + dx, y + i, z + dz)) this.set(x + dx, y + i, z + dz, 'spruce_leaves', p);
           }
       }
-      this.set(x, y + h, z, 'spruce_leaves', { env: 1 });
+      this.set(x, y + h, z, 'spruce_leaves', p);
       return this;
     }
     // Двускатная крыша. axis — вдоль какой оси идёт конёк.
@@ -132,18 +149,26 @@
       this.set(x, y, z, id, { f, open });
       return this.set(x, y + 1, z, id, { f, open, top: 1 });
     }
+    // Кровать: (x, z) — изножье, (x + dx, z + dz) — изголовье.
     bed(x, y, z, dx, dz, id = 'red_bed') {
-      this.set(x, y, z, id);
-      return this.set(x + dx, y, z + dz, id);
+      const f = dx > 0 ? 'e' : dx < 0 ? 'w' : dz > 0 ? 's' : 'n';
+      this.set(x, y, z, id, { f });
+      return this.set(x + dx, y, z + dz, id, { f, head: 1 });
     }
     // Ветхость: с вероятностью p заменяет блоки по правилам {id: новый | null}.
     decay(rules, p, area) {
       for (const b of [...this.blocks.values()]) {
         if (b.env || !(b.id in rules)) continue;
         if (area && (b.x < area[0] || b.y < area[1] || b.z < area[2] || b.x > area[3] || b.y > area[4] || b.z > area[5])) continue;
-        if (this.chance(p)) this.set(b.x, b.y, b.z, rules[b.id], rules[b.id] ? { f: b.f, h: b.h } : undefined);
+        if (this.chance(p)) this.set(b.x, b.y, b.z, rules[b.id], rules[b.id] ? { f: b.f, h: b.h, a: b.a, g: b.g } : undefined);
       }
       return this;
+    }
+    // Точка выхода тропы к дальнему тайнику: jigsaw-блок на краю двора.
+    // История выбирает, какой якорь включить; остальные остаются тропинкой.
+    anchor(name, x, z, f) {
+      this.anchors[name] = { x, y: -1, z, f };
+      return this.set(x, -1, z, 'grass_path', { g: 1, anchor: name, f });
     }
     // Метки для просмотрщика и будущей системы историй:
     // slot — место, где может появиться тайник; clue — место для записки/подсказки;
