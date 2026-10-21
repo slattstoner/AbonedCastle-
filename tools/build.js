@@ -19,7 +19,7 @@ const PACK = {
   description: 'Постройки хвойного биома: хижины, лагеря, ориентиры, хутора, острог и скит. С тайниками и историями.',
   header: '6f3d2a8e-4c1b-4f7a-9e2d-5b8c1a7f3e90',
   module: 'a2c94e17-8b3f-4d6a-b1e5-0f7d9c3a2b48',
-  version: [0, 2, 0],
+  version: [0, 2, 1],
   minEngine: [1, 21, 120],
 };
 // Частота: spacing — размер ячейки в чанках (одна попытка на ячейку), separation — минимальный зазор.
@@ -221,15 +221,15 @@ for (const s of STRUCTURES) {
       write(`structures/${NS}/taiga/trail/${s.id}_${story.id}.mcstructure`, trailCells(s.id, story));
       pools[`${s.id}_${story.id}_trail`] = {
         identifier: `${NS}:taiga/${rel}/trail`,
-        elements: [{ element: { element_type: 'minecraft:single_pool_element', location: `${NS}:taiga/trail/${s.id}_${story.id}`, projection: 'minecraft:terrain_matching' }, weight: 1 }],
+        elements: [{ element: { element_type: 'minecraft:single_pool_element', location: `${NS}/taiga/trail/${s.id}_${story.id}`, projection: 'minecraft:terrain_matching' }, weight: 1 }],
       };
     }
-    elements.push({ element: { element_type: 'minecraft:single_pool_element', location: `${NS}:taiga/${s.id}_${story.id}`, processors: `${NS}:taiga_weathering`, projection: 'minecraft:rigid' }, weight: story.weight || 1 });
+    elements.push({ element: { element_type: 'minecraft:single_pool_element', location: `${NS}/taiga/${s.id}_${story.id}`, processors: `${NS}:taiga_weathering`, projection: 'minecraft:rigid' }, weight: story.weight || 1 });
     docEntry.stories.push({ story, size });
   }
   pools[s.id] = { identifier: `${NS}:taiga/${s.id}`, elements };
   write(`worldgen/structures/${s.id}.json`, {
-    format_version: '1.21.20',
+    format_version: '1.21.100',
     'minecraft:jigsaw': {
       description: { identifier: `${NS}:${s.id}` },
       biome_filters: BIOMES,
@@ -247,14 +247,14 @@ for (const s of STRUCTURES) {
 }
 
 for (const [file, p] of Object.entries(pools)) {
-  write(`worldgen/template_pools/${file}.json`, { format_version: '1.21.20', 'minecraft:template_pool': { description: { identifier: p.identifier }, elements: p.elements } });
+  write(`worldgen/template_pools/${file}.json`, { format_version: '1.21.100', 'minecraft:template_pool': { description: { identifier: p.identifier }, elements: p.elements } });
 }
 
 for (const [set, cfg] of Object.entries(SETS)) {
   const members = STRUCTURES.filter((s) => s.set === set && STORIES[s.id]);
   if (!members.length) continue;
   write(`worldgen/structure_sets/${set}.json`, {
-    format_version: '1.21.20',
+    format_version: '1.21.100',
     'minecraft:structure_set': {
       description: { identifier: `${NS}:taiga_${set}` },
       placement: { type: 'minecraft:random_spread', salt: cfg.salt, separation: cfg.separation, spacing: cfg.spacing, spread_type: 'linear' },
@@ -265,7 +265,7 @@ for (const [set, cfg] of Object.entries(SETS)) {
 
 // Выветривание: часть камня зарастает мхом или трескается — каждая копия чуть другая.
 write('worldgen/processors/weathering.json', {
-  format_version: '1.21.20',
+  format_version: '1.21.100',
   'minecraft:processor_list': {
     description: { identifier: `${NS}:taiga_weathering` },
     processors: [{

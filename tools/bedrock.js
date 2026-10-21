@@ -67,7 +67,7 @@ function signText(text) {
 }
 
 function be(id, fields) {
-  return T.compound({ id: T.string(id), x: T.int(0), y: T.int(0), z: T.int(0), ...fields });
+  return T.compound({ id: T.string(id), isMovable: T.byte(1), x: T.int(0), y: T.int(0), z: T.int(0), ...fields });
 }
 
 // blk — блок из Builder; get — доступ к соседям; slot — содержимое слота из истории:
@@ -214,6 +214,8 @@ function jigsaw(f, data) {
       target_pool: T.string(data.pool),
       final_state: T.string(data.final),
       joint: T.string('rollable'),
+      placement_priority: T.int(0),
+      selection_priority: T.int(0),
     }),
   };
 }
