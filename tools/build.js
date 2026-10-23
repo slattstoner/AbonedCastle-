@@ -19,7 +19,7 @@ const PACK = {
   description: 'Постройки хвойного биома: хижины, лагеря, ориентиры, хутора, острог и скит. С тайниками и историями.',
   header: '6f3d2a8e-4c1b-4f7a-9e2d-5b8c1a7f3e90',
   module: 'a2c94e17-8b3f-4d6a-b1e5-0f7d9c3a2b48',
-  version: [0, 2, 3],
+  version: [0, 3, 0],
   minEngine: [1, 21, 120],
 };
 // Частота: spacing — размер ячейки в чанках (одна попытка на ячейку), separation — минимальный зазор.
@@ -224,7 +224,7 @@ for (const s of STRUCTURES) {
         elements: [{ element: { element_type: 'minecraft:single_pool_element', location: `${NS}/taiga/trail/${s.id}_${story.id}`, projection: 'minecraft:terrain_matching' }, weight: 1 }],
       };
     }
-    elements.push({ element: { element_type: 'minecraft:single_pool_element', location: `${NS}/taiga/${s.id}_${story.id}`, processors: `${NS}:taiga_weathering`, projection: 'minecraft:rigid' }, weight: story.weight || 1 });
+    elements.push({ element: { element_type: 'minecraft:single_pool_element', location: `${NS}/taiga/${s.id}_${story.id}`, processors: `${NS}:taiga_weathering` }, weight: story.weight || 1 });
     docEntry.stories.push({ story, size });
   }
   pools[s.id] = { identifier: `${NS}:taiga/${s.id}`, elements };
@@ -239,52 +239,9 @@ for (const s of STRUCTURES) {
       max_depth: 1,
       start_height: { type: 'constant', value: { absolute: 0 } },
       heightmap_projection: 'world_surface',
-      max_distance_from_center: { horizontal: 64, vertical: 64 },
-      liquid_settings: 'ignore_waterlogging',
     },
   });
   docs.push(docEntry);
-}
-
-// ---------- Диагностика ----------
-// Пять тестовых построек, каждая отличается от предыдущей одним фактором:
-// 1 — шаблон Mojang и минимальное описание, как в образце basic_dungeon;
-// 2 — наш маленький шаблон (турий); 3 — наш дом; 4 — наш дом во вложенной папке;
-// 5 — наш дом с полным описанием (фильтр биома, beard_thin, выветривание).
-// Проверка: /place structure acastle:test_1 … test_5.
-const TESTS = [
-  { n: 1, file: 'test_mojang', src: path.join(__dirname, 'data/mojang_sample_chestcarpet.mcstructure'), full: false },
-  { n: 2, file: 'test_cairn', src: path.join(OUT, `structures/${NS}/taiga/mark_cairn_survey.mcstructure`), full: false },
-  { n: 3, file: 'test_hut', src: path.join(OUT, `structures/${NS}/taiga/hut_living_grach.mcstructure`), full: false },
-  { n: 4, location: `${NS}/taiga/hut_living_grach`, full: false },
-  { n: 5, location: `${NS}/test_hut`, full: true },
-  // Раунд 2: тест 3 плюс ровно одна настройка из теста 5.
-  { n: 6, location: `${NS}/test_hut`, element: { processors: `${NS}:taiga_weathering` } },
-  { n: 7, location: `${NS}/test_hut`, element: { projection: 'minecraft:rigid' } },
-  { n: 8, location: `${NS}/test_hut`, jig: { terrain_adaptation: 'beard_thin' } },
-  { n: 9, location: `${NS}/test_hut`, jig: { biome_filters: BIOMES } },
-  { n: 10, location: `${NS}/test_hut`, jig: { max_distance_from_center: { horizontal: 64, vertical: 64 } } },
-  { n: 11, location: `${NS}/test_hut`, jig: { liquid_settings: 'ignore_waterlogging' } },
-];
-for (const t of TESTS) {
-  if (t.src) write(`structures/${NS}/${t.file}.mcstructure`, fs.readFileSync(t.src));
-  const location = t.location || `${NS}/${t.file}`;
-  const element = { element_type: 'minecraft:single_pool_element', location };
-  if (t.full) Object.assign(element, { processors: `${NS}:taiga_weathering`, projection: 'minecraft:rigid' });
-  Object.assign(element, t.element || {});
-  pools[`test_${t.n}`] = { identifier: `${NS}:test_${t.n}`, elements: [{ element, weight: 1 }] };
-  const jig = {
-    description: { identifier: `${NS}:test_${t.n}` },
-    step: 'surface_structures',
-    terrain_adaptation: t.full ? 'beard_thin' : 'none',
-    start_pool: `${NS}:test_${t.n}`,
-    max_depth: 1,
-    start_height: { type: 'constant', value: { absolute: 0 } },
-    heightmap_projection: 'world_surface',
-  };
-  if (t.full) Object.assign(jig, { biome_filters: BIOMES, max_distance_from_center: { horizontal: 64, vertical: 64 }, liquid_settings: 'ignore_waterlogging' });
-  Object.assign(jig, t.jig || {});
-  write(`worldgen/structures/test_${t.n}.json`, { format_version: '1.21.100', 'minecraft:jigsaw': jig });
 }
 
 for (const [file, p] of Object.entries(pools)) {
