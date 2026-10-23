@@ -758,6 +758,24 @@ const NPC = [
     W.cap(K, '#3a3634');
     return K;
   } },
+  // ===== Жители тайги =====
+  { id: 'yaroslav', group: 'taiga', name: 'Сотник Ярослав Беляк', stage: 1, role: 'начальник острога, старший брат капитана Демьяна', draw: (s) => {
+    const K = person({ skin: SKIN.weather, hair: '#5a4a3a', hairStyle: 'short', beard: 'full', beardColor: '#6a5a48', eyes: '#3a4a5a', age: 1, scar: 'brow' }, s);
+    W.trousers(K, '#3a3436'); W.mail(K, { arms: 6 }); W.gloves(K, '#3a2a1e', 10); W.boots(K, '#5a2a1a', 6, { cuff: '#8a5a2a' });
+    W.kaftan(K, '#7a2a24', { trim: '#c8a040', len: 8, open: 1, sleeves: false });
+    W.belt(K, '#2a1a10', { y: 8, buckle: '#c8a040', part: 'jacket' }); W.knife(K, 1, 8);
+    W.helmet(K, '#b8bcc0', { plume: '#7a2a24', rim: '#a08040' });
+    return K;
+  } },
+  { id: 'lykov', group: 'taiga', name: 'Служивый Лыков', stage: 1, role: 'рядовой острога', draw: (s) => {
+    const K = person({ skin: SKIN.ruddy, hair: '#8a5a2a', hairStyle: 'shaggy', beard: 'stubble', eyes: '#4a5a3a', freckles: 1 }, s);
+    W.shirt(K, '#c8b898', { slit: false }); W.trousers(K, '#4a4a3a'); W.boots(K, '#3a2616', 6);
+    W.kaftan(K, '#8a6a42', { len: 7, collar: '#6a4a2a' }); // стёганый тегиляй
+    K.paint('jacket', (x, y, side) => (side !== 'top' && side !== 'bottom' && y % 3 === 2 ? { c: '#8a6a42', t: -0.6 } : undefined));
+    W.belt(K, '#3a2a1a', { y: 8, part: 'jacket', buckle: '#8a8a8a' });
+    W.furHat(K, '#4a3420', '#8a2a24', { tall: 1 });
+    return K;
+  } },
   // ===== Противник =====
   { id: 'nozhov', group: 'other', name: 'Савелий Ножов', stage: 8, role: 'приказчик лесопилки, бывший казначей замка', draw: (s) => {
     const K = person({ skin: SKIN.pale, hair: '#1a1818', hairStyle: 'slick', beard: 'goatee', beardColor: '#1a1818', eyes: '#3a3a2a', age: 1 }, s);
@@ -778,7 +796,7 @@ function render(outDir) {
 
 // ---------- Просмотр: каждый житель спереди, сбоку и сзади ----------
 function lineup(outDir) {
-  const GROUPS = { castle: 'Жители замка', gang: 'Шайка Рыжего', other: 'Противник' };
+  const GROUPS = { castle: 'Жители замка', gang: 'Шайка Рыжего', taiga: 'Жители тайги', other: 'Противник' };
   const cards = NPC.map((n) => `{g:'${n.group}',name:${JSON.stringify(n.name)},role:${JSON.stringify(n.role)},stage:${n.stage},src:'data:image/png;base64,${skinPng(n.id).toString('base64')}'}`);
   const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Жители замка</title>
@@ -823,7 +841,7 @@ for(const[g,title]of Object.entries(GROUPS)){
   fs.writeFileSync(path.join(outDir, 'lineup.html'), html);
 }
 
-module.exports = { NPC, render, skinPng };
+module.exports = { NPC, render, skinPng, png };
 if (require.main === module) {
   const out = path.resolve(__dirname, '../design/skins');
   render(out); lineup(out);

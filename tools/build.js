@@ -24,9 +24,12 @@ const PACK = {
   // Ресурсный пакет: внешность жителей замка
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
-  version: [0, 6, 1],
-  minEngine: [1, 21, 120],
+  scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
+  version: [0, 7, 0],
+  minEngine: [1, 26, 0],
 };
+// Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
+const SCRIPT_API = { server: '2.4.0', ui: '2.0.0' };
 // Частота: spacing — размер ячейки в чанках (одна попытка на ячейку), separation — минимальный зазор.
 const SETS = {
   common: { spacing: 12, separation: 4, salt: 731221 },
@@ -185,6 +188,10 @@ function trailCells(sid, story, poolTrail) {
 }
 
 // ---------- Постройки ----------
+// С 0.7.0 постройки тайги появляются не сами по себе, а по заданиям (места сюжета):
+// скрипт ставит нужную историю командой /place, когда игрок подходит по компасу.
+const NATURAL_TAIGA = false;
+const QUEST_PLACES = {};
 const pools = {};
 const docs = [];
 for (const s of STRUCTURES) {
@@ -232,7 +239,46 @@ for (const s of STRUCTURES) {
       else if (v && v.sign !== undefined) slotData.sign = v.sign;
       cells.push({ x, y, z, block: toBedrock(blk, get, BLOCKS, slotData) });
     }
+    // Метка жителя места: невидимый блок света на свободном полу ближе к середине двора.
+    // Скрипт находит её, когда место встало по заданию, и ставит туда хозяина места.
+    {
+      const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+      const free = (x, y, z) => { const v = get(x, y, z); return !v || v.id === 'air' || /short_grass|fern/.test(v.id); };
+      let best = null, bd = Infinity;
+      for (let x = minX + 1; x < maxX; x++) for (let z = minZ + 1; z < maxZ; z++) {
+        const fl = get(x, -1, z);
+        if (!free(x, 0, z) || !free(x, 1, z) || !fl || /water|air/.test(fl.id)) continue;
+        const d = Math.hypot(x - cx, z - cz);
+        if (d < bd) { bd = d; best = [x, z]; }
+      }
+      if (!best) warn(`${rel}: нет места для жителя`);
+      else {
+        const i = cells.findIndex((c) => c.x === best[0] - minX && c.y === 1 && c.z === best[1] - minZ);
+        const cell = { x: best[0] - minX, y: 1, z: best[1] - minZ, block: { name: 'minecraft:light_block_0', states: {} } };
+        if (i >= 0) cells[i] = cell; else cells.push(cell);
+      }
+    }
     write(`structures/${NS}/taiga/${s.id}_${story.id}.mcstructure`, mcstructure(size, cells));
+    // Место для задания: та же постройка с одной историей, ставится скриптом командой /place,
+    // в обычной генерации мира не участвует
+    pools[`q_${s.id}_${story.id}`] = {
+      identifier: `${NS}:q/${rel}`,
+      elements: [{ element: { element_type: 'minecraft:single_pool_element', location: `${NS}/taiga/${s.id}_${story.id}`, processors: `${NS}:taiga_weathering` }, weight: 1 }],
+    };
+    write(`worldgen/structures/q_${s.id}_${story.id}.json`, {
+      format_version: '1.21.100',
+      'minecraft:jigsaw': {
+        description: { identifier: `${NS}:q_${s.id}_${story.id}` },
+        biome_filters: [{ test: 'has_biome_tag', value: 'overworld' }],
+        step: 'surface_structures',
+        terrain_adaptation: 'beard_thin',
+        start_pool: `${NS}:q/${rel}`,
+        max_depth: 1,
+        start_height: { type: 'constant', value: { absolute: 0 } },
+        heightmap_projection: 'world_surface',
+      },
+    });
+    QUEST_PLACES[`${s.id}_${story.id}`] = { structure: `${NS}:q_${s.id}_${story.id}`, size: [size[0], size[2]] };
     if (story.trail) {
       write(`structures/${NS}/taiga/trail/${s.id}_${story.id}.mcstructure`, trailCells(s.id, story));
       pools[`${s.id}_${story.id}_trail`] = {
@@ -259,6 +305,7 @@ for (const s of STRUCTURES) {
   });
   docs.push(docEntry);
 }
+write('scripts/places_data.js', '// Собрано tools/build.js — не править руками\nexport const PLACES = ' + JSON.stringify(QUEST_PLACES) + ';\n');
 
 // ---------- Замок для проверки командой ----------
 // Пока без генерации в мире: замок режется на куски 64×64 (больше одного куска
@@ -370,7 +417,9 @@ for (const s of STRUCTURES) {
       if (!free(at(0)) || !free(at(1)) || !at(-1) || free(at(-1))) warn(`замок (${what}): пост стражника ${p.guard} (${x},${y},${z}) не свободен или без пола`);
     }
   }
-  lines.push(`event entity ${npc.GUARD_SEL} acastle:despawn`, ...npc.summonLines(0, rel(ORIGIN)), `tag ${npc.GUARD_SEL} add acastle_s0`);
+  lines.push(`event entity ${npc.GUARD_SEL} acastle:despawn`, `event entity @e[type=acastle:npc] acastle:despawn`, ...npc.summonLines(0, rel(ORIGIN)), `tag ${npc.GUARD_SEL} add acastle_s0`);
+  // Скрипты заданий узнают, где встал замок, и начинают сюжет заново
+  lines.push('scriptevent acastle:castle_placed');
   lines.push(`tellraw @s {"rawtext":[{"text":"Замок поставлен в упадке: ${parts} кусков. Ворота у вас за спиной, донжон впереди к северу. В воротах стоят стражники Остап и Митька. Восстановление по этапам: /function castle_stage_1 … castle_stage_9, всё сразу: /function castle_full"}]}`);
   write('functions/castle.mcfunction', lines.join('\n') + '\n');
 
@@ -442,7 +491,7 @@ for (const s of STRUCTURES) {
       return best;
     };
     const units = {};
-    const HINT = { shell: [info.KX + 19, 0, info.KZ + 50], catacombs: [info.KX + 19, 0, info.KZ + 40] };
+    const HINT = { shell: [info.KX + 19, 0, info.KZ + 50], catacombs: [info.KX + 19, 0, info.KZ + 40], walls: [info.CX + 5, 0, info.Z2 - 14] };
     for (const u of RU.units) {
       // заплатки единицы: клетки в восстановленном виде, куски по сетке 64×64
       const groups = new Map();
@@ -475,7 +524,8 @@ for (const s of STRUCTURES) {
         const hint = HINT[u.id] || [u.center[0], 0, u.center[2]];
         const okCell = (x, y, z) => free(x, y, z) && free(x, y + 1, z) && solid(x, y - 1, z) && !RU.owner.has(K(x, y, z)) && !RU.owner.has(K(x, y + 1, z));
         const inside = (x, z) => x >= 6 && x <= info.X2 - 6 && z >= 6 && z <= info.Z2 - 6;
-        const c = nearest(hint, (x, y, z) => inside(x, z) && (u.id === 'catacombs' ? y < -2 : y >= -1 && y <= 1) && okCell(x, y, z) &&
+        // сундук ставим к стене, чтобы не загораживал проход
+        const c = nearest(hint, (x, y, z) => inside(x, z) && (u.id === 'catacombs' ? y < -2 : y >= -1 && y <= 1) && okCell(x, y, z) && N4.some(([dx, dz]) => solid(x + dx, y, z + dz)) &&
           N4.some(([dx, dz]) => W.has(x + dx, y, z + dz) && okCell(x + dx, y, z + dz)), 3);
         if (!c) warn(`замок: нет места для сундука-подряда «${u.title}»`);
         else {
@@ -522,7 +572,9 @@ for (const s of STRUCTURES) {
     for (const [id, c] of Object.entries(homes)) paths['home_' + id] = pathTo(c, id);
     for (const [id, u] of Object.entries(units)) if (u.chest) paths['chest_' + id] = pathTo(u.chest, u.title);
     paths.signal = pathTo(signalAt && [signalAt[0], signalAt[1], signalAt[2] + 1], 'сигнальный костёр');
-    const data = { origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS };
+    const slots = {};
+    for (const v of b.blocks.values()) if (v.slot) slots[v.slot] = [v.x, v.y, v.z];
+    const data = { origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots };
     write('scripts/castle_data.js', '// Собрано tools/build.js — не править руками\nexport const CASTLE = ' + JSON.stringify(data) + ';\n');
     const contracts = Object.entries(units).filter(([, u]) => u.chest).map(([id]) => id);
     console.log(`Ремонт: ${Object.keys(units).length} единиц, подрядов ${contracts.length}, путей ${Object.values(paths).filter(Boolean).length}, дома: ${Object.entries(homes).map(([k, v]) => k + (v ? '' : '?')).join(', ')}`);
@@ -537,7 +589,7 @@ for (const [file, p] of Object.entries(pools)) {
   write(`worldgen/template_pools/${file}.json`, { format_version: '1.21.100', 'minecraft:template_pool': { description: { identifier: p.identifier }, elements: p.elements } });
 }
 
-for (const [set, cfg] of Object.entries(SETS)) {
+for (const [set, cfg] of Object.entries(NATURAL_TAIGA ? SETS : {})) {
   const members = STRUCTURES.filter((s) => s.set === set && STORIES[s.id]);
   if (!members.length) continue;
   write(`worldgen/structure_sets/${set}.json`, {
@@ -569,11 +621,13 @@ write('worldgen/processors/weathering.json', {
 
 // Жители замка: поведение в пакете поведения, внешность в ресурсном
 npc.writePacks(write, writeRP, skinPng, checkTable);
+// Скрипты заданий (tools/scripts) — только стабильные модули игры
+for (const f of fs.readdirSync(path.join(__dirname, 'scripts'))) write(`scripts/${f}`, fs.readFileSync(path.join(__dirname, 'scripts', f), 'utf8'));
 write('manifest.json', {
   format_version: 2,
   header: { name: PACK.name, description: PACK.description, uuid: PACK.header, version: PACK.version, min_engine_version: PACK.minEngine },
-  modules: [{ type: 'data', uuid: PACK.module, version: PACK.version }],
-  dependencies: [{ uuid: PACK.rpHeader, version: PACK.version }],
+  modules: [{ type: 'data', uuid: PACK.module, version: PACK.version }, { type: 'script', language: 'javascript', entry: 'scripts/main.js', uuid: PACK.scriptModule, version: PACK.version }],
+  dependencies: [{ uuid: PACK.rpHeader, version: PACK.version }, { module_name: '@minecraft/server', version: SCRIPT_API.server }, { module_name: '@minecraft/server-ui', version: SCRIPT_API.ui }],
   metadata: { authors: ['Abandoned Castle'] },
 });
 writeRP('manifest.json', {
