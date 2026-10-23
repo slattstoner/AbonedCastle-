@@ -1818,6 +1818,45 @@
   // Выбор из палитры [id, вес] собственным генератором зоны
   const CATA_PICK = (r, pal) => { let t = r() * pal.reduce((a, [, w]) => a + w, 0); for (const [id, w] of pal) if ((t -= w) < 0) return id; return pal[0][0]; };
 
+  // ---------- Единицы ремонта ----------
+  // Как чинится замок по сюжету (docs/castle-story.md):
+  //  shell    — корпус донжона: окна, стены, крыши, зубцы. Одно задание в начале.
+  //  rooms_N  — комнаты донжона этапа N: прибираются наутро после прихода жителя.
+  //  подряды  — стены и здания двора: сундук-подряд после задания, наутро готово.
+  // Каждая изменённая упадком клетка достаётся ровно одной единице.
+  const CONTRACTS = {
+    'Казарма': 'barracks', 'Кузница': 'forge', 'Ристалище': 'tiltyard', 'Дом управителя': 'steward', 'Амбар': 'barn',
+    'Площадь у ворот': 'square', 'Двор': 'yard', 'Часовня, склеп и кладбище': 'chapel', 'Огород': 'garden', 'Катакомбы': 'catacombs',
+    'Угловые башни стены': 'walls',
+  };
+  const STRUCTURAL = /glass|pane|bars|stone|brick|planks|slab|stairs|_wall$|log$|wood$|tuff|cobble|andesite|deepslate|tiles|polished|calcite/;
+  function repairUnits(full, R, KX, KZ) {
+    const units = new Map();
+    const unit = (id, title, kind, stage) => { if (!units.has(id)) units.set(id, { id, title, kind, stage, zones: new Set(), cells: 0, sum: [0, 0, 0] }); return units.get(id); };
+    const inKeep = (x, z) => { const i = x - KX, j = z - KZ; return i >= -6 && i <= 58 && j >= -7 && j <= 48; };
+    const breaches = (R.zones.find((z) => z.title === 'Крепостные стены') || {}).breaches || [];
+    const owner = new Map();
+    for (const [k, zi] of R.owner) {
+      const z = R.zones[zi];
+      const [x, y, zz] = k.split(',').map(Number);
+      let u;
+      if (z.stage === 9) u = unit('heritage', 'Наследие: трон, колокольня, знамёна', 'contract', 9);
+      else if (z.title === 'Крепостные стены') {
+        const bi = breaches.findIndex(([x1, z1, x2, z2]) => x >= x1 - 5 && x <= x2 + 5 && zz >= z1 - 5 && zz <= z2 + 5);
+        u = bi >= 0 ? unit('breach_' + (bi + 1), 'Брешь в стене ' + (bi + 1), 'contract', z.stage) : unit('walls', 'Зубцы стен и угловые башни', 'contract', z.stage);
+      } else if (CONTRACTS[z.title]) u = unit(CONTRACTS[z.title], z.title === 'Угловые башни стены' ? 'Зубцы стен и угловые башни' : z.title, 'contract', z.stage);
+      else if (inKeep(x, zz) && z.kind !== 'yard' && z.kind !== 'crypt') {
+        const f = full.blocks.get(k);
+        const structural = f && STRUCTURAL.test(f.id) && !f.fur && !f.slot && !f.theme;
+        u = structural ? unit('shell', 'Корпус донжона: окна, крыши, стены', 'shell', 0) : unit('rooms_' + z.stage, 'Комнаты этапа ' + z.stage, 'rooms', z.stage);
+      } else u = unit('zone_' + zi, z.title, 'contract', z.stage);
+      u.zones.add(z.title); u.cells++; u.sum[0] += x; u.sum[1] += y; u.sum[2] += zz;
+      owner.set(k, u.id);
+    }
+    const list = [...units.values()].map((u) => ({ ...u, zones: [...u.zones], center: u.sum.map((s) => Math.round(s / u.cells)) }));
+    return { units: list, owner };
+  }
+
   // Вид замка после этапа s: клетки зон с этапом больше s — в упадке
   function stageView(full, R, s) {
     const out = new Builder(1);
@@ -1977,6 +2016,8 @@
       // функции этапов накладывают заплатки
       b.set(CX, -20, Z2 - 33, 'air'); b.set(CX, -19, Z2 - 33, 'air');
       b.ruin = ruins(b, ruinZones(KX, KZ, X2, Z2, CX));
+      b.repair = repairUnits(b, b.ruin, KX, KZ);
+      b.castleInfo = { KX, KZ, X2, Z2, CX, gate: [CX, 0, Z2 - 4], square: [CX, 0, Z2 - 33] };
       return b;
     }
   }

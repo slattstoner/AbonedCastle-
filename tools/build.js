@@ -421,6 +421,112 @@ for (const s of STRUCTURES) {
     stageReport.push(`${st.n} ${st.title} — ${n} блоков, кусков ${k}`);
   }
   write('functions/castle_full.mcfunction', ['# Весь замок сразу восстановленным (для проверки)', ...castle.stagesInfo.filter((st) => st.n).map((st) => `function castle_stage_${st.n}`)].join('\n') + '\n');
+
+  // ---------- Данные замка для скриптов заданий ----------
+  // Единицы ремонта (castle.js: repairUnits): у каждой свои заплатки, у подрядов — место
+  // сундука и таблички. Дома жителей, пути для огоньков-путеводителей. Всё в координатах замка.
+  {
+    const RU = b.repair, info = b.castleInfo;
+    const W = CastlePhysics.walk({ get: (x, y, z) => map.get(x + ',' + y + ',' + z) }, b.walkOpts.box, b.walkOpts.starts);
+    const K = (x, y, z) => x + ',' + y + ',' + z;
+    const free = (x, y, z) => { const v = map.get(K(x, y, z)); return !v || v.id === 'air' || /grass|fern|moss_carpet/.test(v.id) && v.id !== 'grass_block'; };
+    const solid = (x, y, z) => CastlePhysics.isOpaque(map.get(K(x, y, z)) || (y <= -2 ? { id: 'dirt' } : undefined));
+    const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    const nearest = (hint, ok, dyw = 4) => {
+      let best = null, bd = Infinity;
+      for (const c of W.cells) {
+        if (!ok(...c)) continue;
+        const d = Math.hypot(c[0] - hint[0], (c[1] - hint[1]) * dyw, c[2] - hint[2]);
+        if (d < bd) { bd = d; best = c; }
+      }
+      return best;
+    };
+    const units = {};
+    const HINT = { shell: [info.KX + 19, 0, info.KZ + 50], catacombs: [info.KX + 19, 0, info.KZ + 40] };
+    for (const u of RU.units) {
+      // заплатки единицы: клетки в восстановленном виде, куски по сетке 64×64
+      const groups = new Map();
+      for (const [k, id] of RU.owner) {
+        if (id !== u.id) continue;
+        const [x, y, z] = k.split(',').map(Number);
+        const g = Math.floor((x - lo[0]) / PART) + ',' + Math.floor((z - lo[2]) / PART);
+        if (!groups.has(g)) groups.set(g, []);
+        groups.get(g).push([x, y, z, mapFull.get(k)]);
+      }
+      const pieces = [];
+      let k = 0;
+      for (const list of groups.values()) {
+        const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+        for (const c of list) for (let q = 0; q < 3; q++) { mn[q] = Math.min(mn[q], c[q]); mx[q] = Math.max(mx[q], c[q]); }
+        const cells = [];
+        for (const [x, y, z, blk] of list) {
+          if (!blk && y <= -2) continue;
+          const at = { x: x - mn[0], y: y - mn[1], z: z - mn[2] };
+          if (!blk || blk.env || blk.id === 'air') cells.push({ ...at, block: { name: 'minecraft:air', states: {} } });
+          else cells.push({ ...at, block: toBedrock(blk, getFull, BLOCKS, CONTAINERS.has(blk.id) && blk.theme ? { lootTable: themeTable(blk.theme) } : {}) });
+        }
+        const name = `castle_u_${u.id}_${k++}`;
+        write(`structures/${NS}/${name}.mcstructure`, mcstructure([mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells));
+        pieces.push([name, ...mn, ...mx]);
+      }
+      // сундук-подряд и табличка рядом: свободный пол внутри стен, не на клетках ремонта
+      let chest = null, sign = null;
+      if (u.kind !== 'rooms') {
+        const hint = HINT[u.id] || [u.center[0], 0, u.center[2]];
+        const okCell = (x, y, z) => free(x, y, z) && free(x, y + 1, z) && solid(x, y - 1, z) && !RU.owner.has(K(x, y, z)) && !RU.owner.has(K(x, y + 1, z));
+        const inside = (x, z) => x >= 6 && x <= info.X2 - 6 && z >= 6 && z <= info.Z2 - 6;
+        const c = nearest(hint, (x, y, z) => inside(x, z) && (u.id === 'catacombs' ? y < -2 : y >= -1 && y <= 1) && okCell(x, y, z) &&
+          N4.some(([dx, dz]) => W.has(x + dx, y, z + dz) && okCell(x + dx, y, z + dz)), 3);
+        if (!c) warn(`замок: нет места для сундука-подряда «${u.title}»`);
+        else {
+          chest = c;
+          const [dx, dz] = N4.find(([ex, ez]) => W.has(c[0] + ex, c[1], c[2] + ez) && okCell(c[0] + ex, c[1], c[2] + ez));
+          sign = [c[0] + dx, c[1], c[2] + dz];
+        }
+      }
+      units[u.id] = { title: u.title, kind: u.kind, stage: u.stage, pieces, chest, sign };
+    }
+    // Дома жителей: свободный пол ближе всего к метке помещения
+    const homeOf = (title) => {
+      const m = b.marks.find((mk) => mk.type === 'room' && mk.title === title);
+      if (!m) { warn(`замок: нет помещения «${title}» для жителя`); return null; }
+      const c = nearest([m.x, m.y, m.z], (x, y, z) => free(x, y, z) && free(x, y + 1, z) && !/_door$/.test((map.get(K(x, y, z)) || {}).id || ''));
+      if (!c) warn(`замок: нет места для жителя в «${title}»`);
+      return c;
+    };
+    const homes = {};
+    for (const [npcId, room] of Object.entries(npc.HOMES)) homes[npcId] = homeOf(room);
+    // Пути от ворот: поиск в ширину по клеткам, где может стоять игрок
+    const start = [info.CX, 0, info.Z2 - 10];
+    const parent = new Map([[K(...start), null]]);
+    const q = [start];
+    for (let h = 0; h < q.length; h++) {
+      const [x, y, z] = q[h];
+      const nb = [[x, y + 1, z], [x, y - 1, z]];
+      for (const [dx, dz] of N4) for (let dy = 1; dy >= -6; dy--) if (W.has(x + dx, y + dy, z + dz)) { nb.push([x + dx, y + dy, z + dz]); break; }
+      for (const n of nb) { const kk = K(...n); if (W.has(...n) && !parent.has(kk)) { parent.set(kk, [x, y, z]); q.push(n); } }
+    }
+    const pathTo = (goal, what) => {
+      if (!goal) return null;
+      let g = null, bd = Infinity;
+      for (const kk of parent.keys()) { const c = kk.split(',').map(Number); const d = Math.hypot(c[0] - goal[0], (c[1] - goal[1]) * 3, c[2] - goal[2]); if (d < bd) { bd = d; g = c; } }
+      if (bd > 4) warn(`замок: путь к «${what}» не найден (ближе ${bd.toFixed(1)})`);
+      const out = [];
+      for (let c = g; c; c = parent.get(K(...c))) out.push(c);
+      return out.reverse().flat();
+    };
+    const signal = [...b.blocks.values()].find((v) => v.id === 'campfire' && v.y === 31 && v.x === info.KX && v.z === info.KZ);
+    if (!signal) warn('замок: нет сигнального костра');
+    const signalAt = signal ? [signal.x, signal.y, signal.z] : null;
+    const paths = {};
+    for (const [id, c] of Object.entries(homes)) paths['home_' + id] = pathTo(c, id);
+    for (const [id, u] of Object.entries(units)) if (u.chest) paths['chest_' + id] = pathTo(u.chest, u.title);
+    paths.signal = pathTo(signalAt && [signalAt[0], signalAt[1], signalAt[2] + 1], 'сигнальный костёр');
+    const data = { origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS };
+    write('scripts/castle_data.js', '// Собрано tools/build.js — не править руками\nexport const CASTLE = ' + JSON.stringify(data) + ';\n');
+    const contracts = Object.entries(units).filter(([, u]) => u.chest).map(([id]) => id);
+    console.log(`Ремонт: ${Object.keys(units).length} единиц, подрядов ${contracts.length}, путей ${Object.values(paths).filter(Boolean).length}, дома: ${Object.entries(homes).map(([k, v]) => k + (v ? '' : '?')).join(', ')}`);
+  }
   console.log('Этапы восстановления: ' + stageReport.join('; '));
   console.log(`Замок: ${tmpl.length} блоков, ${parts} кусков, размер ${hi[0] - lo[0] + 1}×${hi[2] - lo[2] + 1}, высота ${hi[1] - lo[1] + 1}`);
   const ores = Object.entries(foundCount).filter(([k]) => k.endsWith('_ore')).map(([k, n]) => `${k.replace('_ore', '')} ${n}`).join(', ');
