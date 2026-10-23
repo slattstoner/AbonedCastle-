@@ -19,7 +19,7 @@ const PACK = {
   description: 'Постройки хвойного биома: хижины, лагеря, ориентиры, хутора, острог и скит. С тайниками и историями.',
   header: '6f3d2a8e-4c1b-4f7a-9e2d-5b8c1a7f3e90',
   module: 'a2c94e17-8b3f-4d6a-b1e5-0f7d9c3a2b48',
-  version: [0, 2, 2],
+  version: [0, 2, 3],
   minEngine: [1, 21, 120],
 };
 // Частота: spacing — размер ячейки в чанках (одна попытка на ячейку), separation — минимальный зазор.
@@ -258,12 +258,20 @@ const TESTS = [
   { n: 3, file: 'test_hut', src: path.join(OUT, `structures/${NS}/taiga/hut_living_grach.mcstructure`), full: false },
   { n: 4, location: `${NS}/taiga/hut_living_grach`, full: false },
   { n: 5, location: `${NS}/test_hut`, full: true },
+  // Раунд 2: тест 3 плюс ровно одна настройка из теста 5.
+  { n: 6, location: `${NS}/test_hut`, element: { processors: `${NS}:taiga_weathering` } },
+  { n: 7, location: `${NS}/test_hut`, element: { projection: 'minecraft:rigid' } },
+  { n: 8, location: `${NS}/test_hut`, jig: { terrain_adaptation: 'beard_thin' } },
+  { n: 9, location: `${NS}/test_hut`, jig: { biome_filters: BIOMES } },
+  { n: 10, location: `${NS}/test_hut`, jig: { max_distance_from_center: { horizontal: 64, vertical: 64 } } },
+  { n: 11, location: `${NS}/test_hut`, jig: { liquid_settings: 'ignore_waterlogging' } },
 ];
 for (const t of TESTS) {
   if (t.src) write(`structures/${NS}/${t.file}.mcstructure`, fs.readFileSync(t.src));
   const location = t.location || `${NS}/${t.file}`;
   const element = { element_type: 'minecraft:single_pool_element', location };
   if (t.full) Object.assign(element, { processors: `${NS}:taiga_weathering`, projection: 'minecraft:rigid' });
+  Object.assign(element, t.element || {});
   pools[`test_${t.n}`] = { identifier: `${NS}:test_${t.n}`, elements: [{ element, weight: 1 }] };
   const jig = {
     description: { identifier: `${NS}:test_${t.n}` },
@@ -275,6 +283,7 @@ for (const t of TESTS) {
     heightmap_projection: 'world_surface',
   };
   if (t.full) Object.assign(jig, { biome_filters: BIOMES, max_distance_from_center: { horizontal: 64, vertical: 64 }, liquid_settings: 'ignore_waterlogging' });
+  Object.assign(jig, t.jig || {});
   write(`worldgen/structures/test_${t.n}.json`, { format_version: '1.21.100', 'minecraft:jigsaw': jig });
 }
 
