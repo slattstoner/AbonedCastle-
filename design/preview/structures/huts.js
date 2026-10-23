@@ -32,7 +32,13 @@
       // Крыльцо со ступенями
       b.fill(8, 2, 14, 10, 2, 15, 'spruce_slab', { h: 'top' }).fill(8, 0, 14, 10, 1, 15, STONE);
       b.fill(8, 3, 15, 8, 5, 15, 'spruce_fence').fill(10, 3, 15, 10, 5, 15, 'spruce_fence');
-      b.set(9, 1, 16, 'spruce_stairs', { f: 'n' }).set(9, 0, 16, 'cobblestone').set(9, 0, 17, 'spruce_stairs', { f: 'n' });
+      // Навес над крыльцом: лежит на столбах, края скошены ступенями
+      b.fill(7, 6, 14, 11, 6, 15, 'spruce_slab').fill(7, 6, 16, 11, 6, 16, 'spruce_stairs', { f: 'n' });
+      b.fill(7, 6, 14, 7, 6, 15, 'spruce_stairs', { f: 'e' }).fill(11, 6, 14, 11, 6, 15, 'spruce_stairs', { f: 'w' });
+      b.set(9, 5, 15, 'lantern', { hang: 1 });
+      // Три ступени до пола крыльца, без зазора
+      b.fill(9, 0, 16, 9, 1, 16, 'cobblestone').set(9, 2, 16, 'spruce_stairs', { f: 'n' });
+      b.set(9, 0, 17, 'cobblestone').set(9, 1, 17, 'spruce_stairs', { f: 'n' }).set(9, 0, 18, 'spruce_stairs', { f: 'n' });
       // Печь, труба с дымком
       b.fill(7, 0, 6, 7, 11, 6, STONE).set(7, 12, 6, 'campfire');
       b.set(8, 3, 6, 'furnace', { f: 's' }).set(7, 3, 7, 'smoker', { f: 'e' });
@@ -50,9 +56,10 @@
       b.set(8, 0, 7, 'barrel', { theme: 'pantry' }).set(9, 0, 7, 'barrel', { theme: 'pantry' }).set(11, 0, 7, 'hay_block');
       b.set(7, 0, 12, 'chest', { f: 'e', slot: 'podklet' }).set(9, 0, 10, 'candle');
       // Антресоль
+      // Антресоль. Лаз посередине у задней стены: у боковых стен мешает скат крыши.
       b.fill(8, 6, 6, 11, 6, 8, 'spruce_planks');
-      b.fill(11, 3, 9, 11, 6, 9, 'ladder', { f: 'e' }).set(12, 6, 9, 'spruce_planks');
-      b.bed(9, 7, 7, 0, -1, 'brown_bed').set(10, 7, 6, 'barrel', { slot: 'loft' }).set(11, 7, 8, 'candle');
+      b.fill(9, 3, 6, 9, 6, 6, 'ladder', { f: 'n' });
+      b.bed(8, 7, 8, 0, -1, 'brown_bed').set(10, 7, 6, 'barrel', { slot: 'loft' }).set(10, 8, 6, 'candle', { lit: 1 });
       // Дровник
       b.fill(15, 0, 6, 16, 1, 11, 'spruce_log', { a: 'z' }).fill(14, 2, 5, 17, 2, 12, 'spruce_slab');
       b.fill(17, 0, 5, 17, 1, 5, 'spruce_fence').fill(17, 0, 12, 17, 1, 12, 'spruce_fence').fill(14, 0, 5, 14, 1, 5, 'spruce_fence').fill(14, 0, 12, 14, 1, 12, 'spruce_fence');
