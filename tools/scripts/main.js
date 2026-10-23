@@ -10,7 +10,12 @@
 //  • сундуки-подряды, утренний ремонт, волны у ворот, места тайги — в общем цикле раз в секунду;
 //  • раненый житель (погиб в бою) возвращается на место через пару минут, а не сразу;
 //  • короткие реплики, когда игрок проходит рядом с жителем (story.js: bark);
-//  • /scriptevent acastle:jump <этап> — перейти сразу к началу этапа (для проверки в игре).
+//  • /scriptevent acastle:jump <этап> — перейти сразу к началу этапа (для проверки в игре);
+//  • /scriptevent acastle:status — что знают скрипты: версия, где замок, кто из жителей на месте;
+//  • заговорить с жителем можно кнопкой «Говорить» или просто коснуться его (стражник и житель
+//    урона от игрока не получают); с людьми Рыжего — коснуться, пригнувшись. Книга заданий рядом
+//    с жителями тоже предлагает поговорить;
+//  • если сигнал от /function castle не дошёл, скрипты сами находят замок по «сердцу замка».
 import { world, system, ItemStack } from '@minecraft/server';
 import { ActionFormData } from '@minecraft/server-ui';
 import { CASTLE } from './castle_data.js';
@@ -212,9 +217,15 @@ function ensureNpcs() {
     // Стражник мог встать по функции castle без метки — узнаём его по имени
     const named = DIM().getEntities({ type: typeOf(id), name: NPCS[id].name, location: at, maxDistance: 40 }).find((x) => !npcIdOf(x));
     if (named) { named.addTag(tagOf(id)); continue; }
-    try { spawnNpc(id, at); } catch (err) { /* участок ещё не готов — попробуем позже */ }
+    try { spawnNpc(id, at); delete spawnErr[id]; } catch (err) {
+      // участок может быть ещё не готов — пробуем снова; если не выходит долго, говорим об этом в чат
+      const e = spawnErr[id] = spawnErr[id] || { n: 0 };
+      e.n++; e.msg = String(err);
+      if (e.n === 5) world.sendMessage(`§c[Замок] Не получается поставить жителя «${NPCS[id].name}»: ${e.msg}`);
+    }
   }
 }
+const spawnErr = {};
 
 // ---------- Разговоры ----------
 function npcIdOf(e) { for (const t of e.getTags()) if (t.startsWith('acastle_npc_')) return t.slice(12); return null; }
@@ -253,6 +264,25 @@ world.afterEvents.playerInteractWithEntity.subscribe(({ player, target }) => {
   const id = npcIdOf(target);
   if (id && NPCS[id]) system.run(() => talk(player, id));
 });
+// На iPhone касание существа — это удар. Стражник и мирный житель урона от игрока не получают,
+// поэтому касание открывает разговор. С людьми Рыжего — только если игрок пригнулся.
+const lastHit = {};
+world.afterEvents.entityHitEntity.subscribe(({ damagingEntity, hitEntity }) => {
+  if (!S || !S.origin || !damagingEntity || damagingEntity.typeId !== 'minecraft:player') return;
+  const id = npcIdOf(hitEntity);
+  if (!id || !NPCS[id]) return;
+  if (NPCS[id].bandit && (!damagingEntity.isSneaking || S.st[id] === 'hostile')) return;
+  const now = system.currentTick;
+  if (lastHit[damagingEntity.id] && now - lastHit[damagingEntity.id] < 30) return;
+  lastHit[damagingEntity.id] = now;
+  system.run(() => talk(damagingEntity, id));
+});
+// Жители в нескольких шагах от игрока
+function residentsNear(pl, r = 6) {
+  let list = [];
+  try { list = DIM().getEntities({ location: pl.location, maxDistance: r, families: ['acastle_person'] }); } catch (e) { list = []; }
+  return list.map((e) => npcIdOf(e)).filter((id) => id && NPCS[id] && !(NPCS[id].bandit && S.st[id] === 'hostile'));
+}
 
 // ---------- Книга заданий ----------
 async function questBook(pl) {
@@ -268,27 +298,82 @@ async function questBook(pl) {
   if (r.canceled || r.selection === undefined) return;
   S.guide = r.selection < opts.length ? opts[r.selection] : null; save();
 }
+// Книга рядом с жителями: сначала предлагает поговорить с ними
+async function openBook(pl) {
+  const near = residentsNear(pl);
+  if (!near.length) return questBook(pl);
+  const form = new ActionFormData().title('Книга заданий').body('Рядом с вами:');
+  for (const id of near) form.button('Говорить: ' + NPCS[id].name);
+  form.button('Открыть книгу заданий');
+  const r = await show(pl, form);
+  if (r.canceled || r.selection === undefined) return;
+  if (r.selection < near.length) return talk(pl, near[r.selection]);
+  return questBook(pl);
+}
 world.afterEvents.itemUse.subscribe(({ source, itemStack }) => {
-  if (itemStack.typeId === 'acastle:quest_book' && S && S.origin) system.run(() => questBook(source));
+  if (itemStack.typeId === 'acastle:quest_book' && S && S.origin) system.run(() => openBook(source));
 });
 // Запасной путь: книгу «применили» к блоку (на телефоне долгое нажатие по земле)
 world.afterEvents.playerInteractWithBlock.subscribe(({ player, itemStack }) => {
-  if (itemStack && itemStack.typeId === 'acastle:quest_book' && S && S.origin) system.run(() => questBook(player));
+  if (itemStack && itemStack.typeId === 'acastle:quest_book' && S && S.origin) system.run(() => openBook(player));
 });
 
 // ---------- Замок поставлен ----------
 system.afterEvents.scriptEventReceive.subscribe((ev) => {
   if (ev.id === 'acastle:jump' && S && S.origin) { jump(parseInt(ev.message, 10) || 0, api); flush(); return; }
+  if (ev.id === 'acastle:status') { status(); return; }
   if (ev.id !== 'acastle:castle_placed' || !ev.sourceEntity) return;
   const p = ev.sourceEntity.location;
   // Игрок стоит на площади у ворот — это точка CASTLE.origin в координатах замка
+  startCastle([Math.floor(p.x) - CASTLE.origin[0], Math.floor(p.y) - CASTLE.origin[1], Math.floor(p.z) - CASTLE.origin[2]]);
+});
+function startCastle(origin) {
   S = fresh();
-  S.origin = [Math.floor(p.x) - CASTLE.origin[0], Math.floor(p.y) - CASTLE.origin[1], Math.floor(p.z) - CASTLE.origin[2]];
+  S.origin = origin;
   for (const p2 of CASTLE.posts) if (p2.stage === 0) S.npcs[p2.guard] = 'post';
   save();
   onEvent('castle', api);
   flush();
-  world.sendMessage('§6Замок ждёт. Подойдите к воротам — стража окликнет вас.');
+  for (const pl of players()) if (!api.count(pl, 'acastle:quest_book')) api.give(pl, 'acastle:quest_book');
+  world.sendMessage(`§6Замок ждёт (аддон ${CASTLE.version}). Подойдите к воротам и коснитесь стражника — он заговорит с вами. Книга заданий у вас в сумке.`);
+}
+// Запасной путь: сигнал от /function castle не дошёл (например, замок поставлен старой версией
+// аддона) — ищем «сердце замка», подставку под камерой у площади. От неё известен угол замка.
+let heartTick = 0;
+function findHeart() {
+  if (++heartTick % 10) return;
+  let h;
+  try { h = DIM().getEntities({ type: 'minecraft:armor_stand', name: 'acastle_heart' })[0]; } catch (e) { h = undefined; }
+  if (!h) return;
+  const l = h.location;
+  startCastle([Math.floor(l.x) - CASTLE.heart[0], Math.floor(l.y) - CASTLE.heart[1], Math.floor(l.z) - CASTLE.heart[2]]);
+}
+// /scriptevent acastle:status — для проверки в игре: что знают скрипты
+function status() {
+  if (!S) load();
+  const lines = [`§6[Замок] аддон ${CASTLE.version}, скрипты работают.`];
+  if (!S.origin) lines.push('Замок скриптам неизвестен: поставьте его командой /function castle.');
+  else {
+    lines.push(`Угол замка: ${S.origin.join(' ')}. Звание: ${S.rank}.`);
+    lines.push('Задания: ' + (Object.keys(S.q).filter((q) => S.q[q] === 'active').map((q) => QUESTS[q].title).join(', ') || 'нет'));
+    const here = [], away = [];
+    for (const id of Object.keys(NPCS)) {
+      const at = npcSpot(id); if (!at) continue;
+      const e = findNpc(id);
+      (e ? here : away).push(NPCS[id].name + (e ? '' : loaded(at) ? (spawnErr[id] ? ' (ошибка: ' + spawnErr[id].msg + ')' : ' (сейчас появится)') : ' (далеко)'));
+    }
+    lines.push('На месте: ' + (here.join(', ') || 'никого'));
+    if (away.length) lines.push('Нет на месте: ' + away.join(', '));
+  }
+  world.sendMessage(lines.join('\n'));
+}
+// Приветствие при входе в мир: видно, что работает нужная версия аддона
+world.afterEvents.playerSpawn.subscribe(({ player, initialSpawn }) => {
+  if (!initialSpawn) return;
+  system.runTimeout(() => {
+    if (!S) load();
+    try { player.sendMessage(`§7[Замок] Аддон ${CASTLE.version}: скрипты работают.${S.origin ? '' : ' Замок ещё не поставлен: /function castle'}`); } catch (e) { /* игрок вышел */ }
+  }, 100);
 });
 
 // ---------- Подряды ----------
@@ -468,7 +553,7 @@ function guideTick() {
 let tick = 0;
 system.runInterval(() => {
   if (!S) load();
-  if (!S.origin) return;
+  if (!S.origin) { try { findHeart(); } catch (e) { /* позже */ } return; }
   tick++;
   try { guideTick(); } catch (e) { console.warn('acastle guide: ' + e); }
   if (tick % 2) { flush(); return; }

@@ -17,7 +17,9 @@ const STEP = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
 const BED_COLOR = { white_bed: 0, blue_bed: 11, brown_bed: 12, green_bed: 13, red_bed: 14 };
 // Цвета знамён в Bedrock: 0 чёрный, 1 красный, 3 коричневый, 4 синий, 11 жёлтый, 15 белый.
 const BANNER_BASE = { black_banner: 0, red_banner: 1, green_banner: 2, brown_banner: 3, blue_banner: 4, purple_banner: 5, gray_banner: 8, yellow_banner: 11, white_banner: 15 };
-const TORCH_FACE = { n: 'south', s: 'north', e: 'west', w: 'east' };
+// Настенный факел: состояние называет сторону, где стена (west — стена к западу от факела,
+// пламя наклонено к востоку). До 0.8.1 было наоборот, и факелы падали со стен.
+const TORCH_FACE = { n: 'north', s: 'south', e: 'east', w: 'west' };
 const item = (name) => T.compound({ Name: T.string('minecraft:' + name), Count: T.byte(1), Damage: T.short(0), WasPickedUp: T.byte(0) });
 
 const RENAME = {

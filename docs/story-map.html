@@ -66,7 +66,7 @@ footer { color: var(--muted); font-size: 13px; }
 <main>
   <header class="lead">
     <h1>Студёный детинец: карта сюжета</h1>
-    <p>Что из сюжета замка уже работает в аддоне 0.8.0, что сделано проще задуманного и чего пока нет. Всё, что в коде, прошло проверочный прогон без игры. В игре ещё не проверено ничего, начиная с 0.7.0.</p>
+    <p>Что из сюжета замка уже работает в аддоне 0.8.1, что сделано проще задуманного и чего пока нет. Всё, что в коде, прошло проверочный прогон без игры. Первая проверка в игре нашла три беды: падающие факелы (исправлено в 0.8.1), нет кнопки «Говорить» и нет жителей в донжоне (в 0.8.1 разговор касанием и самопроверка скриптов).</p>
     <div class="legend">
       <span class="chip done">в коде</span>
       <span class="chip part">упрощено</span>
@@ -155,11 +155,12 @@ footer { color: var(--muted); font-size: 13px; }
     </ol>
     <div class="cmds" aria-label="Команды для проверки">
       <div class="cmd"><code>/function castle</code><button type="button" data-copy="/function castle">Копировать</button><span>замок и сюжет с начала</span></div>
+      <div class="cmd"><code>/scriptevent acastle:status</code><button type="button" data-copy="/scriptevent acastle:status">Копировать</button><span>что видят скрипты: замок, задания, жители</span></div>
       <div class="cmd"><code>/scriptevent acastle:jump 5</code><button type="button" data-copy="/scriptevent acastle:jump 5">Копировать</button><span>сразу к этапу 5 (любое число 1–9)</span></div>
     </div>
   </section>
 
-  <footer>Аддон 0.8.0. Подробности: docs/quests.md, раздел 4, и docs/castle-story.md.</footer>
+  <footer>Аддон 0.8.1. Подробности: docs/quests.md, раздел 4, и docs/castle-story.md.</footer>
 </main>
 <script>
 document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', () => {

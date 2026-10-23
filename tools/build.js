@@ -25,7 +25,7 @@ const PACK = {
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 8, 0],
+  version: [0, 8, 1],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -421,7 +421,7 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
   lines.push(`event entity ${npc.GUARD_SEL} acastle:despawn`, `event entity @e[type=acastle:npc] acastle:despawn`, ...npc.summonLines(0, rel(ORIGIN)), `tag ${npc.GUARD_SEL} add acastle_s0`);
   // Скрипты заданий узнают, где встал замок, и начинают сюжет заново
   lines.push('scriptevent acastle:castle_placed');
-  lines.push(`tellraw @s {"rawtext":[{"text":"Замок поставлен в упадке: ${parts} кусков. Ворота у вас за спиной, донжон впереди к северу. В воротах стоят стражники Остап и Митька. Восстановление по этапам: /function castle_stage_1 … castle_stage_9, всё сразу: /function castle_full"}]}`);
+  lines.push(`tellraw @s {"rawtext":[{"text":"Аддон ${PACK.version.join('.')}. Замок поставлен в упадке: ${parts} кусков. Ворота у вас за спиной, донжон впереди к северу. В воротах стоят стражники Остап и Митька. Восстановление по этапам: /function castle_stage_1 … castle_stage_9, всё сразу: /function castle_full"}]}`);
   write('functions/castle.mcfunction', lines.join('\n') + '\n');
 
   // ---------- Этапы восстановления ----------
@@ -595,7 +595,7 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     paths.catacombs = pathTo(lairs.catacombs[0], 'катакомбы');
     paths.throne = pathTo(homes.ryzhy, 'трон');
     for (const k of ['ledger', 'steward_book', 'priest', 'vault', 'master_diary', 'sealed', 'grave']) if (slots[k]) paths['slot_' + k] = pathTo(slots[k], 'тайник ' + k);
-    const data = { origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
+    const data = { version: PACK.version.join('.'), origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
     write('scripts/castle_data.js', '// Собрано tools/build.js — не править руками\nexport const CASTLE = ' + JSON.stringify(data) + ';\n');
     const contracts = Object.entries(units).filter(([, u]) => u.chest).map(([id]) => id);
     console.log(`Ремонт: ${Object.keys(units).length} единиц, подрядов ${contracts.length}, путей ${Object.values(paths).filter(Boolean).length}, дома: ${Object.entries(homes).map(([k, v]) => k + (v ? '' : '?')).join(', ')}`);

@@ -187,7 +187,9 @@ function npcEntity() {
 
 // Шайка Рыжего и Ножов: мирные в лагере, враждебные в набегах и осаде
 const bandit = (o) => ({ test: 'is_family', subject: 'other', value: o });
+// Касание пригнувшегося игрока — это разговор, а не удар: урона нет
 const BANDIT_SENSOR = [
+  { on_damage: { filters: { all_of: [bandit('player'), { test: 'is_sneak_held', subject: 'other', value: true }] } }, deals_damage: 'no' },
   { cause: 'fall', deals_damage: 'no' },
   { cause: 'suffocation', deals_damage: 'no' },
   { on_damage: { filters: bandit(`${NS}_bandit`) }, deals_damage: 'no' },

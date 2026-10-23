@@ -21,7 +21,7 @@ const K = (p) => `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`;
 const blocks = new Map(); // key → { typeId, states, inv, text }
 let time = 1000, day = 0, difficulty = 'Normal';
 const props = {};
-const handlers = { interact: [], itemUse: [], script: [], die: [], block: [], hurt: [], trigger: [] };
+const handlers = { interact: [], itemUse: [], script: [], die: [], block: [], hurt: [], trigger: [], hit: [], spawn: [] };
 const intervals = [];
 let tickNo = 0;
 const entities = [];
@@ -77,7 +77,7 @@ let particles = 0;
 const inv = container(36);
 const msgs = [];
 const player = {
-  typeId: 'minecraft:player', name: 'Игрок', id: 'p1', location: { x: 1000, y: 64, z: 1000 },
+  typeId: 'minecraft:player', name: 'Игрок', id: 'p1', isSneaking: false, location: { x: 1000, y: 64, z: 1000 },
   getViewDirection: () => ({ x: 0, y: 0, z: 1 }),
   getComponent(c) {
     if (c === 'minecraft:inventory') return { container: inv };
@@ -95,7 +95,7 @@ globalThis.SIM = {
       getDynamicProperty: (k) => props[k], setDynamicProperty: (k, v) => { props[k] = v; },
       getDay: () => day, getTimeOfDay: () => time, getDifficulty: () => difficulty, getAbsoluteTime: () => day * 24000 + time,
       getPlayers: () => [player], getDimension: () => dim, sendMessage: (m) => msgs.push(m),
-      afterEvents: { playerInteractWithEntity: ev(handlers.interact), itemUse: ev(handlers.itemUse), entityDie: ev(handlers.die), playerInteractWithBlock: ev(handlers.block), entityHurt: ev(handlers.hurt), dataDrivenEntityTrigger: ev(handlers.trigger) },
+      afterEvents: { playerInteractWithEntity: ev(handlers.interact), itemUse: ev(handlers.itemUse), entityDie: ev(handlers.die), playerInteractWithBlock: ev(handlers.block), entityHurt: ev(handlers.hurt), dataDrivenEntityTrigger: ev(handlers.trigger), entityHitEntity: ev(handlers.hit), playerSpawn: ev(handlers.spawn) },
     },
     system: {
       runInterval: (fn, every = 1) => { intervals.push({ fn, every }); return intervals.length; }, run: (fn) => fn(), runTimeout: (fn) => fn(),
@@ -152,6 +152,13 @@ function fillChest(unit, items) {
 const morning = () => { day++; time = 100; ticks(4); };
 const nightFall = () => { time = 14000; };
 
+// Приветствие при входе в мир
+for (const h of handlers.spawn) h({ player, initialSpawn: true });
+expect(msgs.some((m) => /Аддон \d+\.\d+\.\d+: скрипты работают/.test(m)), 'приветствие с версией при входе');
+// Сигнал от /function castle не дошёл: скрипты находят замок по «сердцу замка»
+makeEntity('minecraft:armor_stand', W(CASTLE.heart)).nameTag = 'acastle_heart';
+ticks(24);
+{ const st = props['acastle:state'] && state(); expect(st && st.origin && st.origin.join() === [O.x - CASTLE.origin[0], O.y - CASTLE.origin[1], O.z - CASTLE.origin[2]].join(), 'замок найден по «сердцу замка»: ' + (st && st.origin)); }
 // 0. Замок поставлен
 player.location = { ...O };
 for (const h of handlers.script) h({ id: 'acastle:castle_placed', sourceEntity: player });
@@ -161,7 +168,11 @@ expect(npc('ostap') && npc('mitka'), 'стражники у ворот');
 expect(npc('vsevolod') && npc('agafya') && npc('frol'), 'король, Агафья, Фрол на местах');
 // 1. Остап
 goTo([63, 0, 122]); ticks(4);
-await talk('ostap', 'Путник', 'доказать', 'Договорились');
+// с Остапом — касанием (на iPhone касание — удар, стражник от него не ранен, а заговорит)
+answers.push('Путник', 'доказать', 'Договорились');
+for (const h of handlers.hit) h({ damagingEntity: player, hitEntity: npc('ostap') });
+await new Promise((r) => setTimeout(r, 5)); ticks(2);
+expect(!answers.length, 'разговор с Остапом касанием'); answers.length = 0;
 expect(q('s0_night') === 'active', 'ночь у ворот началась');
 expect(inv.slots.some((s) => s && s.typeId === 'acastle:quest_book'), 'книга заданий выдана');
 // 2. Ночь у ворот: три волны
@@ -480,6 +491,13 @@ expect(Object.values(state().rep).every((r) => r.st === 'done'), 'все еди�
 const missing = Object.keys(CASTLE.units).filter((u) => !state().rep[u]);
 expect(!missing.length, 'все единицы ремонта задействованы: не хватает ' + missing.join(', '));
 
+// ===== Книга рядом с жителем: «Говорить» =====
+goTo(CASTLE.homes.agafya); ticks(4);
+answers.push('Говорить: Повариха', 'Прощай'); for (const h of handlers.itemUse) h({ source: player, itemStack: new ItemStack('acastle:quest_book') });
+await new Promise((r) => setTimeout(r, 5)); expect(!answers.length, 'книга рядом с Агафьей предлагает поговорить'); answers.length = 0;
+// ===== Команда status =====
+msgs.length = 0; for (const h of handlers.script) h({ id: 'acastle:status', message: '' });
+expect(msgs.some((m) => /аддон \d+\.\d+\.\d+, скрипты работают/.test(m)), 'acastle:status отвечает');
 // ===== Переход к этапу командой =====
 player.location = { ...O };
 for (const h of handlers.script) h({ id: 'acastle:castle_placed', sourceEntity: player });
