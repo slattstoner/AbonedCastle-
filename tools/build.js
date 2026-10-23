@@ -11,15 +11,20 @@ const { execFileSync } = require('child_process');
 const { T, TYPE, encode } = require('./nbt');
 const { toBedrock, jigsaw, paletteEntry } = require('./bedrock');
 const loot = require('./loot');
+const npc = require('./npc');
+const { skinPng } = require('./skins');
 
 const ROOT = path.resolve(__dirname, '..');
 const NS = 'acastle';
 const PACK = {
   name: 'Abandoned Castle: Тайга',
-  description: 'Постройки хвойного биома: хижины, лагеря, ориентиры, хутора, острог и скит. С тайниками и историями. Пробный замок: /function castle',
+  description: 'Постройки хвойного биома: хижины, лагеря, ориентиры, хутора, острог и скит. С тайниками и историями. Пробный замок со стражей: /function castle',
   header: '6f3d2a8e-4c1b-4f7a-9e2d-5b8c1a7f3e90',
   module: 'a2c94e17-8b3f-4d6a-b1e5-0f7d9c3a2b48',
-  version: [0, 5, 0],
+  // Ресурсный пакет: внешность жителей замка
+  rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
+  rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
+  version: [0, 6, 0],
   minEngine: [1, 21, 120],
 };
 // Частота: spacing — размер ячейки в чанках (одна попытка на ячейку), separation — минимальный зазор.
@@ -45,12 +50,14 @@ for (const f of fs.readdirSync(path.join(ROOT, 'design/preview/structures')).sor
 for (const f of fs.readdirSync(path.join(ROOT, 'design/stories')).sort()) load('design/stories/' + f);
 
 const OUT = path.join(ROOT, 'build/AbandonedCastle_BP');
+const OUT_RP = path.join(ROOT, 'build/AbandonedCastle_RP');
 fs.rmSync(path.join(ROOT, 'build'), { recursive: true, force: true });
-const write = (rel, data) => {
-  const p = path.join(OUT, rel);
+const writeTo = (root) => (rel, data) => {
+  const p = path.join(root, rel);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, typeof data === 'string' || Buffer.isBuffer(data) ? data : JSON.stringify(data, null, 2));
 };
+const write = writeTo(OUT), writeRP = writeTo(OUT_RP);
 const warnings = [];
 const warn = (m) => { if (!warnings.includes(m)) warnings.push(m); };
 
@@ -352,7 +359,19 @@ for (const s of STRUCTURES) {
   const HEART = [ORIGIN[0], -20, ORIGIN[2]];
   const HEART_SEL = '@e[type=armor_stand,name=acastle_heart]';
   lines.push(`kill ${HEART_SEL}`, `summon armor_stand acastle_heart ~ ~${HEART[1] - ORIGIN[1]} ~`);
-  lines.push(`tellraw @s {"rawtext":[{"text":"Замок поставлен в упадке: ${parts} кусков. Ворота у вас за спиной, донжон впереди к северу. Восстановление по этапам: /function castle_stage_1 … castle_stage_9, всё сразу: /function castle_full"}]}`);
+  // Стража: прежние стражники уходят, Остап и Митька встают в воротах
+  const rel = (from) => (x, y, z) => `~${x - from[0]} ~${y - from[1]} ~${z - from[2]}`;
+  for (const p of npc.POSTS) {
+    const [x, y, z] = p.at;
+    for (const [m, what] of [[map, 'в упадке'], [mapFull, 'восстановленный']]) {
+      const at = (dy) => m.get(x + ',' + (y + dy) + ',' + z);
+      // трава, папоротник, цветы и ковры не мешают стоять
+      const free = (v) => !v || v.id === 'air' || (/fern|grass|flower|poppy|dandelion|bush|carpet/.test(v.id) && v.id !== 'grass_block');
+      if (!free(at(0)) || !free(at(1)) || !at(-1) || free(at(-1))) warn(`замок (${what}): пост стражника ${p.guard} (${x},${y},${z}) не свободен или без пола`);
+    }
+  }
+  lines.push(`event entity ${npc.GUARD_SEL} acastle:despawn`, ...npc.summonLines(0, rel(ORIGIN)), `tag ${npc.GUARD_SEL} add acastle_s0`);
+  lines.push(`tellraw @s {"rawtext":[{"text":"Замок поставлен в упадке: ${parts} кусков. Ворота у вас за спиной, донжон впереди к северу. В воротах стоят стражники Остап и Митька. Восстановление по этапам: /function castle_stage_1 … castle_stage_9, всё сразу: /function castle_full"}]}`);
   write('functions/castle.mcfunction', lines.join('\n') + '\n');
 
   // ---------- Этапы восстановления ----------
@@ -389,6 +408,13 @@ for (const s of STRUCTURES) {
       write(`structures/${NS}/${name}.mcstructure`, mcstructure([mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells));
       fl.push(`execute as ${HEART_SEL} at @s run structure load ${NS}:${name} ~${mn[0] - HEART[0]} ~${mn[1] - HEART[1]} ~${mn[2] - HEART[2]}`);
       n += cells.length;
+    }
+    const guards = npc.summonLines(st.n, rel(HEART));
+    if (guards.length) {
+      // Повтор функции не плодит стражников: прежние стражники этапа уходят
+      fl.push(`event entity ${npc.GUARD_SEL.slice(0, -1)},tag=acastle_s${st.n}] acastle:despawn`);
+      for (const g of guards) fl.push(`execute as ${HEART_SEL} at @s run ${g}`);
+      fl.push(`tag ${npc.GUARD_SEL.slice(0, -1)},tag=!acastle_s0] add acastle_s${st.n}`);
     }
     fl.push(`execute if entity ${HEART_SEL} run tellraw @s {"rawtext":[{"text":"Этап ${st.n} «${st.title}»: восстановлено — ${st.rooms}. Если где-то не встало, подойдите ближе и повторите."}]}`);
     write(`functions/castle_stage_${st.n}.mcfunction`, fl.join('\n') + '\n');
@@ -435,10 +461,20 @@ write('worldgen/processors/weathering.json', {
   },
 });
 
+// Жители замка: поведение в пакете поведения, внешность в ресурсном
+npc.writePacks(write, writeRP, skinPng, checkTable);
 write('manifest.json', {
   format_version: 2,
   header: { name: PACK.name, description: PACK.description, uuid: PACK.header, version: PACK.version, min_engine_version: PACK.minEngine },
   modules: [{ type: 'data', uuid: PACK.module, version: PACK.version }],
+  dependencies: [{ uuid: PACK.rpHeader, version: PACK.version }],
+  metadata: { authors: ['Abandoned Castle'] },
+});
+writeRP('manifest.json', {
+  format_version: 2,
+  header: { name: PACK.name + ' (внешность)', description: 'Внешность жителей замка', uuid: PACK.rpHeader, version: PACK.version, min_engine_version: PACK.minEngine },
+  modules: [{ type: 'resources', uuid: PACK.rpModule, version: PACK.version }],
+  dependencies: [{ uuid: PACK.header, version: PACK.version }],
   metadata: { authors: ['Abandoned Castle'] },
 });
 
@@ -461,15 +497,16 @@ const addon = path.join(ROOT, 'dist/AbandonedCastle_Taiga.mcaddon');
 fs.rmSync(addon, { force: true });
 execFileSync('python3', ['-c', `
 import os, sys, zipfile
-root, out = sys.argv[1], sys.argv[2]
+out, roots = sys.argv[1], sys.argv[2:]
 with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
-    for d, _, files in os.walk(root):
-        for f in sorted(files):
-            p = os.path.join(d, f)
-            z.write(p, os.path.relpath(p, os.path.dirname(root)))
-`, OUT, addon]);
+    for root in roots:
+        for d, _, files in os.walk(root):
+            for f in sorted(files):
+                p = os.path.join(d, f)
+                z.write(p, os.path.relpath(p, os.path.dirname(root)))
+`, addon, OUT, OUT_RP]);
 
 const count = (dir) => fs.readdirSync(dir, { recursive: true }).filter((f) => !fs.statSync(path.join(dir, f)).isDirectory()).length;
-console.log(`Готово: ${path.relative(ROOT, addon)} (${(fs.statSync(addon).size / 1024).toFixed(0)} КБ, файлов: ${count(OUT)})`);
+console.log(`Готово: ${path.relative(ROOT, addon)} (${(fs.statSync(addon).size / 1024).toFixed(0)} КБ, файлов: ${count(OUT)} + ${count(OUT_RP)} во внешности)`);
 console.log(`Построек: ${docs.length}, историй: ${docs.reduce((n, d) => n + d.stories.length, 0)}`);
 if (warnings.length) { console.log('\nПредупреждения:'); for (const w of warnings) console.log(' - ' + w); }
