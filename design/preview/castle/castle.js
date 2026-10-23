@@ -223,8 +223,12 @@
     // Шкаф: две бочки дверцами наружу
     wardrobe: (x, y, z, look) => { w.set(x, y, z, 'barrel', { f: look }); w.set(x, y + 1, z, 'barrel', { f: look }); },
     shelf: (x, y, z, look) => w.set(x, y, z, 'dark_oak_shelf', { f: look }),
-    // Ковёр с каймой
-    rug: (x1, z1, x2, z2, y, inner, border) => box(x1, y, z1, x2, y, z2, (x, yy, z) => w.set(x, yy, z, border && (x === x1 || x === x2 || z === z1 || z === z2) ? border : inner)),
+    // Ковёр с каймой: только на пустой пол (или поверх другого ковра), мебель не затирает
+    rug: (x1, z1, x2, z2, y, inner, border) => box(x1, y, z1, x2, y, z2, (x, yy, z) => {
+      const v = w.get(x, yy, z);
+      if (v && v.id !== 'air' && !/carpet/.test(v.id)) return;
+      w.set(x, yy, z, border && (x === x1 || x === x2 || z === z1 || z === z2) ? border : inner);
+    }),
     // Гербовое знамя на стене (wall — сторона стены)
     herald: (x, y, z, wall) => w.set(x, y, z, 'red_banner', { f: wall, pat: HERALD }),
     // Оружие или доспех в рамке на стене
@@ -366,7 +370,7 @@
       const inX = door.x === 35 ? 36 : door.x === 41 ? 40 : door.x;
       const inZ = door.z === 35 ? 36 : door.z === 41 ? 40 : door.z;
       w.set(inX, 13, inZ, 'cracked_stone_bricks'); w.set(inX, 14, inZ, 'cracked_stone_bricks');
-      w.set(38, 13, 38, 'chest', { f: 's' }); w.set(37, 13, 37, 'candle', { lit: 1, n: 2 }); w.set(39, 13, 39, 'skeleton_skull');
+      w.set(38, 13, 38, 'chest', { f: 's', slot: 'stair_heart', theme: 'crypt' }); w.set(37, 13, 37, 'candle', { lit: 1, n: 2 }); w.set(39, 13, 39, 'skeleton_skull');
       w.mark('secret', inX, 13, inZ, 'Комната в сердце лестницы', 'Посреди винтовой лестницы, между вторым и третьим этажом, два треснувших камня в столбе. За ними — каморка 3×3 внутри столба.');
     }
     // Служебная винтовая лестница (юго-запад): из подклета к буфетной и наверх
@@ -456,7 +460,7 @@
     // Большой зал
     solid(w, 11, 6, 3, 27, 6, 5, PAVE); for (let i = 11; i <= 27; i++) w.set(i, 6, 6, 'stone_brick_stairs', { f: 'n' });
     solid(w, 15, 6, -5, 23, 6, -1, 'polished_andesite');
-    K.rug(16, -4, 22, -1, 7, 'red_carpet', 'yellow_carpet'); w.fill(17, 7, 0, 21, 7, 5, 'red_carpet'); w.fill(18, 6, 7, 20, 6, 35, 'red_carpet');
+    K.rug(16, -4, 22, -1, 7, 'red_carpet', 'yellow_carpet'); w.fill(17, 7, 0, 21, 7, 5, 'red_carpet'); w.fill(18, 6, 7, 20, 6, 26, 'red_carpet'); w.fill(18, 6, 28, 20, 6, 35, 'red_carpet'); w.set(19, 6, 27, 'red_carpet'); // дорожка не режет перегородку
     K.chair(19, 7, -4, 's'); w.set(19, 7, -5, 'chiseled_stone_bricks'); w.set(19, 8, -5, 'gold_block'); w.set(19, 9, -5, 'chiseled_stone_bricks');
     for (const x of [18, 20]) { w.set(x, 7, -5, 'dark_oak_fence'); K.candle(x, 8, -5, 4, 'white_candle'); }
     w.set(15, 7, -5, 'campfire'); w.set(23, 7, -5, 'campfire');
@@ -477,8 +481,8 @@
     K.herald(14, 12, 3, 'n'); K.herald(24, 12, 3, 'n');
     for (const i of [15, 23]) w.set(i, 9, 28, 'red_banner', { f: 'n', pat: HERALD });
     w.room(19, 6, 14, 'Большой зал', 'Сердце замка, высотой в два этажа. На возвышении высокий стол, за ним трон в нише средней башни между двух жаровен. Вдоль зала столы с лавками, свечи, пироги; по бокам два камина, колонны, гербовые знамёна, три большие люстры. Сверху на зал смотрят галереи.');
-    w.mark('slot', 19, 6, 6, 'Под ступенью трона', 'Ступень возвышения перед троном можно поднять.');
-    w.mark('slot', 11, 6, 13, 'Камень в очаге', 'Расшатанный камень в задней стенке западного камина.');
+    w.mark('slot', 19, 6, 6, 'Под ступенью трона', 'Средняя ступень возвышения перед троном вынимается: за ней сундук в теле возвышения.');
+    w.mark('slot', 11, 6, 13, 'Камень в очаге', 'Треснувший камень в задней стенке западного камина, над огнём. За ним бочка в толще стены.');
     // Сени за перегородкой: скамьи вдоль южной стены, проход посередине свободен
     K.bench(12, 30, 16, 30, 6, 'n'); K.bench(22, 30, 26, 30, 6, 'n');
     K.hang(15, 10, 29); K.hang(23, 10, 29);
@@ -512,14 +516,14 @@
     w.bed(26, 6, 34, 0, 1, 'brown_bed'); w.set(25, 6, 35, 'barrel', { f: 'n' }); w.set(27, 6, 35, 'dark_oak_fence'); K.arms(27, 7, 35, 's', 'iron_spear'); K.hang(26, 10, 33);
     w.room(26, 6, 33, 'Караул у входа', 'Комнатка стражи рядом со входными сенями.');
     // Счётная палата
-    table(30, 6, 9, 32, 9); K.chair(31, 6, 10, 'n'); w.set(33, 6, 9, 'lectern', { f: 's' }); K.candle(30, 7, 9, 2);
+    table(30, 6, 9, 32, 9); K.chair(31, 6, 10, 'n'); w.set(33, 6, 9, 'lectern', { f: 's', slot: 'ledger' }); K.candle(30, 7, 9, 2);
     for (let z = 8; z <= 11; z++) { w.set(35, 6, z, 'chest', { f: 'w' }); w.fill(35, 7, z, 35, 8, z, 'bookshelf'); }
     K.stand(33, 6, 11, 'heavy_weighted_pressure_plate'); w.set(29, 6, 11, 'cartography_table'); w.set(34, 6, 11, 'gold_block');
     K.chandelier(32, 11, 7, 0, 1);
     w.room(32, 6, 9, 'Счётная палата', 'Здесь управитель вёл счета замка: конторка, кафедра с книгой податей, весы, сундуки, золото.');
     // Сени библиотеки
     for (const x of [30, 31, 33, 34]) { K.chair(x, 6, 15, 's'); K.chair(x, 6, 22, 'n'); }
-    w.set(34, 6, 17, 'lectern', { f: 'w' }); K.herald(29, 9, 16, 'w'); K.herald(29, 9, 21, 'w');
+    w.set(34, 6, 17, 'lectern', { f: 'w', slot: 'catalog' }); K.herald(29, 9, 16, 'w'); K.herald(29, 9, 21, 'w');
     K.pot(35, 6, 16, 'allium'); K.pot(35, 6, 21, 'cornflower'); K.chandelier(32, 11, 18, 0, 1);
     w.room(32, 6, 19, 'Сени библиотеки', 'Прохожая перед библиотекой: скамьи, кафедра с каталогом книг. В восточной стене широкий проём в книжную пристройку.');
     K.herald(35, 9, 28, 'e'); K.bench(35, 30, 35, 31, 6, 'w'); K.pot(35, 6, 26, 'fern'); K.chandelier(32, 11, 29, 0, 1);
@@ -527,12 +531,12 @@
     // Архив грамот (СЗ башня)
     for (let z = -4; z <= 2; z++) w.fill(-4, 6, z, -4, 8, z, z % 3 ? 'bookshelf' : 'chiseled_bookshelf');
     for (let x = -3; x <= 2; x++) w.fill(x, 6, -4, x, 8, -4, 'bookshelf');
-    w.set(0, 6, 0, 'lectern', { f: 's' }); table(-2, 6, 2, -1, 2); K.chair(-1, 6, 3, 'n'); K.candle(-2, 7, 2, 2); w.set(-3, 6, 3, 'chest', { f: 'e' });
+    w.set(0, 6, 0, 'lectern', { f: 's', slot: 'archive_book' }); table(-2, 6, 2, -1, 2); K.chair(-1, 6, 3, 'n'); K.candle(-2, 7, 2, 2); w.set(-3, 6, 3, 'chest', { f: 'e', slot: 'archive' });
     K.chandelier(0, 11, 0, 0, 2, false);
     w.room(0, 6, 0, 'Архив грамот', 'Полки со свитками и грамотами рода в северо-западной башне, кафедра, стол писаря.');
     // Казна (СВ башня): решётка с железной дверью, рычаги у двери
     w.fill(34, 6, 0, 42, 7, 0, 'iron_bars'); w.door(38, 6, 0, 's', 'iron_door'); w.set(38, 6, 1, 'lever'); w.set(38, 6, -1, 'lever');
-    for (const x of [35, 37, 39, 41]) w.set(x, 6, -3, 'chest', { f: 's' }); w.set(38, 6, -4, 'gold_block'); w.set(36, 6, -4, 'decorated_pot'); w.set(40, 6, -4, 'decorated_pot');
+    for (const x of [35, 37, 39, 41]) w.set(x, 6, -3, 'chest', { f: 's', theme: 'treasure' }); w.set(38, 6, -4, 'gold_block'); w.set(36, 6, -4, 'decorated_pot'); w.set(40, 6, -4, 'decorated_pot');
     K.chandelier(38, 11, 2, 0, 2, false); K.hang(38, 10, -2);
     w.room(38, 6, 1, 'Казна', 'За решёткой с железной дверью сундуки с серебром. Дверь открывает рычаг на полу.');
 
@@ -543,9 +547,9 @@
     w.set(9, 15, 9, 'white_banner', { f: 'e', pat: [['sc', 1]] });
     K.candlestand(8, 12, 7); K.candlestand(8, 12, 11);
     for (const i of [5, 7]) { K.bench(i, 6, i, 7, 12, 'e'); K.bench(i, 11, i, 12, 12, 'e'); }
-    K.rug(3, 8, 8, 10, 12, 'red_carpet', 'yellow_carpet'); w.set(8, 12, 13, 'lectern', { f: 'e' });
+    K.rug(3, 8, 8, 10, 12, 'red_carpet', 'yellow_carpet'); w.set(8, 12, 13, 'lectern', { f: 'e', slot: 'chapel_book' });
     air(w, 1, 12, 9, 2, 13, 9); air(w, 1, 12, 10, 1, 13, 10); w.set(3, 14, 9, 'white_banner', { f: 'w', pat: [['sc', 1]] });
-    w.set(1, 12, 10, 'chest', { f: 'n' }); K.candle(1, 13, 10, 1);
+    w.set(1, 12, 10, 'chest', { f: 'n', slot: 'priest' }); K.candle(1, 13, 10, 1);
     K.chandelier(6, 17, 9, 1, 1);
     w.room(6, 12, 9, 'Часовня донжона', 'Домашняя часовня хозяина: алтарь со свечами под знаменем с крестом, подсвечники, скамьи, кафедра.');
     w.mark('secret', 2, 12, 9, 'Тайник священника', 'За знаменем с крестом у западной стены — лаз в нишу внутри толстой стены. Там прятали священника и церковное серебро.');
@@ -566,7 +570,7 @@
     w.mark('secret', 8, 12, 18, 'Ухо хозяина', 'За гербовым знаменем в соларе — каморка в стене над Большим залом. Через решётку слышно и видно всё, что говорят в зале.');
     // Гостевые покои
     w.bed(9, 12, 34, 0, 1, 'blue_bed'); w.bed(10, 12, 34, 0, 1, 'blue_bed'); K.canopy(8, 33, 11, 35, 12, 'blue_wool');
-    K.stand(7, 12, 35); K.stand(12, 12, 35); w.set(13, 12, 35, 'chest', { f: 'n' }); K.wardrobe(13, 12, 32, 'w');
+    K.stand(7, 12, 35); K.stand(12, 12, 35); w.set(13, 12, 35, 'chest', { f: 'n', slot: 'guest' }); K.wardrobe(13, 12, 32, 'w');
     w.fill(7, 12, 32, 12, 12, 32, 'blue_carpet'); K.hang(9, 16, 32);
     w.room(10, 12, 33, 'Гостевые покои', 'Кровать под синим балдахином для знатных гостей, шкаф, сундук, столики.');
     // Музыкантская
@@ -579,7 +583,7 @@
     w.room(19, 12, 29, 'Галерея менестрелей', 'Балкон над входом в Большой зал: отсюда играли музыканты на пирах.');
     // Кабинет хозяина
     table(31, 12, 7, 33, 7); K.chair(32, 12, 8, 'n'); K.candle(31, 13, 7, 3); K.candle(33, 13, 7, 2);
-    w.fill(35, 12, 7, 35, 14, 11, 'bookshelf'); K.arms(29, 14, 9, 'w', 'filled_map'); w.set(30, 12, 11, 'chest', { f: 'n' });
+    w.fill(35, 12, 7, 35, 14, 11, 'bookshelf'); K.arms(29, 14, 9, 'w', 'filled_map'); w.set(30, 12, 11, 'chest', { f: 'n', slot: 'study' });
     w.set(29, 12, 4, 'cartography_table'); K.chair(33, 12, 10, 'w'); K.rug(30, 9, 34, 11, 12, 'red_carpet', 'brown_carpet');
     K.chandelier(32, 17, 8, 1, 1);
     w.room(32, 12, 9, 'Кабинет хозяина', 'Письменный стол со свечами, книги, карта владений на стене, стол картографа.');
@@ -589,7 +593,7 @@
     w.room(32, 12, 19, 'Галерея над залом', 'Аркада на Большой зал и проход на верхнюю галерею библиотеки.');
     // Лекарская
     w.bed(34, 12, 26, 0, 1, 'white_bed'); table(29, 12, 26, 30, 26); w.set(29, 13, 26, 'brewing_stand'); w.set(30, 13, 26, 'candle', { lit: 1, n: 2 });
-    w.set(31, 12, 27, 'cauldron', { water: 1 }); K.pot(35, 12, 29, 'fern'); K.pot(35, 12, 30, 'allium'); w.set(33, 12, 30, 'chest', { f: 'n' });
+    w.set(31, 12, 27, 'cauldron', { water: 1 }); K.pot(35, 12, 29, 'fern'); K.pot(35, 12, 30, 'allium'); w.set(33, 12, 30, 'chest', { f: 'n', slot: 'healer' });
     for (const z of [26, 27, 28]) K.shelf(35, 14, z, 'w');
     K.hang(32, 16, 28);
     w.room(32, 12, 28, 'Лекарская', 'Комната лекаря: койка, стол с зельеваркой, котёл, травы в горшках, полки.');
@@ -597,26 +601,26 @@
     w.room(30, 12, 34, 'Площадка второго этажа', 'Выход с парадной лестницы на галерейный этаж.');
     // Сокровищница (СВ башня)
     w.fill(34, 12, 0, 42, 13, 0, 'iron_bars'); w.door(38, 12, 0, 's', 'iron_door'); w.set(38, 12, 1, 'lever'); w.set(38, 12, -1, 'lever');
-    for (const x of [36, 38, 40]) w.set(x, 12, -3, 'decorated_pot'); w.set(38, 12, -4, 'chest', { f: 's' }); w.set(35, 12, -4, 'gold_block'); w.set(41, 12, -4, 'gold_block');
+    for (const x of [36, 38, 40]) w.set(x, 12, -3, 'decorated_pot'); w.set(38, 12, -4, 'chest', { f: 's', slot: 'jewels', theme: 'treasure' }); w.set(35, 12, -4, 'gold_block'); w.set(41, 12, -4, 'gold_block');
     K.chandelier(38, 17, 2, 0, 2, false); K.hang(38, 16, -2);
     w.room(38, 12, 1, 'Сокровищница', 'Дорогая утварь, кубки и драгоценности рода за второй решёткой. Дверь открывает рычаг.');
 
     // ---------- Жилой этаж ----------
     // Покои хозяйки
     w.bed(9, 18, 4, 0, -1, 'green_bed'); w.bed(10, 18, 4, 0, -1, 'green_bed'); K.canopy(8, 3, 11, 5, 18, 'green_wool');
-    w.set(9, 18, 6, 'chest', { f: 's' }); K.wardrobe(13, 18, 4, 'w'); K.wardrobe(13, 18, 5, 'w');
+    w.set(9, 18, 6, 'chest', { f: 's', slot: 'lady' }); K.wardrobe(13, 18, 4, 'w'); K.wardrobe(13, 18, 5, 'w');
     w.set(3, 18, 9, 'loom'); K.stand(12, 18, 8); K.pot(3, 18, 11, 'lily_of_the_valley'); K.pot(3, 18, 12, 'allium');
     K.rug(6, 8, 11, 11, 18, 'green_carpet', 'white_carpet'); K.chair(11, 18, 10, 'w');
     K.chandelier(9, 23, 9, 1, 1);
     w.room(9, 18, 9, 'Покои хозяйки', 'Кровать под зелёным балдахином, шкафы, ткацкий станок, цветы, сундук с приданым.');
     // Опочивальня хозяина
     w.bed(23, 18, 4, 0, -1, 'red_bed'); w.bed(24, 18, 4, 0, -1, 'red_bed'); K.canopy(22, 3, 25, 5, 18, 'red_wool');
-    w.set(23, 18, 6, 'chest', { f: 's' }); K.stand(21, 18, 3); K.stand(26, 18, 3);
+    w.set(23, 18, 6, 'chest', { f: 's', slot: 'master' }); K.stand(21, 18, 3); K.stand(26, 18, 3);
     hearth(15, 18, 9, 'e', 22);
     K.rug(17, 7, 26, 12, 18, 'red_carpet', 'yellow_carpet');
     K.chair(17, 18, 8, 'w'); K.chair(17, 18, 10, 'w'); K.stand(17, 18, 9);
     K.wardrobe(16, 18, 3, 's'); K.wardrobe(17, 18, 3, 's');
-    table(26, 18, 10, 26, 11); K.chair(25, 18, 10, 'e'); K.candle(26, 19, 11, 2); w.set(26, 18, 12, 'lectern', { f: 'w' });
+    table(26, 18, 10, 26, 11); K.chair(25, 18, 10, 'e'); K.candle(26, 19, 11, 2); w.set(26, 18, 12, 'lectern', { f: 'w', slot: 'master_diary' });
     K.herald(15, 20, 5, 'w'); K.herald(27, 20, 6, 'e');
     w.set(27, 20, 3, 'red_banner', { f: 'n', pat: HERALD }); air(w, 27, 18, 2, 27, 19, 2);
     K.chandelier(21, 23, 9, 1, 1);
@@ -627,7 +631,7 @@
     w.room(19, 18, -3, 'Гардеробная', 'Шкафы с одеждой хозяина в нише средней башни, тут же уборная.');
     // Детская
     w.bed(30, 18, 4, 0, -1, 'white_bed'); w.bed(32, 18, 4, 0, -1, 'blue_bed'); w.set(34, 18, 8, 'chest', { f: 'w' });
-    w.set(34, 18, 10, 'noteblock'); w.set(30, 18, 11, 'cake'); K.rug(30, 7, 34, 11, 18, 'yellow_carpet', null); K.hang(32, 22, 9);
+    w.set(34, 18, 10, 'noteblock'); K.rug(30, 7, 34, 11, 18, 'yellow_carpet', null); K.hang(32, 22, 9);
     w.room(32, 18, 9, 'Детская', 'Две маленькие кровати, сундук с игрушками, ковёр.');
     // Горница
     table(9, 18, 18, 29, 19); for (let i = 9; i <= 29; i += 2) { K.chair(i, 18, 17, 's'); K.chair(i, 18, 20, 'n'); }
@@ -650,8 +654,8 @@
     for (const z of [26, 27, 28]) w.set(35, 18, z, 'barrel', { f: 'w' }); K.bench(26, 35, 27, 35, 18, 'n'); K.herald(35, 20, 31, 'e'); K.chandelier(30, 23, 30, 0, 1);
     w.room(30, 18, 30, 'Бельевая', 'Бочки с бельём у выхода с парадной лестницы.');
     // Комната звездочёта (СЗ башня)
-    w.set(0, 18, -1, 'cartography_table'); w.set(-2, 18, 2, 'lectern', { f: 'e' }); w.set(2, 18, -3, 'chest', { f: 's' });
-    w.fill(-3, 18, -3, -3, 19, -3, 'dark_oak_fence'); K.arms(-4, 19, 0, 'w', 'spyglass'); K.arms(-4, 19, -2, 'w', 'clock'); K.arms(-4, 19, 2, 'w', 'compass');
+    w.set(0, 18, -1, 'cartography_table'); w.set(-2, 18, 2, 'lectern', { f: 'e', slot: 'astronomer_book' }); w.set(2, 18, -3, 'chest', { f: 's', slot: 'astronomer' });
+    w.fill(-3, 18, -3, -3, 19, -3, 'dark_oak_fence'); K.arms(-4, 19, -1, 'w', 'spyglass'); K.arms(-4, 19, -2, 'w', 'clock'); K.arms(-4, 19, 2, 'w', 'compass');
     K.candle(0, 19, -1, 2); K.chandelier(0, 23, 0, 0, 2, false);
     w.room(0, 18, 0, 'Комната звездочёта', 'Звёздные карты, подзорная труба, часы и компас в северо-западной башне.');
     // Лаборатория (СВ башня)
@@ -670,7 +674,7 @@
     for (const [i, j] of [[12, 7], [26, 7], [12, 14], [26, 14], [19, 11]]) K.chandelier(i, 29, j, 0, 1, false);
     w.room(19, 24, 11, 'Казарма', 'Спальня гарнизона: два ряда коек с сундуками, общий стол, стойка с оружием.');
     w.bed(4, 24, 31, 0, 1, 'red_bed'); table(9, 24, 26, 11, 26); K.chair(10, 24, 27, 'n'); K.candle(9, 25, 26, 2);
-    K.arms(10, 26, 21, 'n', 'filled_map'); w.set(12, 24, 34, 'chest', { f: 'w' }); K.wardrobe(3, 24, 25, 'e'); K.wardrobe(3, 24, 26, 'e');
+    K.arms(10, 26, 21, 'n', 'filled_map'); w.set(12, 24, 34, 'chest', { f: 'w', slot: 'captain', theme: 'soldier' }); K.wardrobe(3, 24, 25, 'e'); K.wardrobe(3, 24, 26, 'e');
     for (const z of [27, 28]) K.arms(3, 25, z, 'w', z % 2 ? 'shield' : 'iron_sword'); K.herald(3, 26, 23, 'w'); K.chandelier(8, 29, 29, 0, 1);
     w.room(8, 24, 28, 'Комната капитана', 'Кровать, стол с картой обороны, шкаф, оружие капитана.');
     for (const z of [22, 23, 24, 25, 26, 30, 31, 32, 33, 34]) { w.set(15, 24, z, 'dark_oak_fence'); K.arms(15, 25, z, 'w', SWORDS[z % SWORDS.length]); w.set(23, 24, z, 'barrel', { f: 'w' }); }
@@ -684,7 +688,7 @@
     w.fill(-4, 24, -4, -4, 24, 3, 'hay_block'); for (let z = -4; z <= 3; z++) w.set(-4, 25, z, 'spruce_trapdoor', { open: 1, f: 'e' });
     w.set(2, 24, -3, 'composter'); K.chandelier(0, 29, 0, 0, 2);
     w.room(0, 24, 0, 'Голубятня', 'Гнёзда почтовых голубей: так замок слал вести.');
-    w.fill(35, 24, -4, 41, 24, -4, 'barrel'); for (const x of [36, 38, 40]) K.arms(x, 25, -4, 'n', x === 38 ? 'crossbow' : 'bow'); K.chandelier(38, 29, 0, 0, 2, false);
+    w.fill(35, 24, -4, 41, 24, -4, 'barrel'); for (const x of [36, 37, 39, 40]) K.arms(x, 25, -4, 'n', x === 37 || x === 39 ? 'crossbow' : 'bow'); // 38 — бойница K.chandelier(38, 29, 0, 0, 2, false);
     w.room(38, 24, 0, 'Башенная оружейная', 'Запас стрел и арбалетов у бойниц.');
     // Верхние комнаты башен и средней башни
     w.set(0, 30, 0, 'stone_bricks'); w.set(0, 31, 0, 'campfire'); w.set(-2, 30, -3, 'bell'); K.bench(1, -3, 2, -3, 30, 's');
@@ -697,6 +701,158 @@
     w.room(19, 30, -3, 'Колокольня', 'Верхняя комната средней башни с набатным колоколом. Лестница ведёт на смотровую площадку.');
     K.hang(3, 36, 38); w.set(-3, 30, 36, 'barrel', { f: 'e' });
     w.room(19, 30, 19, 'Крыша', 'Плоская кровля за зубцами, над ней четыре угловые башни и средняя колокольня.');
+
+    // ======== Оживление: обшивка, карнизы, подоконники, мелочи на столах ========
+    // Всё ставится только в пустые клетки, поэтому ничего из расставленного выше не затирает.
+    const isAir = (x, y, z) => { const v = w.get(x, y, z); return !v || v.id === 'air'; };
+    const put = (x, y, z, id, p) => { if (isAir(x, y, z)) w.set(x, y, z, id, p); };
+    // Еда, книги, монеты на столе: рамка лицом вверх на столешнице
+    const dish = (x, y, z, item) => put(x, y, z, 'item_frame', { f: 'u', item });
+    const web = (x, y, z) => put(x, y, z, 'cobweb');
+    const WALLISH = /^(stone_bricks|cracked_stone_bricks|mossy_stone_bricks|mossy_cobblestone|cobblestone)$/;
+    // Деревянная обшивка до пояса: доски и обтёсанные столбики через три блока
+    const panel = (L, x1, z1, x2, z2) => box(x1, ST[L], z1, x2, ST[L] + 1, z2, (x, y, z) => {
+      const v = w.get(x, y, z);
+      if (v && WALLISH.test(v.id)) w.set(x, y, z, (x1 === x2 ? z : x) % 3 === 0 ? 'stripped_dark_oak_log' : 'dark_oak_planks');
+    });
+    // Карниз под потолком: перевёрнутые ступени вдоль стен комнаты (рамка стен x1..x2, z1..z2)
+    const cornice = (y, x1, z1, x2, z2, id) => {
+      const cells = [];
+      for (let x = x1 + 1; x < x2; x++) { cells.push([x, z1 + 1, 'n']); cells.push([x, z2 - 1, 's']); }
+      for (let z = z1 + 2; z < z2 - 1; z++) { cells.push([x1 + 1, z, 'w']); cells.push([x2 - 1, z, 'e']); }
+      for (const [x, z, f] of cells) {
+        const [dx, dz] = { n: [0, -1], s: [0, 1], w: [-1, 0], e: [1, 0] }[f];
+        if (isAir(x, y, z) && CastlePhysics.isOpaque(w.get(x + dx, y, z + dz))) w.set(x, y, z, id, { h: 'top', f });
+      }
+    };
+    const SB = 'stone_brick_stairs', DO = 'dark_oak_stairs', SP = 'spruce_stairs';
+    const CORNICE = [
+      [0, [[2, 2, 14, 19, SB], [2, 19, 14, 36, SB], [14, 2, 24, 36, SB], [24, 2, 36, 19, SB], [24, 19, 36, 36, SB]]],
+      [1, [[2, 2, 10, 13, DO], [2, 13, 10, 23, SB], [2, 23, 10, 36, SB], [10, 31, 14, 36, SB], [24, 31, 28, 36, SB], [28, 2, 36, 13, DO],
+        [28, 13, 36, 24, DO], [28, 24, 36, 36, SB], [14, 31, 24, 36, SB]]],
+      [2, [[2, 2, 10, 15, SB], [2, 31, 14, 36, DO], [14, 31, 24, 36, DO], [28, 2, 36, 13, DO], [28, 13, 36, 24, SB], [28, 24, 36, 31, SB], [24, 31, 36, 36, SB]]],
+      [3, [[2, 2, 14, 14, DO], [14, 2, 28, 14, DO], [28, 2, 36, 14, DO], [2, 14, 36, 24, DO], [2, 24, 14, 36, SP], [14, 24, 24, 36, DO], [24, 24, 36, 36, SP]]],
+      [4, [[2, 2, 36, 20, SP], [2, 20, 14, 36, DO], [14, 20, 24, 36, SB], [24, 20, 36, 36, SB]]],
+    ];
+    // Обшивка в господских комнатах (по наружным стенам и между соседними покоями)
+    for (const [L, segs] of [
+      [1, [[2, 3, 2, 12], [3, 2, 9, 2], [36, 3, 36, 12], [29, 2, 35, 2], [36, 14, 36, 23]]],
+      [2, [[2, 16, 2, 30], [36, 3, 36, 12], [29, 2, 35, 2], [6, 36, 13, 36], [15, 36, 23, 36]]],
+      [3, [[2, 3, 2, 13], [3, 2, 13, 2], [14, 3, 14, 13], [15, 2, 27, 2], [28, 3, 28, 13], [29, 2, 35, 2], [36, 3, 36, 13],
+        [2, 15, 2, 23], [36, 15, 36, 23], [3, 14, 35, 14], [3, 24, 35, 24], [15, 36, 23, 36]]],
+      [4, [[2, 21, 2, 32], [3, 20, 13, 20]]],
+    ]) for (const [x1, z1, x2, z2] of segs) panel(L, x1, z1, x2, z2);
+    for (const [L, rooms] of CORNICE) for (const [x1, z1, x2, z2, id] of rooms) cornice(ST[L] + 4, x1, z1, x2, z2, id);
+    cornice(16, 10, 2, 28, 27, SB); // Большой зал — под самым потолком
+
+    // Подоконники: свеча или цветок в глубине каждой оконной ниши жилых этажей
+    {
+      const PLANTS = ['fern', 'allium', 'lily_of_the_valley', 'cornflower'];
+      let k = 0;
+      const sill = (x, y, z) => { if (!isAir(x, y, z)) return; if (k++ % 3 === 2) K.pot(x, y, z, PLANTS[k % 4]); else K.candle(x, y, z, 1 + (k % 3)); };
+      for (const y of [7, 13, 19]) {
+        for (const i of [7, 31]) sill(i, y, 2);
+        if (y === 19) for (const i of [12, 25]) sill(i, y, 2);
+        for (const i of [7, 12, 26, 31]) sill(i, y, 36);
+        for (const j of [8, 13, 21, 29]) sill(2, y, j);
+      }
+    }
+
+    // ---- Подклет ----
+    // Пекарня: стол для теста с хлебом, жернова, пучки трав под потолком
+    table(6, 0, 13, 8, 15, 'spruce_slab'); dish(6, 1, 13, 'bread'); dish(7, 1, 14, 'wheat'); dish(8, 1, 15, 'bread'); K.candle(8, 1, 13, 2);
+    put(11, 0, 17, 'grindstone'); for (const [x, z] of [[5, 6], [10, 16], [6, 11]]) put(x, 4, z, 'hanging_roots');
+    web(3, 4, 3); web(13, 4, 18);
+    // Кухня: мясо и рыба на разделочном столе, поленница у очага, тесак на колоде
+    dish(7, 1, 27, 'beef'); dish(10, 1, 28, 'cod'); dish(8, 1, 29, 'carrot'); dish(7, 1, 25, 'potato'); dish(10, 1, 27, 'bread');
+    put(3, 0, 32, 'stripped_spruce_log', { a: 'x' }); put(4, 0, 32, 'stripped_spruce_log', { a: 'x' }); put(3, 1, 32, 'stripped_spruce_log', { a: 'x' });
+    dish(13, 1, 31, 'iron_axe');
+    // Кладовые: штабеля посреди прохода между столбами, паутина по углам
+    for (const [j, g] of [[11, 'barrel'], [17, 'hay_block'], [23, 'barrel'], [29, 'white_wool']]) { put(19, 0, j, g); if (g !== 'barrel') put(19, 1, j, g); }
+    web(15, 4, 3); web(23, 4, 35); web(15, 4, 35);
+    // Винный погреб: свечи на бочках
+    for (const [x, z] of [[27, 7], [31, 11], [29, 15], [33, 7]]) K.candle(x, 2, z, 1); web(25, 4, 3); web(35, 4, 18);
+    // Караульня: кости-игра на столе
+    dish(31, 1, 26, 'gold_nugget'); dish(32, 1, 25, 'bread'); web(35, 4, 35);
+    web(16, 4, -5); web(22, 4, -5); // ледник
+
+    // ---- Парадный этаж ----
+    // Большой зал: узорный пол, блюда на столах, поставцы со свечами у стен
+    box(11, 5, 7, 27, 5, 26, (x, y, z) => {
+      if (x >= 18 && x <= 20) return;
+      const edge = x === 11 || x === 27 || z === 7 || z === 26 || x === 17 || x === 21;
+      w.set(x, y, z, edge ? 'stone_bricks' : (x + z) % 2 ? 'polished_andesite' : 'andesite');
+    });
+    const FEAST = ['cooked_beef', 'bread', 'apple', 'cooked_chicken', 'pumpkin_pie', 'cooked_porkchop', 'baked_potato', 'sweet_berries'];
+    for (const [x1, x2] of [[15, 16], [22, 23]]) {
+      [11, 15, 19, 23].forEach((j, n) => dish(x1, 7, j, FEAST[(n + x1) % FEAST.length]));
+      [12, 16, 20, 24].forEach((j, n) => dish(x2, 7, j, FEAST[(n + x2 + 3) % FEAST.length]));
+    }
+    [12, 14, 16, 22, 24, 26].forEach((i, n) => dish(i, 8, 4, FEAST[(n + 2) % FEAST.length]));
+    for (const x of [11, 27]) for (const z of [9, 10, 21, 22]) { put(x, 6, z, 'barrel', { f: 'u' }); K.candle(x, 7, z, z % 2 ? 2 : 3); }
+    // Входные сени: сундук для оружия гостей, шлемы на стене, ковёр
+    K.rug(17, 33, 21, 35, 6, 'red_carpet', 'brown_carpet');
+    put(23, 6, 34, 'chest', { f: 'w' }); K.arms(23, 8, 34, 'e', 'iron_helmet'); K.arms(23, 8, 35, 'e', 'leather_helmet');
+    // Лестничный зал: столик для ожидающих, знамёна вассалов, подсвечник
+    K.rug(29, 26, 33, 28, 6, 'blue_carpet', 'white_carpet'); K.stand(31, 6, 27); K.chair(30, 6, 27, 'e'); K.chair(32, 6, 27, 'w');
+    put(29, 9, 26, 'blue_banner', { f: 'w', pat: [['bo', 15]] }); put(29, 9, 31, 'green_banner', { f: 'w', pat: [['bo', 11]] });
+    K.candlestand(30, 6, 35);
+    // Зал совета, буфетная, счётная палата: вещи на столах
+    dish(7, 7, 10, 'filled_map'); dish(5, 7, 10, 'writable_book'); dish(7, 7, 8, 'paper');
+    dish(7, 7, 28, 'glass_bottle'); dish(6, 7, 30, 'sweet_berries'); dish(7, 7, 29, 'bread');
+    dish(31, 7, 9, 'gold_nugget'); dish(32, 7, 9, 'paper');
+
+    // ---- Галерейный этаж ----
+    // Галерея над залом: скамьи у аркады, откуда смотрели на пир
+    for (const j of [15, 16, 21, 22]) K.chair(29, 12, j, 'w');
+    K.candlestand(29, 12, 19);
+    // Площадка: уголок для чтения
+    put(25, 12, 35, 'bookshelf'); put(25, 13, 35, 'bookshelf'); K.chair(26, 12, 34, 'w'); K.candlestand(30, 12, 35); K.pot(25, 12, 32, 'fern');
+    dish(32, 13, 7, 'writable_book'); // кабинет: раскрытая книга на столе
+
+    // ---- Жилой этаж ----
+    // Горница: кресла у камина на медвежьей шкуре, поставец со свечами, знамёна
+    K.rug(4, 17, 7, 21, 18, 'brown_carpet', null);
+    K.chair(6, 18, 18, 'w'); K.chair(6, 18, 20, 'w'); K.stand(6, 18, 19);
+    for (let z = 17; z <= 21; z++) put(35, 18, z, 'barrel', { f: 'w' });
+    K.candle(35, 19, 18, 3); K.candle(35, 19, 20, 3); w.set(35, 19, 19, 'decorated_pot'); K.shelf(35, 20, 19, 'w');
+    put(16, 21, 23, 'green_banner', { f: 's', pat: [['bo', 11]] }); put(22, 21, 23, 'blue_banner', { f: 's', pat: [['bo', 15]] });
+    for (let i = 9; i <= 29; i++) {
+      if (i % 3 === 0) dish(i, 19, 19, FEAST[i % FEAST.length]);
+      else if (i % 4 === 1) dish(i, 19, 18, FEAST[(i + 5) % FEAST.length]);
+    }
+    // Детская: столик с пирогом и печеньем, книжки, синее знамя
+    table(30, 18, 10, 31, 11); w.set(30, 19, 11, 'cake'); dish(31, 19, 10, 'cookie'); K.chair(32, 18, 10, 'w'); K.chair(32, 18, 11, 'w');
+    put(29, 18, 12, 'bookshelf'); put(29, 18, 13, 'bookshelf'); K.pot(29, 19, 13, 'cornflower'); put(30, 20, 3, 'blue_banner', { f: 'n', pat: [['flo', 11]] });
+    // Бельевая: ткацкий станок, корыта, стопки белья на бочках и столе
+    put(25, 18, 25, 'loom'); w.set(25, 18, 27, 'cauldron', { water: 1 }); w.set(25, 18, 28, 'cauldron', { water: 1 });
+    put(35, 19, 26, 'white_wool'); put(35, 19, 28, 'white_wool');
+    table(28, 18, 31, 29, 32, 'spruce_slab'); put(28, 19, 31, 'white_carpet'); put(29, 19, 32, 'white_carpet');
+
+    // ---- Караульный этаж ----
+    for (const [i, it] of [[13, 'bread'], [16, 'cooked_beef'], [20, 'bread'], [23, 'apple'], [26, 'cooked_chicken']]) dish(i, 25, 11, it);
+    dish(17, 25, 10, 'gold_nugget');
+    // Верх башен: паутина, тут давно никто не дежурит
+    for (const [x, z] of [[-4, -4], [4, 4], [42, -4], [34, 4]]) web(x, 35, z);
+
+    // ======== Тайники под сюжеты ========
+    // Сундуки, бочки и кафедры с именем slot: что в них лежит, решает история.
+    // Под ступенью трона: сундук в теле возвышения, лицом к ступени
+    w.set(19, 6, 5, 'chest', { f: 's', slot: 'throne' });
+    // Камень в очаге: треснувший камень в задней стенке западного камина, за ним бочка
+    // в толще стены; со стороны оружейной её закрывают обычные бочки
+    w.set(10, 7, 13, 'cracked_stone_bricks'); w.set(9, 7, 13, 'barrel', { f: 'e', slot: 'hearth' });
+    w.set(9, 6, 14, 'barrel', { f: 'n' }); w.set(9, 7, 14, 'barrel', { f: 'n' });
+    // Ухо хозяина: журнал подслушанного и бочка в каморке
+    w.set(9, 12, 16, 'lectern', { f: 'w', slot: 'ear_book' }); w.set(7, 12, 20, 'barrel', { f: 'e', slot: 'ear' });
+    // Кабинет: за знаменем в углу — ниша в толще наружной стены
+    air(w, 36, 12, 6, 36, 12, 6); w.set(37, 12, 6, 'chest', { f: 'w', slot: 'study_niche' });
+    w.set(35, 13, 6, 'black_banner', { f: 'e', pat: [['bo', 11], ['mc', 11]] });
+    w.mark('slot', 36, 12, 6, 'Ниша за чёрным знаменем', 'В кабинете хозяина, в углу у книжных полок, чёрное знамя закрывает низкую нишу в толще наружной стены. Внутри сундук.');
+    // Голубятня: гнездо-бочка среди сена, куда голуби приносили письма
+    w.set(-4, 24, 0, 'barrel', { f: 'e', slot: 'dovecote' });
+    w.mark('slot', -4, 24, 0, 'Гнездо почтовых голубей', 'В голубятне среди гнёзд из сена одна бочка: сюда складывали письма, которые приносили голуби.');
+    w.mark('slot', 9, 12, 16, 'Журнал в ухе хозяина', 'Кафедра и бочка в каморке за решёткой над Большим залом.');
   }
 
   // ======================= БИБЛИОТЕКА =======================
@@ -750,16 +906,16 @@
       for (let j = jc - 1; j <= jc + 1; j++) { w.set(45, 6, j, 'dark_oak_stairs', { f: 'w' }); w.set(49, 6, j, 'dark_oak_stairs', { f: 'e' }); }
       w.set(47, 7, jc, 'candle', { lit: 1 }); w.set(46, 7, jc - 1, 'candle', { lit: 1 });
     }
-    w.set(47, 6, 19, 'lectern', { f: 's' });
+    w.set(47, 6, 19, 'lectern', { f: 's', slot: 'library_book' });
     for (const j of [13, 19, 25]) K.chandelier(47, 17, j, 3, 2);
     for (const j of [10, 28]) K.candlestand(41, 12, j);
     w.room(46, 6, 19, 'Библиотека', 'Главный зал библиотеки в два этажа: книжные шкафы-стойла между высокими окнами, столы для чтения со свечами, люстры. Лестница ведёт на галерею вдоль трёх стен, где полки до самого потолка.');
     w.room(40, 12, 20, 'Галерея библиотеки', 'Верхний ярус полок. С западной стороны дверь на галерею донжона.');
     // Тайное хранилище за полкой-дверью и чердак над ним
     w.fill(52, 12, 9, 52, 16, 12, 'bookshelf'); w.fill(53, 12, 12, 56, 16, 12, 'bookshelf'); air(w, 53, 12, 9, 56, 16, 11); solid(w, 52, 11, 9, 56, 11, 12, 'dark_oak_planks');
-    w.set(55, 12, 11, 'lectern', { f: 's' }); w.set(54, 12, 9, 'chest', { f: 's' }); w.set(53, 12, 9, 'candle', { lit: 1 }); w.fill(56, 12, 9, 56, 17, 9, 'ladder', { f: 'e' });
+    w.set(55, 12, 11, 'lectern', { f: 's', slot: 'vault_book' }); w.set(54, 12, 9, 'chest', { f: 's', slot: 'vault' }); w.set(53, 12, 9, 'candle', { lit: 1 }); w.fill(56, 12, 9, 56, 17, 9, 'ladder', { f: 'e' });
     w.mark('secret', 52, 12, 10, 'Тайное хранилище', 'Конец северной галереи упирается в шкаф. Два блока полок — дверь на поршнях; рычаг спрятан под кафедрой у окна. За ней комнатка с запретными книгами и лестница на чердак.');
-    w.set(53, 18, 12, 'lectern', { f: 'w' }); w.set(55, 18, 14, 'chest', { f: 'w' }); w.fill(53, 18, 16, 56, 18, 16, 'bookshelf'); w.set(54, 18, 13, 'candle', { lit: 1 });
+    w.set(53, 18, 12, 'lectern', { f: 'w', slot: 'attic_book' }); w.set(55, 18, 14, 'chest', { f: 'w', slot: 'attic' }); w.fill(53, 18, 16, 56, 18, 16, 'bookshelf'); w.set(54, 18, 13, 'candle', { lit: 1 });
     w.bed(50, 18, 12, 0, 1, 'brown_bed');
     w.mark('secret', 54, 18, 13, 'Чердак переписчика', 'Под крышей библиотеки жил и прятался последний переписчик. Попасть сюда можно только из тайного хранилища.');
   }
@@ -776,6 +932,12 @@
     box(16, 12, 39, 22, 12, 47, (x, y, z) => w.set(x, y, z, z % 3 === 0 ? 'dark_oak_log' : 'dark_oak_planks', z % 3 === 0 ? { a: 'x' } : undefined));
     kit(w).chandelier(19, 12, 43, 1, 1); banner2(w, 16, 9, 40, 'w'); banner2(w, 22, 9, 40, 'e');
     lamp(w, 16, 3, 49); lamp(w, 22, 3, 49);
+    // Каморка под лестницей: из кладовых подклета за бочками в нише южной стены
+    air(w, 17, 0, 39, 21, 1, 44); air(w, 19, 0, 37, 19, 1, 38);
+    w.set(19, 0, 36, 'barrel', { f: 'n' }); w.set(19, 1, 36, 'barrel', { f: 'n' });
+    w.set(21, 0, 44, 'chest', { f: 'w', slot: 'under_stairs' }); w.set(17, 0, 44, 'barrel', { f: 'e', theme: 'pantry' }); w.set(17, 0, 43, 'barrel', { f: 'e' });
+    w.set(17, 1, 43, 'candle', { lit: 1, n: 2 }); w.set(20, 0, 39, 'cobweb'); w.set(17, 1, 39, 'cobweb'); w.set(21, 0, 40, 'hay_block');
+    w.mark('secret', 19, 0, 41, 'Каморка под парадной лестницей', 'В южной стене кладовых подклета ниша, заставленная двумя бочками. За ними узкий проход в каморку под лестницей пристройки: сундук, бочки, огарок свечи.');
     w.room(19, 6, 40, 'Парадная лестница ко входу', 'Каменная пристройка с широкой лестницей: в донжон входят сразу на второй, парадный этаж. Так строили настоящие донжоны: внизу двери нет, чтобы врагу было труднее.');
   }
   const banner2 = (w, x, y, z, f) => w.set(x, y, z, 'red_banner', { f });
@@ -785,27 +947,32 @@
   // между соседними залами общие, проходы прорезаются отдельно.
   function catacombs(b, KX, KZ) {
     const w = at(b, KX, KZ);
+    const K = kit(w);
+    // Камень подземелья: серый кирпич, замшелый и треснувший, булыжник. Пол — булыжник с гравием.
+    const CATA = [['stone_bricks', 5], ['mossy_stone_bricks', 3], ['cracked_stone_bricks', 2], ['cobblestone', 1], ['mossy_cobblestone', 1]];
+    const FLOOR = [['cobblestone', 3], ['stone_bricks', 2], ['mossy_cobblestone', 2], ['gravel', 1], ['andesite', 1], ['cracked_stone_bricks', 1]];
     const NATURAL = [['stone', 3], ['mossy_cobblestone', 2], ['tuff', 2], ['cobblestone', 1], ['moss_block', 1]];
     const rooms = [
-      [6, 31, 54, 33, 4], // южный ход
-      [53, 34, 55, 59, 4], // ход к склепу часовни
-      [18, -8, 20, 30, 4], // средний ход
-      [9, 5, 29, 15, 7], // усыпальница
-      [23, 19, 33, 29, 4], // темница
-      [5, 19, 15, 29, 4], // костница
-      [-9, 18, 2, 28, 6, NATURAL], // древнее святилище
-      [-5, -5, 7, 1, 5], // цистерна
-      [8, -1, 17, -1, 4], // ход от цистерны
-      [23, -7, 31, 1, 4], // запечатанная сокровищница
-      [19, -18, 19, -9, 3], // лаз за стену
+      [6, 31, 54, 33, 4], // 0 южный ход
+      [53, 34, 55, 59, 4], // 1 ход к склепу часовни
+      [18, -8, 20, 30, 4], // 2 средний ход
+      [9, 5, 29, 15, 7], // 3 усыпальница
+      [23, 19, 33, 29, 4], // 4 темница
+      [5, 19, 15, 29, 4], // 5 костница
+      [-9, 18, 2, 28, 6, NATURAL], // 6 древнее святилище
+      [-5, -5, 7, 1, 5], // 7 цистерна
+      [8, -1, 17, -1, 4], // 8 ход от цистерны
+      [23, -7, 31, 1, 4], // 9 запечатанная сокровищница
+      [19, -18, 19, -9, 3], // 10 лаз за стену
     ];
-    for (const [x1, z1, x2, z2, h, pal] of rooms) solid(w, x1 - 1, -11, z1 - 1, x2 + 1, -10 + h, z2 + 1, pal || CRYPT);
-    solid(w, 5, -15, -5, 25, -12, -3, CRYPT); // сифон
-    solid(w, 29, -22, 18, 33, -12, 22, CRYPT); // каменный мешок
-    solid(w, 25, -12, 21, 28, -1, 32, CRYPT); // тюремный спуск
-    solid(w, 26, -5, 0, 28, -2, 2, CRYPT); solid(w, 18, -11, -20, 20, -2, -18, CRYPT);
-    for (const [x1, z1, x2, z2, h] of rooms) {
+    for (const [x1, z1, x2, z2, h, pal] of rooms) solid(w, x1 - 1, -11, z1 - 1, x2 + 1, -10 + h, z2 + 1, pal || CATA);
+    solid(w, 5, -15, -5, 25, -12, -3, CATA); // сифон
+    solid(w, 29, -22, 18, 33, -12, 22, CATA); // каменный мешок
+    solid(w, 25, -12, 21, 28, -1, 32, CATA); // тюремный спуск
+    solid(w, 26, -5, 0, 28, -2, 2, CATA); solid(w, 18, -11, -20, 20, -2, -18, CATA);
+    for (const [x1, z1, x2, z2, h, pal] of rooms) {
       air(w, x1, -10, z1, x2, -11 + h, z2);
+      if (!pal) box(x1, -11, z1, x2, -11, z2, (x, y, z) => w.set(x, y, z, FLOOR));
       const top = -11 + h;
       if (h >= 4) {
         if (x2 - x1 <= z2 - z1) for (let z = z1; z <= z2; z++) { w.set(x1, top, z, 'stone_brick_stairs', { h: 'top', f: 'w' }); w.set(x2, top, z, 'stone_brick_stairs', { h: 'top', f: 'e' }); }
@@ -814,61 +981,149 @@
     }
     const cut = (x1, z1, x2, z2, h = 2) => air(w, x1, -10, z1, x2, -11 + h, z2);
     cut(30, 30, 30, 30); cut(21, 24, 22, 24); cut(16, 24, 17, 24); cut(10, 30, 10, 30);
+    const isAir = (x, y, z) => { const v = w.get(x, y, z); return v && v.id === 'air'; };
+    const put = (x, y, z, id, p) => { if (isAir(x, y, z)) w.set(x, y, z, id, p); };
+
+    // Своды ходов: каждые четыре блока поперёк хода арка — замковый камень посередине
+    // свода; под каждой второй аркой фонарь на цепи.
+    const ribs = (list) => list.forEach(([x, z], k) => {
+      if (!isAir(x, -7, z)) return;
+      w.set(x, -7, z, 'stone_brick_slab', { h: 'top' });
+      if (k % 2 === 0) put(x, -8, z, 'lantern', { hang: 1 });
+    });
+    { const r = []; for (let x = 8; x <= 52; x += 4) r.push([x, 32]); ribs(r); }
+    { const r = []; for (let z = 36; z <= 58; z += 4) r.push([54, z]); ribs(r); }
+    { const r = []; for (let z = -6; z <= 30; z += 4) if (z < 4 || z > 16) r.push([19, z]); ribs(r); }
+
+    // Ниши-локулы в стенах ходов: в каждой останки, череп, свеча или паутина
+    const NICHE = [['bone_block', 'skeleton_skull'], ['skeleton_skull', 'candle'], ['cobweb', 'skeleton_skull'], ['bone_block', 'bone_block'], ['decorated_pot', 'candle'], ['skeleton_skull', 'cobweb']];
+    let nk = 0;
+    const niche = (x, z, dx, dz, ax, len = 2, slot) => {
+      // (x, z) — первая клетка в стене, (dx, dz) — вдоль стены, ax — внутрь стены
+      const cells = [];
+      for (let k = 0; k < len; k++) cells.push([x + dx * k, z + dz * k]);
+      for (const [cx, cz] of cells) {
+        const v = w.get(cx, -9, cz), back = w.get(cx + ax[0], -9, cz + ax[1]);
+        if (!v || v.id === 'air' || (back && back.id === 'air')) return false;
+        if (isAir(cx - ax[0], -9, cz - ax[1]) === false) return false; // перед нишей — ход
+      }
+      const kind = NICHE[nk++ % NICHE.length];
+      cells.forEach(([cx, cz], k) => {
+        if (!w.get(cx + ax[0], -9, cz + ax[1])) w.set(cx + ax[0], -9, cz + ax[1], CATA);
+        if (!w.get(cx + ax[0], -10, cz + ax[1])) w.set(cx + ax[0], -10, cz + ax[1], CATA);
+        if (slot && k === 0) { w.set(cx, -9, cz, 'chest', { f: { n: 's', s: 'n', e: 'w', w: 'e' }[ax[2]], slot, theme: 'crypt' }); return; }
+        const id = kind[k];
+        const p = id === 'candle' ? { lit: 1, n: 1 + (nk % 2) } : id === 'bone_block' ? { a: dx ? 'x' : 'z' } : undefined;
+        w.set(cx, -9, cz, id, p);
+      });
+      return true;
+    };
+    // южный ход: северная стена z = 30, южная z = 34
+    for (let x = 8; x <= 50; x += 5) { niche(x, 30, 1, 0, [0, -1, 'n']); niche(x + 2, 34, 1, 0, [0, 1, 's'], 2, x === 38 ? 'loculus' : undefined); }
+    // ход к склепу: стены x = 52 и x = 56
+    for (let z = 37; z <= 57; z += 5) { niche(52, z, 0, 1, [-1, 0, 'w']); niche(56, z + 2, 0, 1, [1, 0, 'e']); }
+    // средний ход вне усыпальницы: стены x = 17 и x = 21
+    for (const z of [-6, -1, 19, 27]) { niche(17, z, 0, 1, [-1, 0, 'w']); niche(21, z + 1, 0, 1, [1, 0, 'e']); }
+    w.mark('slot', 40, -9, 34, 'Локул с сундуком', 'Одна из ниш южной стены южного хода: за черепами вместо останков стоит сундук.');
 
     // Тюремный спуск из караульни подклета
     for (let k = 0; k <= 9; k++) { air(w, 26, -1 - k, 22 + k, 27, -1, 22 + k); w.fill(26, -2 - k, 22 + k, 27, -2 - k, 22 + k, 'stone_brick_stairs', { f: 'n' }); }
     w.mark('room', 26, -6, 27, 'Тюремный спуск', 'Лестница из караульни подклета вниз, к темнице. Сверху огорожена решёткой.');
 
-    // Усыпальница рода
-    for (const i of [12, 16, 22, 26]) for (const j of [7, 13]) solid(w, i, -10, j, i, -4, j, 'deepslate_tiles');
-    for (const i of [10, 14, 24, 28]) for (const j of [8, 11]) { w.fill(i, -10, j, i, -10, j + 1, 'polished_deepslate'); w.fill(i, -9, j, i, -9, j + 1, 'smooth_stone_slab'); w.set(i, -8, j, 'candle', { lit: 1 }); }
-    w.fill(17, -10, 5, 21, -10, 6, 'polished_blackstone'); w.fill(18, -9, 5, 20, -9, 6, 'polished_deepslate'); w.set(19, -8, 5, 'skeleton_skull'); banner2(w, 19, -6, 5, 'n');
-    for (const i of [14, 24]) w.set(i, -4, 10, 'soul_lantern', { hang: 1 });
-    w.mark('room', 19, -10, 10, 'Усыпальница рода', 'Высокий зал с колоннами: каменные гробницы хозяев замка, у северной стены главная гробница основателя.');
-    w.mark('slot', 19, -10, 6, 'Гробница основателя', 'Плиту главной гробницы можно сдвинуть.');
-    // Темница и каменный мешок
-    for (const j of [22, 26]) w.fill(29, -10, j, 33, -8, j, CRYPT);
+    // Усыпальница рода: колоннада с арками, саркофаги, гробница основателя
+    box(9, -11, 5, 29, -11, 15, (x, y, z) => w.set(x, y, z, x === 9 || x === 29 || z === 5 || z === 15 || x === 17 || x === 21 ? 'stone_bricks' : (x + z) % 2 ? 'polished_andesite' : 'andesite'));
+    for (const j of [7, 13]) {
+      for (const i of [12, 16, 22, 26]) { solid(w, i, -10, j, i, -4, j, 'stone_bricks'); w.set(i, -10, j, 'chiseled_stone_bricks'); w.set(i, -5, j, 'chiseled_stone_bricks'); }
+      for (const [a, c] of [[12, 16], [22, 26], [16, 22]]) {
+        w.set(a + 1, -5, j, 'stone_brick_stairs', { h: 'top', f: 'w' }); w.set(c - 1, -5, j, 'stone_brick_stairs', { h: 'top', f: 'e' });
+        for (let i = a + 1; i < c; i++) w.set(i, -4, j, 'stone_bricks');
+      }
+    }
+    for (const i of [10, 14, 24, 28]) for (const j of [8, 11]) {
+      w.fill(i, -10, j, i, -10, j + 1, 'polished_andesite');
+      w.set(i, -9, j, (i + j) % 3 ? 'candle' : 'skeleton_skull', { lit: 1, n: 2 }); w.set(i, -9, j + 1, 'candle', { lit: 1, n: 1 });
+    }
+    w.fill(17, -10, 5, 21, -10, 6, 'polished_andesite'); w.fill(17, -10, 5, 17, -10, 6, 'chiseled_stone_bricks'); w.fill(21, -10, 5, 21, -10, 6, 'chiseled_stone_bricks');
+    w.fill(18, -9, 5, 20, -9, 6, 'stone_bricks'); w.set(19, -8, 5, 'skeleton_skull'); K.candle(18, -8, 5, 3, 'white_candle'); K.candle(20, -8, 5, 3, 'white_candle');
+    w.set(19, -10, 5, 'chest', { f: 's', slot: 'founder', theme: 'crypt' }); // под плитой гробницы
+    banner2(w, 19, -6, 5, 'n'); K.herald(9, -6, 10, 'w'); K.herald(29, -6, 10, 'e');
+    for (const x of [14, 24]) chandL(w, x, -4, 10, 1);
+    chandL(w, 19, -4, 10, 1);
+    w.mark('room', 19, -10, 10, 'Усыпальница рода', 'Высокий зал с колоннадой и арками: каменные саркофаги хозяев замка со свечами и черепами, у северной стены главная гробница основателя под гербовым знаменем.');
+    w.mark('slot', 19, -10, 5, 'Гробница основателя', 'Верхний камень гробницы основателя снимается: под ним в теле гробницы сундук.');
+
+    // Темница: три камеры за решёткой, угол тюремщика, каменный мешок
+    for (const j of [22, 26]) w.fill(29, -10, j, 33, -8, j, CATA);
     w.fill(28, -10, 19, 28, -8, 29, 'iron_bars'); for (const j of [20, 24, 28]) { w.door(28, -10, j, 'e', 'iron_door'); w.set(27, -10, j, 'lever'); }
     for (const j of [19, 23, 27]) { w.fill(33, -9, j, 33, -8, j, 'iron_chain'); w.set(32, -10, j + 2, 'hay_block'); }
-    air(w, 31, -18, 20, 31, -12, 20); air(w, 30, -21, 19, 32, -19, 21); w.set(31, -11, 20, 'spruce_trapdoor');
+    for (const j of [21, 25, 29]) put(29, -8, j, 'cobweb');
+    put(33, -10, 24, 'cauldron'); w.set(29, -10, 27, 'skeleton_skull');
+    air(w, 31, -18, 20, 31, -12, 20); air(w, 30, -21, 19, 32, -19, 21); w.set(31, -11, 20, 'spruce_trapdoor'); w.set(31, -10, 20, 'hay_block');
     w.set(30, -21, 19, 'skeleton_skull'); w.fill(32, -20, 21, 32, -19, 21, 'iron_chain'); w.set(31, -21, 21, 'cobweb');
-    for (const j of [21, 27]) w.set(25, -7, j, 'soul_lantern', { hang: 1 });
-    w.mark('room', 28, -10, 24, 'Темница', 'Три камеры за решётками с железными дверями, цепи, солома.');
-    w.mark('secret', 31, -11, 20, 'Каменный мешок', 'Под соломой в первой камере — люк. Под ним яма-одиночка в восемь блоков глубиной, куда бросали «навсегда». На стенах — нацарапанные записи узника.');
-    // Костница с ложной стеной
-    for (let j = 19; j <= 29; j++) { w.fill(5, -10, j, 5, -8, j, 'bone_block'); if (j % 2) w.set(5, -9, j, 'skeleton_skull'); w.fill(4, -10, j, 4, -8, j, 'bone_block'); }
+    // выбраться можно: лестница по столбу в яме и дальше по стенке лаза
+    solid(w, 31, -21, 19, 31, -19, 19, CATA); w.fill(31, -21, 20, 31, -12, 20, 'ladder', { f: 'n' });
+    w.set(30, -20, 20, 'spruce_sign', { f: 'w', slot: 'prisoner_marks', text: '||||  ||||  ||||\n||||  ||||  ||||\n||||  ||' });
+    w.set(32, -21, 19, 'decorated_pot', { slot: 'prisoner_pot' });
+    // угол тюремщика у лестницы
+    K.stand(24, -10, 20); K.chair(23, -10, 20, 'e'); put(23, -10, 19, 'barrel', { f: 'e', theme: 'soldier' }); K.candle(24, -9, 20, 2);
+    K.arms(23, -8, 22, 'w', 'iron_sword');
+    for (const j of [21, 27]) put(25, -7, j, 'lantern', { hang: 1 });
+    w.mark('room', 28, -10, 24, 'Темница', 'Три камеры за решётками с железными дверями, цепи, солома. У лестницы угол тюремщика: столик, бочка, меч на стене.');
+    w.mark('secret', 31, -11, 20, 'Каменный мешок', 'Под охапкой соломы в первой камере — люк. Под ним яма-одиночка в восемь блоков глубиной, куда бросали «навсегда». На стене узник считал дни зарубками, в углу его горшок. Вниз и обратно — по лестнице.');
+
+    // Костница: стены из костей и черепов, ложная стена
+    for (let j = 19; j <= 29; j++) {
+      w.fill(5, -10, j, 5, -8, j, 'bone_block'); if (j % 2) w.set(5, -9, j, 'skeleton_skull'); w.fill(4, -10, j, 4, -8, j, 'bone_block');
+      if (j !== 24) { w.fill(15, -10, j, 15, -8, j, 'bone_block'); if (j % 2 === 0) w.set(15, -9, j, 'skeleton_skull'); }
+    }
     air(w, 3, -10, 23, 3, -9, 23); air(w, 5, -10, 23, 5, -9, 23);
-    w.fill(9, -10, 22, 11, -10, 26, 'bone_block'); w.set(10, -9, 24, 'skeleton_skull'); w.set(12, -7, 24, 'soul_lantern', { hang: 1 });
-    w.mark('room', 10, -10, 24, 'Костница', 'Стены сложены из костей и черепов давно умерших.');
+    for (let i = 6; i <= 14; i++) for (const j of [19, 29]) w.set(i, -7, j, 'bone_block', { a: 'x' });
+    w.fill(9, -10, 22, 11, -10, 26, 'bone_block'); w.set(10, -9, 24, 'skeleton_skull'); w.set(9, -9, 22, 'candle', { lit: 1, n: 3 }); w.set(11, -9, 26, 'candle', { lit: 1, n: 3 });
+    chandL(w, 12, -7, 24, 1);
+    w.mark('room', 10, -10, 24, 'Костница', 'Стены сложены из костей, в них черепа рядами. Посередине груда костей со свечами.');
     w.mark('secret', 4, -10, 23, 'Ложная стена костницы', 'Один «костяной» блок в западной стене — кладка в один слой. За ним проход в древнее святилище.');
+
     // Древнее святилище (старше замка)
     w.fill(-9, -11, 18, 2, -11, 28, ['moss_block', 'stone', 'mossy_cobblestone']);
     w.fill(-7, -10, 23, -7, -10, 23, 'chiseled_stone_bricks'); w.set(-7, -9, 23, 'skeleton_skull');
     for (const [y, z] of [[-9, 22], [-8, 21], [-9, 24], [-8, 25], [-7, 20], [-7, 26]]) w.set(-7, y, z, 'bone_block');
     for (const z of [21, 25]) w.set(-5, -10, z, 'candle', { lit: 1 });
+    w.set(-6, -10, 23, 'decorated_pot', { slot: 'shrine' });
     for (const [x, z] of [[-3, 19], [0, 27], [-6, 27], [1, 20], [-8, 19]]) w.fill(x, -6, z, x, -6, z, 'hanging_roots');
     w.fill(-2, -10, 22, 0, -10, 24, 'moss_carpet');
-    w.mark('room', -4, -10, 23, 'Древнее святилище', 'Пещера, которая старше замка: алтарь с черепом и рогами из кости, корни свисают с потолка. Кто молился здесь до замка — загадка для истории.');
-    // Цистерна и сифон в сокровищницу
+    w.mark('room', -4, -10, 23, 'Древнее святилище', 'Пещера, которая старше замка: алтарь с черепом и рогами из кости, у его подножия глиняный горшок с подношением, корни свисают с потолка.');
+
+    // Цистерна: столбы в воде, сифон в сокровищницу
     w.fill(-4, -10, -4, 6, -10, 0, 'water'); air(w, 0, -5, 0, 0, -2, 0); w.fill(0, -5, 0, 0, -2, 0, 'water');
-    ring(w, -1, -4, -1, 1, -2, 1, CRYPT); w.fill(0, -4, 0, 0, -2, 0, 'water');
+    ring(w, -1, -4, -1, 1, -2, 1, CATA); w.fill(0, -4, 0, 0, -2, 0, 'water');
+    w.set(1, -3, 0, 'chest', { f: 'w', slot: 'well' }); w.set(2, -3, 0, CATA[0][0]); w.set(1, -3, 1, CATA[0][0]);
+    w.mark('slot', 1, -3, 0, 'Сундук в колодце', 'Если нырнуть в колодец донжона, на полпути к цистерне в стенке шахты стоит сундук.');
+    for (const x of [-2, 3]) { solid(w, x, -10, -2, x, -7, -2, 'stone_bricks'); w.set(x, -6, -2, 'chiseled_stone_bricks'); }
     w.fill(6, -13, -4, 6, -11, -4, 'water'); w.fill(6, -14, -4, 24, -13, -4, 'water'); w.fill(24, -13, -4, 24, -11, -4, 'water');
-    w.mark('room', 2, -10, -2, 'Цистерна', 'Подземный водоём, сюда спускается шахта колодца.');
+    chandL(w, 1, -6, -4, 1); chandL(w, 5, -6, 0, 1);
+    w.mark('room', 2, -10, -2, 'Цистерна', 'Подземный водоём со столбами, сюда спускается шахта колодца.');
     w.mark('secret', 6, -11, -4, 'Подводный лаз', 'В дальнем углу цистерны дно уходит вниз. Лаз под водой ныряет под средний ход и выходит в запечатанную сокровищницу. Плыть около 20 блоков.');
+
     // Запечатанная сокровищница
-    for (const x of [24, 26, 28, 30]) w.set(x, -10, -6, 'chest', { f: 's' });
+    box(23, -11, -7, 31, -11, 1, (x, y, z) => w.set(x, y, z, (x + z) % 2 ? 'polished_andesite' : 'stone_bricks'));
+    for (const x of [24, 26, 28, 30]) w.set(x, -10, -6, 'chest', { f: 's', theme: 'treasure', ...(x === 28 ? { slot: 'sealed' } : {}) });
     w.set(27, -10, -3, 'gold_block'); w.set(29, -10, -3, 'gold_block'); w.set(25, -10, 0, 'decorated_pot'); w.set(30, -10, 0, 'decorated_pot');
+    K.herald(23, -8, -3, 'w'); K.herald(31, -8, -3, 'e'); K.candle(27, -9, -3, 3); K.candle(29, -9, -3, 3);
     air(w, 27, -6, 1, 27, 19, 1); w.fill(27, -6, 1, 27, 19, 1, 'ladder', { f: 'n' });
     w.mark('room', 27, -10, -3, 'Запечатанная сокровищница', 'Глухой зал без дверей. Попасть сюда можно двумя путями: по потайной шахте из опочивальни хозяина или вплавь через сифон из цистерны.');
+    w.mark('slot', 28, -10, -6, 'Сундук рода', 'Средний сундук у северной стены запечатанной сокровищницы.');
+
     // Лаз за стену
     air(w, 19, -10, -19, 19, -2, -19); w.fill(19, -10, -19, 19, -2, -19, 'ladder', { f: 'n' }); w.set(19, -1, -19, 'spruce_trapdoor');
     w.mark('secret', 19, -10, -14, 'Потайной лаз', 'Узкий ход из подземелья под крепостной стеной. Выходит люком в лесу за северной стеной.');
-    // Освещение и паутина
-    for (let i = 10; i <= 50; i += 8) w.set(i, -7, 32, 'soul_lantern', { hang: 1 });
-    for (const j of [-6, 2, 18, 26]) w.set(19, -7, j, 'soul_lantern', { hang: 1 });
-    for (let j = 38; j <= 56; j += 9) w.set(54, -7, j, 'soul_lantern', { hang: 1 });
-    for (const [i, j] of [[6, 31], [54, 58], [18, -8], [20, 30], [19, -17], [23, -7]]) w.set(i, -10, j, 'cobweb');
-    w.mark('room', 30, -10, 32, 'Южный ход', 'Главный коридор подземелья. На восточном конце поворачивает к склепу часовни.');
+
+    // Запустение: паутина по углам, мох и корни, завалы у стен
+    for (const [i, j] of [[6, 31], [54, 58], [18, -8], [20, 30], [19, -17], [23, -7], [6, 33], [53, 34], [9, 5], [29, 15], [5, 19]]) put(i, -10, j, 'cobweb');
+    for (const [i, j] of [[20, -8], [6, 32], [55, 59], [9, 15], [29, 5], [-5, 1], [7, -5]]) put(i, -11 + 3, j, 'cobweb');
+    for (const [i, j] of [[12, 33], [27, 31], [44, 33], [53, 45], [55, 52], [18, 22], [20, -3]]) put(i, -10, j, 'moss_carpet');
+    for (const [i, j] of [[15, 32], [31, 32], [47, 32], [54, 41], [54, 50], [19, 24], [19, -3]]) put(i, -7, j, 'hanging_roots');
+    for (const [i, j, id] of [[36, 33, 'mossy_cobblestone_slab'], [37, 33, 'cobblestone_slab'], [55, 44, 'mossy_cobblestone_slab'], [53, 55, 'cobblestone'], [53, 56, 'mossy_cobblestone_slab'], [7, 31, 'cobblestone_slab']]) put(i, -10, j, id);
+    w.mark('room', 30, -10, 32, 'Южный ход', 'Главный коридор подземелья под сводами с арками, в стенах ниши-локулы с останками. На восточном конце поворачивает к склепу часовни.');
   }
 
   // ======================= КРЕПОСТНЫЕ СТЕНЫ =======================
@@ -1074,6 +1329,73 @@
 
   }
 
+  // ======================= ОСНОВАНИЕ =======================
+  // Замок не подгоняется к рельефу, поэтому под ним — своя толща грунта, как в
+  // обычном мире: сверху земля, ниже камень с прожилками руды, гнёздами гравия,
+  // андезита, диорита и гранита. За краем территории грунт уходит вниз пологим
+  // неровным склоном (на блок вниз с каждым блоком наружу), поросшим травой,
+  // с каменными выходами. Где рельеф выше склона, склон просто скрыт в земле.
+  // Сборщик спрашивает блок у at(x, y, z) только там, где шаблон пуст.
+  function foundation(rect, depth) {
+    const [rx1, rz1, rx2, rz2] = rect;
+    const skirt = -1 - depth;
+    const hash = (a, b, c, s) => {
+      let h = (Math.imul(a, 374761393) + Math.imul(b, 668265263) + Math.imul(c, 1274126177) + Math.imul(s, 2654435761)) | 0;
+      h = Math.imul(h ^ (h >>> 13), 1103515245);
+      return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+    };
+    // Плавный шум на плоскости: для неровного края склона и пятен травы
+    const smooth = (x, z, size, s) => {
+      const gx = Math.floor(x / size), gz = Math.floor(z / size), fx = x / size - gx, fz = z / size - gz;
+      const u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz);
+      const a = hash(gx, gz, 0, s), b2 = hash(gx + 1, gz, 0, s), c = hash(gx, gz + 1, 0, s), d = hash(gx + 1, gz + 1, 0, s);
+      return a + (b2 - a) * u + (c - a) * v + (a - b2 - c + d) * u * v;
+    };
+    // Гнездо: в каждой ячейке size³ с вероятностью p есть шарик радиуса r
+    const blob = (x, y, z, size, p, r, s) => {
+      const cx = Math.floor(x / size), cy = Math.floor(y / size), cz = Math.floor(z / size);
+      for (let i = cx - 1; i <= cx + 1; i++) for (let j = cy - 1; j <= cy + 1; j++) for (let k = cz - 1; k <= cz + 1; k++) {
+        if (hash(i, j, k, s) >= p) continue;
+        const ox = (i + hash(i, j, k, s + 1)) * size, oy = (j + hash(i, j, k, s + 2)) * size, oz = (k + hash(i, j, k, s + 3)) * size;
+        const rr = r * (0.7 + 0.6 * hash(i, j, k, s + 4));
+        const dd = (x - ox) ** 2 + (y - oy) ** 2 + (z - oz) ** 2;
+        if (dd <= rr * rr && hash(x, y, z, s + 5) < 0.85) return true;
+      }
+      return false;
+    };
+    // Верх колонны: внутри территории — под слоем земли двора, снаружи — склон
+    const top = (x, z) => {
+      const dx = Math.max(rx1 - x, 0, x - rx2), dz = Math.max(rz1 - z, 0, z - rz2);
+      if (!dx && !dz) return [-2, false];
+      const r = Math.sqrt(dx * dx + dz * dz);
+      const d = r * (0.75 + 0.5 * smooth(x, z, 9, 11)) + Math.min(1, r / 4) * 2 * smooth(x, z, 4, 12);
+      return [-1 - Math.max(1, Math.round(d)), true];
+    };
+    const ORES = [
+      ['coal_ore', 7, 0.45, 1.6, 0], ['iron_ore', 8, 0.35, 1.4, -5], ['copper_ore', 9, 0.3, 1.6, -8],
+      ['gold_ore', 10, 0.18, 1.1, -14], ['redstone_ore', 10, 0.16, 1.2, -16], ['lapis_ore', 12, 0.12, 1.1, -17],
+    ];
+    const ROCK = [['andesite', 14, 0.3, 4], ['diorite', 14, 0.25, 3.5], ['granite', 14, 0.25, 3.5], ['gravel', 11, 0.18, 2.5], ['dirt', 11, 0.14, 2.5]];
+    function at(x, y, z) {
+      if (y < depth || y > -2) return null;
+      const [t, outside] = top(x, z);
+      if (y > t) return null;
+      const s = t - y;
+      if (outside && s === 0) {
+        const rock = smooth(x, z, 5, 21);
+        if (rock > 0.78) return hash(x, y, z, 22) < 0.5 ? 'stone' : hash(x, y, z, 23) < 0.5 ? 'andesite' : 'mossy_cobblestone';
+        const g = smooth(x, z, 6, 24);
+        return g > 0.72 ? 'podzol' : g < 0.18 ? 'coarse_dirt' : hash(x, y, z, 25) < 0.06 ? 'moss_block' : 'grass_block';
+      }
+      if (s <= 2 + Math.floor(hash(x, 0, z, 26) * 2)) return hash(x, y, z, 27) < 0.12 ? 'coarse_dirt' : 'dirt';
+      for (const [id, size, p, r, below] of ORES) if (y <= below && blob(x, y, z, size, p, r, id.length * 101)) return id;
+      for (const [id, size, p, r] of ROCK) if (blob(x, y, z, size, p, r, id.length * 37 + 5)) return id;
+      if (y < -16 && blob(x, y, z, 13, 0.3, 4, 77)) return 'tuff';
+      return 'stone';
+    }
+    return { rect, depth, skirt, at };
+  }
+
   defineStructure({
     id: 'castle',
     group: 'Замок',
@@ -1090,7 +1412,9 @@
       'Библиотека-пристройка 19×23 и лестничная пристройка ко входу',
       'Во дворе часовня с кладбищем, казарма, кузница, конюшня, амбар, огород, дом управителя, ристалище',
       'Катакомбы на 10–20 блоков под землёй, ход к склепу часовни и лаз за стену',
+      'Под замком своя толща грунта с рудой, по краям — травяной склон до 24 блоков вниз',
     ],
+    foundation: foundation([-6, -6, 133, 137], -25),
     build() {
       const b = new Builder(2025);
       b.carve = true;

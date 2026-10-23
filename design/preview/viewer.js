@@ -50,7 +50,7 @@
     const t = {
       n: (x, z) => [x, z], s: (x, z) => [1 - x, 1 - z],
       e: (x, z) => [1 - z, x], w: (x, z) => [z, 1 - x],
-    }[f || 'n'];
+    }[f] || ((x, z) => [x, z]); // вверх/вниз (бочка крышкой вверх) — без поворота
     const [ax, az] = t(x0, z0), [bx, bz] = t(x1, z1);
     return [Math.min(ax, bx), y0, Math.min(az, bz), Math.max(ax, bx), y1, Math.max(az, bz)];
   }
@@ -72,6 +72,7 @@
     if (s === 'gate') {
       return blk.open ? [[0, 0.3, 0, 0.12, 0.95, 0.5], [0.88, 0.3, 0, 1, 0.95, 0.5]] : [rotate([0, 0.3, 0.44, 1, 0.95, 0.56], blk.f === 'e' || blk.f === 'w' ? 'e' : 'n')];
     }
+    if (s === 'frame' && blk.f === 'u') return [[0.12, 0, 0.12, 0.88, 0.07, 0.88]]; // рамка лежит на столе
     const base = (SHAPES[s] || SHAPES.full)(blk);
     if (s === 'stairs' && blk.h === 'top') return base.map((bx) => rotate([bx[0], 1 - bx[4], bx[2], bx[3], 1 - bx[1], bx[5]], blk.f));
     return base.map((bx) => { const r = rotate(bx, blk.f); if (bx[6]) r.push(bx[6]); return r; });

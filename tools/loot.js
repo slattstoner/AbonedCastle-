@@ -17,6 +17,9 @@ const THEMES = {
   sawmill: [['spruce_log', 4, [2, 6]], ['spruce_planks', 4, [4, 12]], ['stick', 3, [3, 8]], ['iron_nugget', 2, [2, 5]], ['coal', 2, [1, 4]], ['paper', 2, [1, 3]], ['iron_axe', 1, 1, { damage: [0.2, 0.6] }], ['emerald', 1, 1]],
   charcoal: [['charcoal', 6, [3, 10]], ['coal', 3, [2, 6]], ['flint_and_steel', 1, 1], ['torch', 3, [3, 8]], ['bread', 2, [1, 2]], ['stick', 2, [2, 5]]],
   cartographer: [['paper', 5, [2, 6]], ['empty_map', 2, 1], ['compass', 1, 1], ['book', 3, [1, 2]], ['ink_sac', 2, [1, 3]], ['feather', 2, [1, 3]], ['glass_bottle', 1, 1], ['candle', 2, [1, 2]]],
+  // Замок
+  crypt: [['bone', 5, [1, 4]], ['candle', 3, [1, 2]], ['gold_nugget', 3, [2, 7]], ['rotten_flesh', 2, [1, 2]], ['string', 2, [1, 3]], ['iron_nugget', 2, [1, 4]], ['book', 1, 1], ['golden_sword', 1, 1, { damage: [0.2, 0.6] }]],
+  treasure: [['gold_ingot', 5, [1, 4]], ['gold_nugget', 4, [3, 9]], ['emerald', 3, [1, 3]], ['iron_ingot', 3, [2, 5]], ['diamond', 1, 1], ['golden_apple', 1, 1], ['clock', 1, 1], ['golden_helmet', 1, 1]],
   hermit: [['candle', 4, [1, 3]], ['honey_bottle', 3, 1], ['honeycomb', 2, [1, 3]], ['brown_mushroom', 3, [1, 3]], ['red_mushroom', 2, [1, 2]], ['sweet_berries', 3, [2, 6]], ['book', 1, 1], ['glistering_melon_slice', 1, 1]],
 };
 

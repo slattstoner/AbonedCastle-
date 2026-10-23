@@ -19,7 +19,7 @@ const PACK = {
   description: 'Постройки хвойного биома: хижины, лагеря, ориентиры, хутора, острог и скит. С тайниками и историями. Пробный замок: /function castle',
   header: '6f3d2a8e-4c1b-4f7a-9e2d-5b8c1a7f3e90',
   module: 'a2c94e17-8b3f-4d6a-b1e5-0f7d9c3a2b48',
-  version: [0, 4, 1],
+  version: [0, 4, 2],
   minEngine: [1, 21, 120],
 };
 // Частота: spacing — размер ячейки в чанках (одна попытка на ячейку), separation — минимальный зазор.
@@ -138,7 +138,8 @@ function checkSupport(sid, blocks, get) {
       if (!get(v.x + dx, v.y, v.z + dz)) warn(`${at}: не к чему крепиться`);
       continue;
     }
-    if (ATTACHED.has(v.id) && v.stand === undefined) {
+    if (v.id === 'item_frame' && v.f === 'u') { if (!below) warn(`${at}: нет опоры снизу`); continue; }
+    if ((ATTACHED.has(v.id) || v.id.endsWith('_banner')) && v.stand === undefined) {
       const [dx, dz] = STEP[v.f || 'n'];
       if (!get(v.x + dx, v.y, v.z + dz)) warn(`${at}: не к чему крепиться`);
       continue;
@@ -280,6 +281,11 @@ for (const s of STRUCTURES) {
     console.log(`Замок: проверено дверей ${doors}, комнат ${b.marks.filter((m) => m.type === 'room').length}; клеток пола под крышей ${inside.length}, автофакелов ${placed.length}, тёмных клеток ${dark.length}`);
     console.log('Свет по уровням: ' + Object.entries(levels).sort().map(([k, e]) => `${k}: мин ${e.min}, ср ${(e.sum / e.n).toFixed(1)}`).join('; '));
     for (const [x, y, z] of dark.slice(0, 15)) warn(`замок: темно (${light.at(x, y, z)}) в (${x},${y},${z})`);
+    // Тайники под сюжеты: имена слотов должны быть разными, иначе история не поймёт, куда класть
+    const slots = {};
+    for (const v of b.blocks.values()) if (v.slot) (slots[v.slot] = slots[v.slot] || []).push(`${v.id} (${v.x},${v.y},${v.z})`);
+    for (const [k, list] of Object.entries(slots)) if (list.length > 1) warn(`замок: слот «${k}» встречается ${list.length} раза: ${list.join(', ')}`);
+    console.log(`Тайники замка: ${Object.keys(slots).length} слотов — ${Object.keys(slots).join(', ')}`);
   }
   const tmpl = [...b.blocks.values()].filter((v) => !v.env);
   const map = new Map(tmpl.map((v) => [v.x + ',' + v.y + ',' + v.z, v]));
@@ -287,10 +293,19 @@ for (const s of STRUCTURES) {
   checkSupport('castle', tmpl.filter((v) => v.id !== 'air'), get);
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (const v of tmpl) [v.x, v.y, v.z].forEach((c, k) => { lo[k] = Math.min(lo[k], c); hi[k] = Math.max(hi[k], c); });
+  // Основание: толща грунта под территорией и склон вокруг неё (castle.js, foundation).
+  // Над склоном шаблон пуст — там остаётся рельеф мира, явный воздух только над территорией.
+  const F = castle.foundation;
+  const [fx1, fz1, fx2, fz2] = F.rect;
+  lo[0] = Math.min(lo[0], fx1 - F.skirt); hi[0] = Math.max(hi[0], fx2 + F.skirt);
+  lo[2] = Math.min(lo[2], fz1 - F.skirt); hi[2] = Math.max(hi[2], fz2 + F.skirt);
+  lo[1] = Math.min(lo[1], F.depth);
+  const inTerritory = (x, z) => x >= fx1 && x <= fx2 && z >= fz1 && z <= fz2;
+  const foundCount = {};
   const PART = 64, ORIGIN = [63, 0, 98]; // игрок стоит на площади у ворот, замок к северу
   const lines = [
     '# Замок из замшелого камня: ставит все куски вокруг игрока.',
-    '# Встаньте на ровное место в обычном мире (не в плоском: подземелье уходит на 22 блока вниз).',
+    '# Встаньте в обычном мире (не в плоском: подземелье и основание уходят на 25 блоков вниз).',
   ];
   let parts = 0;
   for (let x0 = lo[0]; x0 <= hi[0]; x0 += PART) for (let z0 = lo[2]; z0 <= hi[2]; z0 += PART) {
@@ -299,7 +314,12 @@ for (const s of STRUCTURES) {
     for (let x = 0; x < size[0]; x++) for (let y = 0; y < size[1]; y++) for (let z = 0; z < size[2]; z++) {
       const wx = x0 + x, wy = lo[1] + y, wz = z0 + z;
       const blk = map.get(wx + ',' + wy + ',' + wz);
-      if (!blk || blk.env) { if (wy >= 0) cells.push({ x, y, z, block: { name: 'minecraft:air', states: {} } }); continue; }
+      if (!blk || blk.env) {
+        if (wy >= 0) { if (inTerritory(wx, wz)) cells.push({ x, y, z, block: { name: 'minecraft:air', states: {} } }); continue; }
+        const id = F.at(wx, wy, wz);
+        if (id) { foundCount[id] = (foundCount[id] || 0) + 1; cells.push({ x, y, z, block: toBedrock({ x: wx, y: wy, z: wz, id }, get, BLOCKS) }); }
+        continue;
+      }
       if (blk.id === 'air') { cells.push({ x, y, z, block: { name: 'minecraft:air', states: {} } }); continue; }
       const slotData = CONTAINERS.has(blk.id) && blk.theme ? { lootTable: themeTable(blk.theme) } : {};
       cells.push({ x, y, z, block: toBedrock(blk, get, BLOCKS, slotData) });
@@ -312,6 +332,8 @@ for (const s of STRUCTURES) {
   lines.push(`tellraw @s {"rawtext":[{"text":"Замок поставлен: ${parts} кусков. Ворота у вас за спиной, донжон впереди к северу."}]}`);
   write('functions/castle.mcfunction', lines.join('\n') + '\n');
   console.log(`Замок: ${tmpl.length} блоков, ${parts} кусков, размер ${hi[0] - lo[0] + 1}×${hi[2] - lo[2] + 1}, высота ${hi[1] - lo[1] + 1}`);
+  const ores = Object.entries(foundCount).filter(([k]) => k.endsWith('_ore')).map(([k, n]) => `${k.replace('_ore', '')} ${n}`).join(', ');
+  console.log(`Основание: ${Object.values(foundCount).reduce((a, n) => a + n, 0)} блоков грунта, руда: ${ores}`);
 }
 
 for (const [file, p] of Object.entries(pools)) {

@@ -16,7 +16,7 @@ const VINE_BIT = { s: 1, w: 2, n: 4, e: 8 };
 const STEP = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
 const BED_COLOR = { white_bed: 0, blue_bed: 11, brown_bed: 12, green_bed: 13, red_bed: 14 };
 // Цвета знамён в Bedrock: 0 чёрный, 1 красный, 3 коричневый, 4 синий, 11 жёлтый, 15 белый.
-const BANNER_BASE = { red_banner: 1, brown_banner: 3, blue_banner: 4, white_banner: 15 };
+const BANNER_BASE = { black_banner: 0, red_banner: 1, green_banner: 2, brown_banner: 3, blue_banner: 4, purple_banner: 5, gray_banner: 8, yellow_banner: 11, white_banner: 15 };
 const TORCH_FACE = { n: 'south', s: 'north', e: 'west', w: 'east' };
 const item = (name) => T.compound({ Name: T.string('minecraft:' + name), Count: T.byte(1), Damage: T.short(0), WasPickedUp: T.byte(0) });
 
@@ -137,7 +137,8 @@ function toBedrock(blk, get, BLOCKS, slot = {}) {
     entity = be('Banner', { Base: T.int(BANNER_BASE[id]), Type: T.int(0), ...(pats.length ? { Patterns: T.list(TYPE.COMPOUND, pats) } : {}) });
   } else if (id === 'ladder') st.facing_direction = DIR6[OPP[f || 'n']];
   else if (id === 'item_frame') {
-    st = { facing_direction: DIR6[OPP[f || 'n']], item_frame_map_bit: false, item_frame_photo_bit: false };
+    // f: 'u' — рамка лежит на столе лицом вверх
+    st = { facing_direction: f === 'u' ? DIR6.u : DIR6[OPP[f || 'n']], item_frame_map_bit: false, item_frame_photo_bit: false };
     const fields = { ItemRotation: T.float(0), ItemDropChance: T.float(1) };
     if (slot.book) fields.Item = bookItem(slot.book);
     else if (blk.item) fields.Item = item(blk.item);

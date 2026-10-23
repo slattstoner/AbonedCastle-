@@ -178,6 +178,19 @@
     jukebox: { n: 'Проигрыватель', c: '#5d3d2a' },
     packed_ice: { n: 'Плотный лёд', c: '#9cbbe8' },
     polished_blackstone: { n: 'Полированный чернокамень', c: '#35303a' },
+    green_banner: { n: 'Зелёное знамя', c: '#556d1c', s: 'thin' },
+    yellow_banner: { n: 'Жёлтое знамя', c: '#d6b22c', s: 'thin' },
+    black_banner: { n: 'Чёрное знамя', c: '#1d1d21', s: 'thin' },
+    // Основание замка (грунт мира под территорией)
+    dirt: { n: 'Земля', c: '#79553a' },
+    granite: { n: 'Гранит', c: '#9a6b55' },
+    diorite: { n: 'Диорит', c: '#bcbcbc' },
+    coal_ore: { n: 'Угольная руда', c: '#5f5f5f' },
+    iron_ore: { n: 'Железная руда', c: '#8f8178' },
+    copper_ore: { n: 'Медная руда', c: '#7e8a6e' },
+    gold_ore: { n: 'Золотая руда', c: '#a3955a' },
+    redstone_ore: { n: 'Редстоуновая руда', c: '#8a5a5a' },
+    lapis_ore: { n: 'Лазуритовая руда', c: '#5a6a8f' },
   };
   window.BLOCKS = B;
 })();

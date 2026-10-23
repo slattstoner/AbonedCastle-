@@ -99,6 +99,8 @@
     return false;
   }
 
+  const NO_TORCH = /barrel|bookshelf|chest|wool|hay_block|furnace|smoker|noteblock|jukebox|crafting|cartography|fletching|smithing|loom|packed_ice|target|gold_block|brick_block/;
+
   // Автоподсветка: пока в доступных клетках под крышей темнее порога,
   // вешаем настенный факел на ближайшую стену (на высоте двух блоков над полом).
   function autoLight(b, o) {
@@ -124,7 +126,7 @@
           if ((isOpaque(cell(b, tx + 1, ty, tz)) && isOpaque(cell(b, tx - 1, ty, tz))) || (isOpaque(cell(b, tx, ty, tz + 1)) && isOpaque(cell(b, tx, ty, tz - 1)))) continue;
           for (const [f, [sx, sz]] of Object.entries(STEP)) {
             const wall = b.get(tx + sx, ty, tz + sz);
-            if (!isOpaque(wall)) continue; // крепим только к настоящей стене шаблона
+            if (!isOpaque(wall) || NO_TORCH.test(wall.id)) continue; // крепим только к настоящей стене, не к бочке или шкафу
             const d = Math.abs(dx) + Math.abs(dz) + (ty === cy + 2 ? 0 : 0.5);
             if (d < bd) { bd = d; best = [tx, ty, tz, f]; }
           }
