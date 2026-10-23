@@ -1,0 +1,171 @@
+<title>Карта сюжета замка</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ruslan+Display&family=PT+Sans:wght@400;700&family=PT+Mono&display=swap">
+<style>
+/* Вертикальная «летопись» этапов 0–9: слева линия пути, у каждого этапа — что есть и чего нет. Ниже — общий список недоделок и порядок работы. */
+:root {
+  --bg: #eef1ec; --panel: #f8faf6; --ink: #1c2420; --muted: #5d6a62; --line: #cdd6cc;
+  --accent: #2f5d45; --done: #23607a; --done-bg: #dcebf1; --part: #8a5a0e; --part-bg: #f5e8cc; --none: #9a3324; --none-bg: #f4dcd6;
+  --f-display: "Ruslan Display", "PT Serif", Georgia, serif;
+  --f-body: "PT Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "PT Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121815; --panel: #1a221e; --ink: #e4ebe5; --muted: #9aa89f; --line: #2e3a33;
+  --accent: #7fb894; --done: #8cc6dc; --done-bg: #1d3340; --part: #e2b25c; --part-bg: #3a2e18; --none: #ec8f7d; --none-bg: #3e221d; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #121815; --panel: #1a221e; --ink: #e4ebe5; --muted: #9aa89f; --line: #2e3a33;
+  --accent: #7fb894; --done: #8cc6dc; --done-bg: #1d3340; --part: #e2b25c; --part-bg: #3a2e18; --none: #ec8f7d; --none-bg: #3e221d; color-scheme: dark; }
+body { background: var(--bg); color: var(--ink); font: 16px/1.5 var(--f-body); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 24px 48px; }
+main { max-width: 860px; margin: 0 auto; display: grid; gap: 32px; }
+h1 { font: 400 clamp(28px, 6vw, 42px)/1.15 var(--f-display); margin: 0; color: var(--accent); text-wrap: balance; }
+h2 { font: 700 20px/1.3 var(--f-body); margin: 0; text-wrap: balance; }
+h3 { font: 700 17px/1.3 var(--f-body); margin: 0; }
+p { margin: 0; max-width: 65ch; }
+.lead { display: grid; gap: 10px; }
+.lead p { color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font: 700 12px/1 var(--f-body); letter-spacing: .04em; text-transform: uppercase; padding: 5px 8px; border-radius: 4px; white-space: nowrap; }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.done { color: var(--done); background: var(--done-bg); }
+.part { color: var(--part); background: var(--part-bg); }
+.none { color: var(--none); background: var(--none-bg); }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.sum { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; display: grid; gap: 4px; }
+.sum b { font: 400 30px/1 var(--f-display); font-variant-numeric: tabular-nums; }
+.sum span { color: var(--muted); font-size: 14px; }
+.path { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.stage { display: grid; grid-template-columns: 44px 1fr; gap: 14px; }
+.rail { position: relative; display: flex; justify-content: center; }
+.rail::after { content: ""; position: absolute; top: 44px; bottom: -4px; width: 2px; background: var(--line); }
+.stage:last-child .rail::after { display: none; }
+.num { width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--accent); display: grid; place-items: center; font: 400 18px/1 var(--f-display); color: var(--accent); background: var(--bg); z-index: 1; }
+.card { min-width: 0; padding-bottom: 26px; display: grid; gap: 10px; }
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 15px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; min-width: 0; }
+.gaps { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.gaps li { display: grid; grid-template-columns: max-content 1fr; gap: 8px; align-items: baseline; font-size: 15px; }
+.board { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 10px; align-content: start; }
+.box ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 15px; }
+ol.next { margin: 0; padding-left: 22px; display: grid; gap: 10px; }
+ol.next li::marker { font-family: var(--f-display); color: var(--accent); }
+code { font: 14px var(--f-mono); background: var(--panel); border: 1px solid var(--line); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+.cmds { display: grid; gap: 8px; }
+.cmd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cmd button { font: 700 13px var(--f-body); color: var(--accent); background: transparent; border: 1px solid var(--accent); border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+.cmd button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cmd span { color: var(--muted); font-size: 14px; }
+footer { color: var(--muted); font-size: 13px; }
+@media (max-width: 480px) { .facts { grid-template-columns: 1fr; } .facts dt { margin-top: 4px; } }
+</style>
+
+<main>
+  <header class="lead">
+    <h1>Студёный детинец: карта сюжета</h1>
+    <p>Что из сюжета замка уже работает в аддоне 0.8.0, что сделано проще задуманного и чего пока нет. Всё, что в коде, прошло проверочный прогон без игры. В игре ещё не проверено ничего, начиная с 0.7.0.</p>
+    <div class="legend">
+      <span class="chip done">в коде</span>
+      <span class="chip part">упрощено</span>
+      <span class="chip none">нет</span>
+    </div>
+  </header>
+
+  <section class="summary" aria-label="Итог">
+    <div class="sum"><b>10 из 10</b><span>этапов сюжета в коде</span></div>
+    <div class="sum"><b>0</b><span>этапов проверено в игре</span></div>
+    <div class="sum"><b>38</b><span>жителей со скинами</span></div>
+    <div class="sum"><b>13</b><span>мест сюжета в тайге</span></div>
+  </section>
+
+  <section>
+    <h2 style="margin-bottom:16px">Этапы по порядку</h2>
+    <ol class="path">
+      <li class="stage"><div class="rail"><div class="num">0</div></div><div class="card">
+        <div class="head"><h3>Ворота держатся</h3><span class="chip done">в коде с 0.7.0</span></div>
+        <dl class="facts"><dt>Начало</dt><dd>Остап у ворот, книга заданий</dd><dt>Дела</dt><dd>три волны нежити у ворот, король, «Пустой котёл», «Старая кобыла», «Крыша над головой», сигнальный огонь</dd><dt>Чинится</dt><dd>корпус донжона</dd></dl>
+      </div></li>
+      <li class="stage"><div class="rail"><div class="num">1</div></div><div class="card">
+        <div class="head"><h3>Стража</h3><span class="chip done">в коде</span></div>
+        <dl class="facts"><dt>Приходят</dt><dd>капитан Демьян, Ждан, Гаврила, Лука; лучник Савва на надвратной башне (с 0.8.0)</dd><dt>Поход</dt><dd>острог сотника Ярослава</dd><dt>Чинится</dt><dd>три бреши, зубцы и башни, казарма, караульный этаж</dd></dl>
+      </div></li>
+      <li class="stage"><div class="rail"><div class="num">2</div></div><div class="card">
+        <div class="head"><h3>Кузня</h3><span class="chip done">в коде</span></div>
+        <dl class="facts"><dt>Поход</dt><dd>стан охотничьей артели: шатун, нож с клеймом замка</dd><dt>Приходят</dt><dd>кузнец Гордей (чинит вещи за железо), Васька</dd><dt>Чинится</dt><dd>оружейные и арсенал, кузница, ристалище</dd></dl>
+        <ul class="gaps"><li><span class="chip part">упрощено</span><span>Шатун — белый медведь по имени «Шатун»: бурых медведей в игре нет.</span></li></ul>
+      </div></li>
+      <li class="stage"><div class="rail"><div class="num">3</div></div><div class="card">
+        <div class="head"><h3>Хозяйство</h3><span class="chip done">в коде</span></div>
+        <dl class="facts"><dt>Поход</dt><dd>хутор Ворониных: ночью прогнать людей Рыжего</dd><dt>Приходят</dt><dd>кастелян Игнат, Дуня; на площади «торговка» — Куница</dd><dt>Улики</dt><dd>книга податей, бумаги управителя</dd><dt>Чинится</dt><dd>подклет, казна, дом управителя, амбар, площадь, двор</dd></dl>
+        <ul class="gaps"><li><span class="chip part">упрощено</span><span>Торговка только расспрашивает, торговли нет.</span></li></ul>
+      </div></li>
+      <li class="stage"><div class="rail"><div class="num">4</div></div><div class="card">
+        <div class="head"><h3>Вера</h3><span class="chip done">в коде</span></div>
+        <dl class="facts"><dt>Поход</dt><dd>скит: исповедь Никодима</dd><dt>Приходит</dt><dd>отец Варлаам</dd><dt>Дела</dt><dd>очистить склеп часовни, тайник священника «Не горячка. Чаша»</dd><dt>Чинится</dt><dd>часовни, ризница, кладбище</dd></dl>
+        <ul class="gaps"><li><span class="chip none">нет</span><span>Креста на могиле священника нет: тайник «grave» в сюжете не участвует.</span></li></ul>
+      </div></li>
+      <li class="stage"><div class="rail"><div class="num">5</div></div><div class="card">
+        <div class="head"><h3>Знание</h3><span class="chip done">в коде</span></div>
+        <dl class="facts"><dt>Походы</dt><dd>дом картографа → рудник Г-7 (Ленц за обвалом) → хижина лесника → лагерь Рыжего у Чёрной гари</dd><dt>Приходят</dt><dd>Евсей, Ленц, Сёмка с голубями</dd><dt>Улики</dt><dd>колыбельная королевы, грамота на рудник и договор с Хозяином бора</dd><dt>Ещё</dt><dd>нападение на лагерь и «Мир с атаманом», Шило ворует мелочь</dd></dl>
+        <ul class="gaps"><li><span class="chip none">нет</span><span>Тайна «Голос в стене» (ухо хозяина) в задания не вошла.</span></li></ul>
+      </div></li>
+      <li class="stage"><div class="rail"><div class="num">6</div></div><div class="card">
+        <div class="head"><h3>Исцеление</h3><span class="chip done">в коде</span></div>
+        <dl class="facts"><dt>Поход</dt><dd>скит → пепелище, Марфа в погребице</dd><dt>Дела</dt><dd>дневник короля (яд — вороний глаз), лекарство: король встаёт и спускается в Большой зал</dd><dt>Чинится</dt><dd>лекарская, лаборатория, огород</dd></dl>
+      </div></li>
+      <li class="stage"><div class="rail"><div class="num">7</div></div><div class="card">
+        <div class="head"><h3>Подземелье</h3><span class="chip done">в коде</span></div>
+        <dl class="facts"><dt>Походы</dt><dd>углежоги (исповедь Прохора) → Старая гать: оберег-башня под крестом</dd><dt>Дела</dt><dd>нежить в катакомбах, завалы, письмо королевы в запечатанной сокровищнице</dd><dt>Итог</dt><dd>Рыжий — княжич Ефрем; лагерь пустеет</dd></dl>
+        <ul class="gaps"><li><span class="chip none">нет</span><span>Тайна «Узник» (каменный мешок → святилище) в задания не вошла.</span></li></ul>
+      </div></li>
+      <li class="stage"><div class="rail"><div class="num">8</div></div><div class="card">
+        <div class="head"><h3>Пир и осада</h3><span class="chip done">в коде</span></div>
+        <dl class="facts"><dt>Дела</dt><dd>продукты для пира; по желанию — счета Ножова у сторожа лесопилки</dd><dt>Осада</dt><dd>жители собираются в Большом зале, три волны шайки, разговор с Рыжим по уликам, Ножов бежит — поймать и отвести к Прохору</dd><dt>Приходит</dt><dd>гусляр Тимоша</dd></dl>
+        <ul class="gaps"><li><span class="chip part">упрощено</span><span>Нападают безымянные «люди Рыжего»: Гриня первым в ворота не ломится.</span></li><li><span class="chip none">нет</span><span>Служанок и гостей пира нет.</span></li></ul>
+      </div></li>
+      <li class="stage"><div class="rail"><div class="num">9</div></div><div class="card">
+        <div class="head"><h3>Наследие</h3><span class="chip done">в коде</span></div>
+        <dl class="facts"><dt>Дела</dt><dd>король и Рыжий у трона, перстень на капище, передача замка, смерть короля на рассвете</dd><dt>Чинится</dt><dd>трон, колокольня, знамёна</dd><dt>Потом</dt><dd>шайка — лесная стража, лагерь дружеский</dd></dl>
+        <ul class="gaps"><li><span class="chip part">упрощено</span><span>Белый лось — надпись и искры: своей модели лося нет.</span></li><li><span class="chip none">нет</span><span>Награды хозяину замка не обсуждены.</span></li></ul>
+      </div></li>
+    </ol>
+  </section>
+
+  <section style="display:grid;gap:14px">
+    <h2>Чего нет вне этапов</h2>
+    <div class="board">
+      <div class="box"><h3>Жизнь замка</h3><ul><li>Ночной обход стражи, ночлег стражи в казарме</li><li>Торговля у Куницы и Пахома</li><li>Стрелы Саввы могут задеть игрока на линии выстрела</li></ul></div>
+      <div class="box"><h3>Тайга</h3><ul><li>Побочные задания малых мест: засидка, брошенный стан, турий, развилка, могила, дерево-почтарь</li><li>Награды сотника за разбойников</li></ul></div>
+      <div class="box"><h3>Тайники</h3><ul><li>Улики приходят сообщением в чат, а не книгой в сундуке</li><li>45 тайников замка заполнены только тематическим лутом</li></ul></div>
+      <div class="box"><h3>Замок и мир</h3><ul><li>Дверь-шкаф на поршнях в тайное хранилище</li><li>Естественная генерация замка</li><li>Животные, другие биомы</li></ul></div>
+    </div>
+  </section>
+
+  <section style="display:grid;gap:14px">
+    <h2>Куда двигаться</h2>
+    <ol class="next">
+      <li><b>Проверить в игре.</b> Сначала этапы 0–1 с начала, потом поздние этапы переходом командой. Каждая находка со скриншотом — правка.</li>
+      <li><b>Положить улики в тайники.</b> Записки как книги в сундуках замка: так сюжет и тайники сойдутся.</li>
+      <li><b>Дополнить сюжет:</b> «Голос в стене», «Узник», крест на могиле, служанки и гости пира.</li>
+      <li><b>Обсудить награды хозяину</b> и торговлю у Куницы и Пахома.</li>
+      <li><b>Побочные задания тайги</b> и естественная генерация замка.</li>
+    </ol>
+    <div class="cmds" aria-label="Команды для проверки">
+      <div class="cmd"><code>/function castle</code><button type="button" data-copy="/function castle">Копировать</button><span>замок и сюжет с начала</span></div>
+      <div class="cmd"><code>/scriptevent acastle:jump 5</code><button type="button" data-copy="/scriptevent acastle:jump 5">Копировать</button><span>сразу к этапу 5 (любое число 1–9)</span></div>
+    </div>
+  </section>
+
+  <footer>Аддон 0.8.0. Подробности: docs/quests.md, раздел 4, и docs/castle-story.md.</footer>
+</main>
+<script>
+document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', () => {
+  const t = b.dataset.copy;
+  const ok = () => { b.textContent = 'Скопировано'; setTimeout(() => { b.textContent = 'Копировать'; }, 1500); };
+  try { navigator.clipboard.writeText(t).then(ok, () => select(b)); } catch (e) { select(b); }
+}));
+function select(b) { const r = document.createRange(); r.selectNodeContents(b.previousElementSibling); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+</script>

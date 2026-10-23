@@ -7,23 +7,27 @@
 //  • /function castle шлёт acastle:castle_placed — отсюда известно, где стоит замок
 //    (все координаты замка в данных — относительно его угла, S.origin — этот угол в мире);
 //  • жители появляются сами, когда их место загружено (и возвращаются, если пропали);
-//  • сундуки-подряды, утренний ремонт, волны у ворот, места тайги — в общем цикле раз в секунду.
+//  • сундуки-подряды, утренний ремонт, волны у ворот, места тайги — в общем цикле раз в секунду;
+//  • раненый житель (погиб в бою) возвращается на место через пару минут, а не сразу;
+//  • короткие реплики, когда игрок проходит рядом с жителем (story.js: bark);
+//  • /scriptevent acastle:jump <этап> — перейти сразу к началу этапа (для проверки в игре).
 import { world, system, ItemStack } from '@minecraft/server';
 import { ActionFormData } from '@minecraft/server-ui';
 import { CASTLE } from './castle_data.js';
 import { PLACES } from './places_data.js';
-import { NPCS, QUESTS, CONTRACTS, dialog, onEvent } from './story.js';
+import { NPCS, QUESTS, CONTRACTS, dialog, onEvent, bark, jump } from './story.js';
 
 const KEY = 'acastle:state';
 const DIM = () => world.getDimension('overworld');
 let S = null, dirty = false;
 
 function fresh() {
-  return { v: 1, origin: null, q: {}, f: {}, n: {}, rep: {}, arrive: [], npcs: {}, places: {}, day: world.getDay(), guide: null, rank: 'Гость' };
+  return { v: 1, origin: null, q: {}, f: {}, n: {}, rep: {}, arrive: [], npcs: {}, places: {}, down: {}, st: {}, day: world.getDay(), guide: null, rank: 'Гость' };
 }
 function load() {
   try { S = JSON.parse(world.getDynamicProperty(KEY) || 'null'); } catch (e) { S = null; }
   if (!S || S.v !== 1) S = fresh();
+  S.down = S.down || {}; S.st = S.st || {};
 }
 const save = () => { dirty = true; };
 function flush() { if (dirty && S) { world.setDynamicProperty(KEY, JSON.stringify(S)); dirty = false; } }
@@ -110,6 +114,28 @@ const api = {
   repaired: (unit) => !!S.rep[unit] && S.rep[unit].st === 'done',
   // Жители: где живут сейчас ('home', 'gate', место тайги 'place:<id>') и переезд наутро
   live(npcId, where) { S.npcs[npcId] = where; save(); relocate(npcId); },
+  // Состояние разбойника: 'hostile', 'flee', 'captive' или null (мирный). Запоминается и для новых появлений.
+  setState(npcId, st) {
+    S.st[npcId] = st || null; save();
+    const e = findNpc(npcId); if (e) try { e.triggerEvent('acastle:' + (st || 'peaceful')); } catch (err) { /* ничего */ }
+  },
+  where: (npcId) => (npcId in S.npcs ? S.npcs[npcId] : NPCS[npcId].start),
+  spot: (npcId) => npcSpot(npcId),
+  absTime: () => world.getAbsoluteTime(),
+  // Починить предмет в руке (кузнец)
+  repairHeld(pl) {
+    try {
+      const eq = pl.getComponent('minecraft:equippable'), it = eq.getEquipment('Mainhand');
+      const d = it && it.getComponent('minecraft:durability');
+      if (!d || d.damage === 0) return false;
+      d.damage = 0; eq.setEquipment('Mainhand', it); return true;
+    } catch (e) { return false; }
+  },
+  isSlot(block, name) { const c = CASTLE.slots[name]; if (!c || !block) return false; const at = W(c), l = block.location; return l.x === at.x && l.y === at.y && l.z === at.z; },
+  // Игрок в комнате или рядом с точкой замка
+  near(pl, c, r = 6, dy = 3) { const p = W(c); return flat(pl.location, p) < r && Math.abs(pl.location.y - p.y) < dy; },
+  placeAt(id) { const p = S.places[id]; return p && p.host ? { x: p.host[0], y: p.host[1], z: p.host[2] } : null; },
+  topAt(x, z) { try { return DIM().getTopmostBlock({ x, z }); } catch (e) { return undefined; } },
   arriveNextMorning(npcId, unit) { S.arrive.push({ npc: npcId, unit, day: world.getDay() }); save(); },
   // Места тайги: выбрать точку для задания в стороне от замка
   setPlace(id, min, max) {
@@ -120,7 +146,7 @@ const api = {
   },
   placeReady: (id) => !!S.places[id] && !!S.places[id].host,
   castleAt: (c) => W(c),
-  stageGuards(stage) { for (const p of CASTLE.posts) if (p.stage === stage) S.npcs[p.guard] = 'post'; save(); },
+  stageGuards(stage) { for (const p of CASTLE.posts) if (p.stage === stage && !p.archer) S.npcs[p.guard] = 'post'; save(); },
   // Помощники для сюжета
   castle: CASTLE,
   W: (c) => W(c), dim: () => DIM(), players: () => players(), nearest: (p) => nearest(p),
@@ -129,37 +155,62 @@ const api = {
 
 // ---------- Жители ----------
 function npcSpot(id) {
-  const where = S.npcs[id] || NPCS[id].start;
+  const where = (id in S.npcs ? S.npcs[id] : NPCS[id].start);
   if (!where) return null;
   if (where === 'post') { const p = CASTLE.posts.find((q) => q.guard === id); return p ? W(p.at) : null; }
   if (where === 'home') return CASTLE.homes[id] ? W(CASTLE.homes[id]) : null;
   if (where === 'gate') return W(NPCS[id].gate || [63, 0, 121]);
-  if (where.startsWith('place:')) { const pl = S.places[where.slice(6)]; return pl && pl.host ? { x: pl.host[0], y: pl.host[1], z: pl.host[2] } : null; }
+  if (where.startsWith('place:')) {
+    const pl = S.places[where.slice(6)]; if (!pl || !pl.host) return null;
+    const o = NPCS[id].off || [0, 0];
+    return { x: pl.host[0] + o[0], y: pl.host[1], z: pl.host[2] + o[1] };
+  }
+  if (where.startsWith('feast:')) { const c = CASTLE.feast[+where.slice(6) % CASTLE.feast.length]; return c ? W(c) : null; }
+  if (where.startsWith('at:')) return W(where.slice(3).split(',').map(Number));
+  // Перед воротами: на поверхности, за спинами нападающих
+  if (where.startsWith('field:')) {
+    const [x, z] = where.slice(6).split(',').map(Number), p = W([x, 0, z]);
+    let top; try { top = DIM().getTopmostBlock({ x: p.x, z: p.z }); } catch (e) { top = undefined; }
+    return top ? { x: p.x, y: top.location.y + 1, z: p.z } : null;
+  }
   return null;
 }
 const tagOf = (id) => 'acastle_npc_' + id;
+api.tagOf = tagOf; api.npcIdOf = (e) => npcIdOf(e);
 function findNpc(id) { try { return DIM().getEntities({ tags: [tagOf(id)] })[0]; } catch (e) { return undefined; } }
+const typeOf = (id) => (NPCS[id].bandit ? 'acastle:bandit' : NPCS[id].guard ? 'acastle:guard' : 'acastle:npc');
 function spawnNpc(id, at) {
   const n = NPCS[id];
-  const e = DIM().spawnEntity(n.guard ? 'acastle:guard' : 'acastle:npc', center(at), { spawnEvent: 'acastle:as_' + id, initialPersistence: true });
+  const e = DIM().spawnEntity(typeOf(id), center(at), { spawnEvent: 'acastle:as_' + (n.skin || id), initialPersistence: true });
   e.nameTag = n.name;
   e.addTag(tagOf(id));
+  if (S.st[id]) e.triggerEvent('acastle:' + S.st[id]);
   return e;
 }
 // Переезд: прежнего убрать, на новом месте появится сам
 function relocate(id) {
-  const e = findNpc(id); const at = npcSpot(id);
-  if (e && at && dist(e.location, at) > 16) { e.triggerEvent('acastle:despawn'); e.removeTag(tagOf(id)); }
+  const e = findNpc(id); const where = (id in S.npcs ? S.npcs[id] : NPCS[id].start);
+  const at = where && !where.startsWith('field:') ? npcSpot(id) : null;
+  if (e && (!where || (at && dist(e.location, at) > 16))) { e.triggerEvent('acastle:despawn'); e.removeTag(tagOf(id)); }
 }
 let ensureTick = 0;
 function ensureNpcs() {
+  const now = world.getAbsoluteTime();
   for (const id of Object.keys(NPCS)) {
+    if (S.down[id] && S.down[id] > now) continue; // ранен — отлёживается
     const at = npcSpot(id);
     if (!at || !loaded(at)) continue;
-    const e = findNpc(id);
+    // Двойники: житель переехал, пока прежнее место было не прогружено, — лишних убираем.
+    // Далеко от места (больше 40 блоков) житель тоже возвращается, если он не бежит и не на поводке.
+    let all = [];
+    try { all = DIM().getEntities({ tags: [tagOf(id)] }); } catch (err) { all = []; }
+    if (!S.st[id]) all.sort((p, q) => dist(p.location, at) - dist(q.location, at));
+    for (const extra of all.slice(1)) { extra.triggerEvent('acastle:despawn'); extra.removeTag(tagOf(id)); }
+    const e = all[0];
+    if (e && !S.st[id] && dist(e.location, at) > 40) { e.triggerEvent('acastle:despawn'); e.removeTag(tagOf(id)); continue; }
     if (e) continue;
     // Стражник мог встать по функции castle без метки — узнаём его по имени
-    const named = DIM().getEntities({ type: NPCS[id].guard ? 'acastle:guard' : 'acastle:npc', name: NPCS[id].name, location: at, maxDistance: 40 })[0];
+    const named = DIM().getEntities({ type: typeOf(id), name: NPCS[id].name, location: at, maxDistance: 40 }).find((x) => !npcIdOf(x));
     if (named) { named.addTag(tagOf(id)); continue; }
     try { spawnNpc(id, at); } catch (err) { /* участок ещё не готов — попробуем позже */ }
   }
@@ -167,13 +218,30 @@ function ensureNpcs() {
 
 // ---------- Разговоры ----------
 function npcIdOf(e) { for (const t of e.getTags()) if (t.startsWith('acastle_npc_')) return t.slice(12); return null; }
+// Окно не показывается, пока у игрока открыт другой экран (игра отвечает «занят»):
+// повторяем несколько раз с паузой — так окно откроется сразу после нажатия «Говорить».
+const wait = (t) => new Promise((r) => system.runTimeout(r, t));
+async function show(pl, form) {
+  for (let i = 0; i < 10; i++) {
+    const r = await form.show(pl);
+    if (!r.canceled || r.cancelationReason !== 'UserBusy') return r;
+    await wait(5);
+  }
+  return { canceled: true };
+}
+const talking = new Set();
 async function talk(pl, id) {
+  if (talking.has(pl.id)) return;
+  talking.add(pl.id);
+  try { await talkInner(pl, id); } finally { talking.delete(pl.id); }
+}
+async function talkInner(pl, id) {
   let node = dialog(id, api, pl);
   for (let guard = 0; node && guard < 20; guard++) {
     const opts = node.options && node.options.length ? node.options : [{ text: 'Прощай' }];
     const form = new ActionFormData().title(node.title || NPCS[id].name).body(node.text);
     for (const o of opts) form.button(o.text);
-    const r = await form.show(pl);
+    const r = await show(pl, form);
     if (r.canceled || r.selection === undefined) return;
     const o = opts[r.selection];
     if (o.run) o.run(api, pl);
@@ -196,16 +264,21 @@ async function questBook(pl) {
   const opts = active.filter((q) => QUESTS[q].target);
   for (const q of opts) form.button((q === S.guide ? '§a» ' : '') + QUESTS[q].title);
   form.button(S.guide ? 'Погасить огоньки' : 'Закрыть');
-  const r = await form.show(pl);
+  const r = await show(pl, form);
   if (r.canceled || r.selection === undefined) return;
   S.guide = r.selection < opts.length ? opts[r.selection] : null; save();
 }
 world.afterEvents.itemUse.subscribe(({ source, itemStack }) => {
   if (itemStack.typeId === 'acastle:quest_book' && S && S.origin) system.run(() => questBook(source));
 });
+// Запасной путь: книгу «применили» к блоку (на телефоне долгое нажатие по земле)
+world.afterEvents.playerInteractWithBlock.subscribe(({ player, itemStack }) => {
+  if (itemStack && itemStack.typeId === 'acastle:quest_book' && S && S.origin) system.run(() => questBook(player));
+});
 
 // ---------- Замок поставлен ----------
 system.afterEvents.scriptEventReceive.subscribe((ev) => {
+  if (ev.id === 'acastle:jump' && S && S.origin) { jump(parseInt(ev.message, 10) || 0, api); flush(); return; }
   if (ev.id !== 'acastle:castle_placed' || !ev.sourceEntity) return;
   const p = ev.sourceEntity.location;
   // Игрок стоит на площади у ворот — это точка CASTLE.origin в координатах замка
@@ -362,6 +435,12 @@ function guideTick() {
   const t = QUESTS[S.guide].target(api);
   if (!t) return;
   for (const pl of players()) {
+    if (t.tag) {
+      const e = DIM().getEntities({ tags: [t.tag] })[0];
+      const to = e ? e.location : t.near ? (t.near.place ? api.placeAt(t.near.place) : W(t.near)) : null;
+      if (to && holdingGuide(pl)) pl.onScreenDisplay.setActionBar(`${t.label} — ${Math.round(flat(pl.location, to))} бл., ${bearing(pl, to)}`);
+      continue;
+    }
     if (t.place) {
       const p = S.places[t.place];
       if (!p) continue;
@@ -399,5 +478,38 @@ system.runInterval(() => {
   flush();
 }, 10);
 
-world.afterEvents.entityDie.subscribe((ev) => { if (S && S.origin) onEvent('die', api, ev); });
+// Короткие реплики, когда игрок проходит рядом (не чаще раза в полминуты от жителя)
+const barked = {};
+function barkTick() {
+  const now = system.currentTick;
+  for (const pl of players()) {
+    let near;
+    try { near = DIM().getEntities({ location: pl.location, maxDistance: 5, families: ['acastle_person'] }); } catch (e) { continue; }
+    for (const e of near) {
+      const id = npcIdOf(e);
+      if (!id || (barked[id] && now - barked[id] < 600)) continue;
+      const line = bark(id, api, pl);
+      barked[id] = now;
+      if (line) { pl.onScreenDisplay.setActionBar(`§e${NPCS[id].name}:§r ${line}`); break; }
+    }
+  }
+}
+system.runInterval(() => { if (S && S.origin) try { barkTick(); } catch (e) { console.warn('acastle bark: ' + e); } }, 40);
+
+world.afterEvents.entityDie.subscribe((ev) => {
+  if (!S || !S.origin) return;
+  // Житель погиб в бою: он ранен и вернётся на своё место через пару минут
+  let id = null;
+  try { id = npcIdOf(ev.deadEntity); } catch (e) { id = null; }
+  if (id && NPCS[id]) {
+    S.down[id] = world.getAbsoluteTime() + 2400; save();
+    if (NPCS[id].guard) api.tell(`§7${NPCS[id].name} ранен, его унесли в казарму. Через пару минут вернётся на пост.`);
+  }
+  onEvent('die', api, ev);
+});
+world.afterEvents.entityHurt.subscribe((ev) => { if (S && S.origin) try { onEvent('hurt', api, ev); } catch (e) { console.warn('acastle hurt: ' + e); } });
+world.afterEvents.dataDrivenEntityTrigger.subscribe((ev) => {
+  if (!S || !S.origin || !ev.eventId.startsWith('acastle:')) return;
+  try { onEvent('trigger', api, ev); } catch (e) { console.warn('acastle trigger: ' + e); }
+});
 world.afterEvents.playerInteractWithBlock.subscribe((ev) => { if (S && S.origin) onEvent('block', api, ev); });

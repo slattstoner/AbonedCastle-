@@ -1,9 +1,16 @@
-// Жители в аддоне. Два вида существ, оба — модель игрока со скином из tools/skins.js
+// Жители в аддоне. Три вида существ, все — модель игрока со скином из tools/skins.js
 // (скин выбирается номером варианта, событие acastle:as_<id>):
-//  acastle:guard — стражник: стоит на посту, бьёт монстров рядом (кроме крипера и
-//                  эндермена), игрока не трогает и урона от него не получает, сам лечится;
-//  acastle:npc   — мирный житель: живёт у своего дома, не дерётся, не погибает.
-// У обоих кнопка «Говорить»: разговоры и задания ведут скрипты (tools/scripts).
+//  acastle:guard  — стражник: стоит на посту, бьёт монстров и враждебных разбойников рядом
+//                   (кроме крипера и эндермена), игрока не трогает и урона от него не получает,
+//                   сам лечится. Лучник Савва (as_savva) стреляет из лука и не сходит с башни;
+//  acastle:npc    — мирный житель: живёт у своего дома, не дерётся, не погибает;
+//  acastle:bandit — человек шайки Рыжего и Ножов. Состояния: мирный (по умолчанию),
+//                   враждебный (acastle:hostile — нападает на игрока и стражу, стража бьёт его),
+//                   бегущий (acastle:flee — убегает от игрока), пленный (acastle:captive — можно
+//                   вести на поводке). Рыжий не погибает: когда ранен до половины, урон больше
+//                   не проходит и срабатывает событие acastle:yield. Ножов от удара игрока
+//                   не получает урона, а сдаётся (событие acastle:caught).
+// У всех кнопка «Говорить»: разговоры и задания ведут скрипты (tools/scripts).
 'use strict';
 
 const NS = 'acastle';
@@ -16,20 +23,32 @@ const GUARDS = [
   { id: 'zhdan', name: 'Стражник Ждан' },
   { id: 'gavrila', name: 'Стражник Гаврила' },
   { id: 'luka', name: 'Стражник Лука' },
+  { id: 'savva', name: 'Лучник Савва' },
 ];
 // Посты в координатах замка (как в castle.js): x — восток, z — юг; f — поворот (0 — лицом на юг, наружу).
 // Этап 0: Остап и Митька в проезде ворот по обе стороны, у внешнего края арки.
 // Этап 1: трое стражников гарнизона у ворот со стороны двора и на площади.
+// Лучник Савва — на верху левой надвратной башни, стреляет по нежити перед воротами.
 const POSTS = [
   { stage: 0, guard: 'ostap', at: [61, 0, 128], f: 0 },
   { stage: 0, guard: 'mitka', at: [65, 0, 128], f: 0 },
   { stage: 1, guard: 'zhdan', at: [59, 0, 121], f: 0 },
   { stage: 1, guard: 'gavrila', at: [67, 0, 121], f: 0 },
   { stage: 1, guard: 'luka', at: [63, 0, 114], f: 0 },
+  { stage: 1, guard: 'savva', at: [55, 16, 127], f: 0, archer: true },
 ];
-// Дома мирных жителей замка: помещение (метка room в castle.js)
-const HOMES = { vsevolod: 'Опочивальня хозяина', agafya: 'Кухня', frol: 'Конюшня', demyan: 'Комната капитана' };
+// Дома мирных жителей замка: помещение (метка room в castle.js). near — точка, к которой
+// жителя поставить ближе (иначе — к метке помещения).
+const HOMES = {
+  vsevolod: 'Опочивальня хозяина', agafya: 'Кухня', frol: 'Конюшня', demyan: 'Комната капитана',
+  gordey: 'Кузница', vaska: 'Кузница', ignat: 'Дом управителя', dunya: 'Комната служанок',
+  varlaam: 'Часовня', evsey: 'Скрипторий', lenz: 'Комната звездочёта', semka: 'Голубятня',
+  marfa: 'Лекарская', prokhor: 'Караульня', timosha: 'Музыкантская', nozhov: 'Темница',
+  trader: 'Колодец', ryzhy: { room: 'Большой зал', near: [63, 6, 25] },
+};
 const GUARD_SEL = `@e[type=${NS}:guard]`;
+// Скины шайки: из них же набираются безымянные «люди Рыжего» в набегах и осаде
+const GANG = ['sych', 'voron', 'grinya', 'kunitsa', 'pakhom', 'shilo', 'ryzhy'];
 
 const SKIN_IDS = NPC.map((n) => n.id);
 const variantOf = (id) => { const i = SKIN_IDS.indexOf(id); if (i < 0) throw new Error('нет скина ' + id); return i; };
@@ -52,7 +71,7 @@ function skinGroups(ids, groups, events) {
   }
 }
 const common = (family) => ({
-  'minecraft:type_family': { family },
+  'minecraft:type_family': { family: [...family, `${NS}_person`] },
   'minecraft:variant': { value: 0 },
   'minecraft:collision_box': { width: 0.6, height: 1.9 },
   'minecraft:movement.basic': {},
@@ -70,15 +89,27 @@ const common = (family) => ({
   ...TALK,
 });
 
+// Лучник: лук вместо меча, стреляет издали и стоит на месте
+const ARCHER = {
+  'minecraft:shooter': { def: 'minecraft:arrow' },
+  'minecraft:behavior.ranged_attack': { priority: 1, attack_interval_min: 1.5, attack_interval_max: 3, attack_radius: 18 },
+  'minecraft:equipment': { table: `loot_tables/${NS}/npc/archer_gear.json`, slot_drop_chance: [{ slot: 'slot.weapon.mainhand', drop_chance: 0 }] },
+  'minecraft:home': { restriction_type: 'all_movement', restriction_radius: 2 },
+  'minecraft:behavior.nearest_attackable_target': {
+    priority: 3, must_see: true, reselect_targets: true, within_radius: 24, must_see_forget_duration: 5,
+    entity_types: [{ filters: { all_of: [monster, { test: 'is_family', subject: 'other', operator: '!=', value: 'creeper' }, { test: 'is_family', subject: 'other', operator: '!=', value: 'enderman' }] }, max_dist: 24 }],
+  },
+};
 function guardEntity() {
-  const groups = { [`${NS}:despawn`]: { 'minecraft:instant_despawn': {} }, [`${NS}:talked`]: {} };
+  const groups = { [`${NS}:despawn`]: { 'minecraft:instant_despawn': {} }, [`${NS}:talked`]: {}, [`${NS}:archer`]: ARCHER };
   const events = {
     // Из яйца призыва — один из стражников гарнизона
-    'minecraft:entity_spawned': { randomize: GUARDS.slice(2).map((g) => ({ weight: 1, add: { component_groups: [`${NS}:skin_${g.id}`] } })) },
+    'minecraft:entity_spawned': { randomize: GUARDS.slice(2, 5).map((g) => ({ weight: 1, add: { component_groups: [`${NS}:skin_${g.id}`] } })) },
     [`${NS}:despawn`]: { add: { component_groups: [`${NS}:despawn`] } },
     [`${NS}:talked`]: { add: { component_groups: [`${NS}:talked`] } },
   };
   skinGroups(GUARDS.map((g) => g.id), groups, events);
+  events[`${NS}:as_savva`].add.component_groups.push(`${NS}:archer`);
   return {
     format_version: '1.21.0',
     'minecraft:entity': {
@@ -111,8 +142,9 @@ function guardEntity() {
         },
         'minecraft:behavior.hurt_by_target': { priority: 1, entity_types: { filters: monster } },
         'minecraft:behavior.melee_box_attack': { priority: 2, track_target: true, speed_multiplier: 1.2 },
+        // must_reach — как у железного голема: не гонится за тем, до кого не дойти (скелет на стене)
         'minecraft:behavior.nearest_attackable_target': {
-          priority: 3, must_see: true, reselect_targets: true, within_radius: 20, must_see_forget_duration: 5,
+          priority: 3, must_see: true, must_reach: true, reselect_targets: true, within_radius: 20, must_see_forget_duration: 5,
           entity_types: [{
             filters: { all_of: [monster,
               { test: 'is_family', subject: 'other', operator: '!=', value: 'creeper' },
@@ -147,6 +179,78 @@ function npcEntity() {
         'minecraft:damage_sensor': { triggers: [{ cause: 'all', deals_damage: 'no' }] },
         'minecraft:behavior.move_towards_home_restriction': { priority: 4 },
         'minecraft:behavior.random_stroll': { priority: 7, speed_multiplier: 0.5, xz_dist: 2, y_dist: 1, interval: 300 },
+      },
+      events,
+    },
+  };
+}
+
+// Шайка Рыжего и Ножов: мирные в лагере, враждебные в набегах и осаде
+const bandit = (o) => ({ test: 'is_family', subject: 'other', value: o });
+const BANDIT_SENSOR = [
+  { cause: 'fall', deals_damage: 'no' },
+  { cause: 'suffocation', deals_damage: 'no' },
+  { on_damage: { filters: bandit(`${NS}_bandit`) }, deals_damage: 'no' },
+];
+function banditEntity() {
+  const g = (name) => `${NS}:${name}`;
+  const groups = {
+    [g('despawn')]: { 'minecraft:instant_despawn': {} },
+    [g('talked')]: {},
+    [g('hostile')]: {
+      'minecraft:type_family': { family: [`${NS}_bandit`, `${NS}_hostile`, `${NS}_person`, 'monster', 'mob'] },
+      'minecraft:behavior.hurt_by_target': { priority: 1 },
+      'minecraft:behavior.nearest_attackable_target': {
+        priority: 2, must_see: true, reselect_targets: true, within_radius: 20,
+        entity_types: [{ filters: { any_of: [bandit('player'), bandit(`${NS}_guard`)] }, max_dist: 20 }],
+      },
+      'minecraft:home': { restriction_type: 'none' },
+    },
+    [g('flee')]: {
+      'minecraft:behavior.avoid_mob_type': { priority: 1, entity_types: [{ filters: bandit('player'), max_dist: 24, walk_speed_multiplier: 1.1, sprint_speed_multiplier: 1.4 }] },
+      'minecraft:home': { restriction_type: 'none' },
+    },
+    [g('captive')]: {
+      'minecraft:leashable': {},
+      'minecraft:movement': { value: 0.25 },
+      'minecraft:home': { restriction_type: 'none' },
+    },
+    // Рыжий: ранен до половины — урон не проходит, бой стихает (скрипт ловит acastle:yield)
+    [g('unbeaten')]: { 'minecraft:damage_sensor': { triggers: [...BANDIT_SENSOR,
+      { on_damage: { filters: { test: 'actor_health', subject: 'self', operator: '<=', value: 30 }, event: g('yield') }, deals_damage: 'no' }] } },
+    // Ножов: от удара игрока не ранен, а сдаётся (скрипт ловит acastle:caught)
+    [g('coward')]: { 'minecraft:damage_sensor': { triggers: [...BANDIT_SENSOR,
+      { on_damage: { filters: bandit('player'), event: g('caught') }, deals_damage: 'no' }] } },
+  };
+  const states = ['hostile', 'flee', 'captive'].map(g);
+  const to = (state) => ({ remove: { component_groups: states.filter((x) => x !== state) }, ...(state ? { add: { component_groups: [state] } } : {}) });
+  const events = {
+    [g('despawn')]: { add: { component_groups: [g('despawn')] } },
+    [g('talked')]: { add: { component_groups: [g('talked')] } },
+    [g('hostile')]: to(g('hostile')), [g('flee')]: to(g('flee')), [g('captive')]: to(g('captive')), [g('peaceful')]: to(null),
+    [g('yield')]: to(null), [g('caught')]: {},
+  };
+  skinGroups(SKIN_IDS, groups, events);
+  events[g('as_ryzhy')].add.component_groups.push(g('unbeaten'));
+  events[g('as_nozhov')].add.component_groups.push(g('coward'));
+  return {
+    format_version: '1.21.0',
+    'minecraft:entity': {
+      description: { identifier: `${NS}:bandit`, is_spawnable: false, is_summonable: true, is_experimental: false },
+      component_groups: groups,
+      components: {
+        ...common([`${NS}_bandit`, 'mob']),
+        'minecraft:health': { value: 60, max: 60 },
+        'minecraft:attack': { damage: 4 },
+        'minecraft:movement': { value: 0.3 },
+        'minecraft:navigation.walk': { can_walk: true, avoid_water: true, avoid_damage_blocks: true, can_pass_doors: true, can_open_doors: false },
+        'minecraft:follow_range': { value: 20, max: 20 },
+        'minecraft:home': { restriction_type: 'random_movement', restriction_radius: 8 },
+        'minecraft:equipment': { table: `loot_tables/${NS}/npc/bandit_gear.json`, slot_drop_chance: [{ slot: 'slot.weapon.mainhand', drop_chance: 0 }] },
+        'minecraft:damage_sensor': { triggers: BANDIT_SENSOR },
+        'minecraft:behavior.melee_box_attack': { priority: 3, track_target: true, speed_multiplier: 1.15 },
+        'minecraft:behavior.move_towards_home_restriction': { priority: 4 },
+        'minecraft:behavior.random_stroll': { priority: 7, speed_multiplier: 0.5, xz_dist: 3, y_dist: 1, interval: 300 },
       },
       events,
     },
@@ -221,9 +325,12 @@ function bookIcon() {
 function writePacks(writeBP, writeRP, skinPng, checkTable) {
   writeBP('entities/guard.json', guardEntity());
   writeBP('entities/npc.json', npcEntity());
-  const gear = { pools: [{ rolls: 1, entries: [{ type: 'item', name: 'minecraft:iron_sword', weight: 1 }] }] };
-  checkTable(gear, 'снаряжение стражника');
-  writeBP(`loot_tables/${NS}/npc/guard_gear.json`, gear);
+  writeBP('entities/bandit.json', banditEntity());
+  for (const [name, item, what] of [['guard_gear', 'iron_sword', 'стражника'], ['archer_gear', 'bow', 'лучника'], ['bandit_gear', 'stone_axe', 'разбойника']]) {
+    const gear = { pools: [{ rolls: 1, entries: [{ type: 'item', name: 'minecraft:' + item, weight: 1 }] }] };
+    checkTable(gear, 'снаряжение ' + what);
+    writeBP(`loot_tables/${NS}/npc/${name}.json`, gear);
+  }
   writeBP('items/quest_book.json', {
     format_version: '1.21.40',
     'minecraft:item': {
@@ -240,6 +347,7 @@ function writePacks(writeBP, writeRP, skinPng, checkTable) {
   writeRP('textures/item_texture.json', { resource_pack_name: NS, texture_name: 'atlas.items', texture_data: { [`${NS}_quest_book`]: { textures: `textures/items/${NS}/quest_book` } } });
   writeRP(`entity/guard.entity.json`, client('guard', { base_color: '#8a1e1e', overlay_color: '#d8b040' }));
   writeRP(`entity/npc.entity.json`, client('npc'));
+  writeRP(`entity/bandit.entity.json`, client('bandit'));
   writeRP(`render_controllers/${NS}.render_controllers.json`, {
     format_version: '1.8.0',
     render_controllers: {
@@ -254,6 +362,7 @@ function writePacks(writeBP, writeRP, skinPng, checkTable) {
   const lang = [
     `entity.${NS}:guard.name=Стражник замка`,
     `entity.${NS}:npc.name=Житель замка`,
+    `entity.${NS}:bandit.name=Человек Рыжего`,
     `item.spawn_egg.entity.${NS}:guard.name=Призвать стражника замка`,
     `item.${NS}:quest_book=Книга заданий`,
     `action.interact.${NS}_talk=Говорить`,
@@ -275,4 +384,4 @@ function summonLines(stage, pos) {
   return lines;
 }
 
-module.exports = { GUARDS, POSTS, HOMES, GUARD_SEL, SKIN_IDS, variantOf, writePacks, summonLines };
+module.exports = { GUARDS, POSTS, HOMES, GANG, GUARD_SEL, SKIN_IDS, variantOf, writePacks, summonLines };

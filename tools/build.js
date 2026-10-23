@@ -25,7 +25,7 @@ const PACK = {
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 7, 0],
+  version: [0, 8, 0],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -244,8 +244,9 @@ for (const s of STRUCTURES) {
     {
       const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
       const free = (x, y, z) => { const v = get(x, y, z); return !v || v.id === 'air' || /short_grass|fern/.test(v.id); };
-      let best = null, bd = Infinity;
-      for (let x = minX + 1; x < maxX; x++) for (let z = minZ + 1; z < maxZ; z++) {
+      let best = b.host ? [b.host.x, b.host.z] : null, bd = b.host ? -1 : Infinity;
+      if (b.host && (!free(b.host.x, 0, b.host.z) || !free(b.host.x, 1, b.host.z))) warn(`${rel}: место хозяина занято`);
+      if (!b.host) for (let x = minX + 1; x < maxX; x++) for (let z = minZ + 1; z < maxZ; z++) {
         const fl = get(x, -1, z);
         if (!free(x, 0, z) || !free(x, 1, z) || !fl || /water|air/.test(fl.id)) continue;
         const d = Math.hypot(x - cx, z - cz);
@@ -536,16 +537,31 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
       }
       units[u.id] = { title: u.title, kind: u.kind, stage: u.stage, pieces, chest, sign };
     }
-    // Дома жителей: свободный пол ближе всего к метке помещения
-    const homeOf = (title) => {
-      const m = b.marks.find((mk) => mk.type === 'room' && mk.title === title);
+    // Дома жителей: свободный пол ближе всего к метке помещения (или к точке near),
+    // свободный и в упадке, и после ремонта, не в дверях и не на чужом месте
+    const freeFull = (x, y, z) => { const v = mapFull.get(K(x, y, z)); return !v || v.id === 'air' || /grass|fern|moss_carpet|_carpet$/.test(v.id) && v.id !== 'grass_block'; };
+    const taken = new Set();
+    const standOk = (x, y, z) => free(x, y, z) && free(x, y + 1, z) && freeFull(x, y, z) && freeFull(x, y + 1, z) && !/_door$/.test((map.get(K(x, y, z)) || {}).id || '') && !taken.has(K(x, y, z));
+    const roomAt = (title) => b.marks.find((mk) => mk.type === 'room' && mk.title === title);
+    const homeOf = (spec) => {
+      const title = typeof spec === 'string' ? spec : spec.room;
+      const m = roomAt(title);
       if (!m) { warn(`замок: нет помещения «${title}» для жителя`); return null; }
-      const c = nearest([m.x, m.y, m.z], (x, y, z) => free(x, y, z) && free(x, y + 1, z) && !/_door$/.test((map.get(K(x, y, z)) || {}).id || ''));
+      const c = nearest(spec.near || [m.x, m.y, m.z], standOk);
       if (!c) warn(`замок: нет места для жителя в «${title}»`);
+      else taken.add(K(...c));
       return c;
     };
     const homes = {};
     for (const [npcId, room] of Object.entries(npc.HOMES)) homes[npcId] = homeOf(room);
+    // Пир: места для жителей в Большом зале; склеп и катакомбы — где появляется нежить
+    const feast = [];
+    { const m = roomAt('Большой зал'); for (let i = 0; i < 16; i++) { const c = nearest([m.x + (i % 4) * 2 - 3, m.y, m.z + Math.floor(i / 4) * 3 - 4], standOk); if (c) { feast.push(c); taken.add(K(...c)); } } }
+    if (feast.length < 12) warn(`замок: мало мест на пиру (${feast.length})`);
+    const spots = (title, n) => { const m = roomAt(title); const out = []; for (let i = 0; i < n; i++) { const c = nearest([m.x + (i % 3) * 3 - 3, m.y, m.z + Math.floor(i / 3) * 3 - 3], (x, y, z) => standOk(x, y, z) && !out.some((o) => o[0] === x && o[2] === z)); if (c) out.push(c); } if (out.length < n) warn(`замок: мало места для нежити в «${title}»`); return out; };
+    const lairs = { crypt: spots('Склеп часовни', 6), catacombs: [...spots('Костница', 4), ...spots('Усыпальница рода', 4)] };
+    const rooms = {};
+    for (const mk of b.marks) if (mk.type === 'room' && !rooms[mk.title]) rooms[mk.title] = [mk.x, mk.y, mk.z];
     // Пути от ворот: поиск в ширину по клеткам, где может стоять игрок
     const start = [info.CX, 0, info.Z2 - 10];
     const parent = new Map([[K(...start), null]]);
@@ -568,13 +584,18 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     const signal = [...b.blocks.values()].find((v) => v.id === 'campfire' && v.y === 31 && v.x === info.KX && v.z === info.KZ);
     if (!signal) warn('замок: нет сигнального костра');
     const signalAt = signal ? [signal.x, signal.y, signal.z] : null;
-    const paths = {};
-    for (const [id, c] of Object.entries(homes)) paths['home_' + id] = pathTo(c, id);
-    for (const [id, u] of Object.entries(units)) if (u.chest) paths['chest_' + id] = pathTo(u.chest, u.title);
-    paths.signal = pathTo(signalAt && [signalAt[0], signalAt[1], signalAt[2] + 1], 'сигнальный костёр');
     const slots = {};
     for (const v of b.blocks.values()) if (v.slot) slots[v.slot] = [v.x, v.y, v.z];
-    const data = { origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots };
+    const paths = {};
+    for (const id of ['vsevolod', 'agafya', 'frol', 'demyan']) paths['home_' + id] = pathTo(homes[id], id);
+    for (const [id, u] of Object.entries(units)) if (u.chest) paths['chest_' + id] = pathTo(u.chest, u.title);
+    paths.signal = pathTo(signalAt && [signalAt[0], signalAt[1], signalAt[2] + 1], 'сигнальный костёр');
+    for (const id of ['prokhor', 'varlaam', 'ignat', 'gordey', 'evsey', 'marfa', 'timosha', 'semka', 'lenz', 'dunya']) if (homes[id]) paths['home_' + id] = pathTo(homes[id], id);
+    paths.crypt = pathTo(lairs.crypt[0], 'склеп часовни');
+    paths.catacombs = pathTo(lairs.catacombs[0], 'катакомбы');
+    paths.throne = pathTo(homes.ryzhy, 'трон');
+    for (const k of ['ledger', 'steward_book', 'priest', 'vault', 'master_diary', 'sealed', 'grave']) if (slots[k]) paths['slot_' + k] = pathTo(slots[k], 'тайник ' + k);
+    const data = { origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
     write('scripts/castle_data.js', '// Собрано tools/build.js — не править руками\nexport const CASTLE = ' + JSON.stringify(data) + ';\n');
     const contracts = Object.entries(units).filter(([, u]) => u.chest).map(([id]) => id);
     console.log(`Ремонт: ${Object.keys(units).length} единиц, подрядов ${contracts.length}, путей ${Object.values(paths).filter(Boolean).length}, дома: ${Object.entries(homes).map(([k, v]) => k + (v ? '' : '?')).join(', ')}`);

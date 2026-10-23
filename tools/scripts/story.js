@@ -1,7 +1,9 @@
-// Сюжет замка: жители, задания, подряды и разговоры. Этапы 0 и 1 (docs/castle-story.md,
-// docs/quests.md). Движок — main.js; здесь только что говорят жители и что считается сделанным.
+// Сюжет замка: жители, задания, подряды и разговоры. Здесь этапы 0 и 1 (docs/castle-story.md,
+// docs/quests.md), этапы 2–9 — в stages.js; этот файл собирает всё вместе.
+// Движок — main.js; здесь только что говорят жители и что считается сделанным.
 // В разговорах не называем стороны света: по приметам («у ворот», «на башне с колоколом»).
 import { world } from '@minecraft/server';
+import { LATE_NPCS, LATE_CONTRACTS, LATE_QUESTS, STARTS, lateDialog, lateEvent, lateBark, jumpLate } from './stages.js';
 
 // ---------- Жители ----------
 // start — где живёт с самого начала: 'post' (пост стражника), 'home' (комната в замке), null — ещё не пришёл.
@@ -16,6 +18,7 @@ export const NPCS = {
   frol: { name: 'Конюх Фрол', start: 'home' },
   demyan: { name: 'Капитан Демьян Беляк', start: null, gate: [63, 0, 118] },
   yaroslav: { name: 'Сотник Ярослав Беляк', start: null },
+  ...LATE_NPCS,
 };
 
 // ---------- Подряды: что положить в сундук ----------
@@ -28,6 +31,7 @@ export const CONTRACTS = {
   walls: { title: 'Зубцы и башни', who: 'demyan', items: [['minecraft:stone_bricks', 64, 'Каменный кирпич'], ['minecraft:spruce_planks', 24, 'Еловые доски']] },
   barracks: { title: 'Казарма', who: 'demyan', items: [['minecraft:spruce_planks', 32, 'Еловые доски'], ['minecraft:spruce_stairs', 16, 'Еловые ступени']],
     done: 'Доски на месте. Ребята ночью перекроют крышу казармы.' },
+  ...LATE_CONTRACTS,
 };
 
 // ---------- Волны у ворот ----------
@@ -116,6 +120,7 @@ export const QUESTS = {
     hint: (api) => (api.flag('copy') ? 'Отнесите копию приказа капитану Демьяну.' : 'Отнесите донесение сотнику Ярославу Беляку в острог. Держите в руке компас или эту книгу — внизу экрана видно, куда идти.') },
   s1_seal: { title: 'Чужая печать', hint: 'Сравните печать на приказе с печатью на старой грамоте: она в сундуке у лебёдки решётки, в надвратной башне справа, если стоять во дворе лицом к воротам.',
     target: () => ({ at: [62, 0, 125], label: 'Надвратная башня' }) },
+  ...LATE_QUESTS,
 };
 
 // ---------- Разговоры ----------
@@ -126,6 +131,8 @@ function lostBook(api) {
 }
 
 export function dialog(id, api, pl) {
+  const late = lateDialog(id, api, pl);
+  if (late) return late;
   const has = api.has, done = api.done;
   const S = api.S;
   switch (id) {
@@ -245,13 +252,14 @@ function stage1Check(a) {
   if (['s1_breaches', 's1_walls', 's1_barracks', 's1_ostrog', 's1_seal'].every((q) => a.done(q)) && a.flag('s1_talked') && !a.flag('stage1_done')) {
     a.flag('stage1_done', 1);
     a.rank('Оруженосец');
-    a.tell('§6Этап 1 «Стража» пройден. Продолжение — этап 2 «Кузня» — в следующей версии аддона.');
+    a.tell('§6Этап 1 «Стража» пройден. Капитан Демьян хочет поговорить о кузне.');
   }
 }
 
 // ---------- События ----------
 export function onEvent(name, api, ev) {
   const S = api.S;
+  lateEvent(name, api, ev);
   switch (name) {
     case 'castle': api.start('s0_halt'); break;
     case 'done:s0_night':
@@ -280,7 +288,9 @@ export function onEvent(name, api, ev) {
       }
       break;
     case 'repaired:walls': api.finish('s1_walls'); stage1Check(api); break;
-    case 'repaired:barracks': api.finish('s1_barracks'); api.tell('§6Казарма перекрыта: стражникам есть где спать.'); stage1Check(api); break;
+    case 'repaired:barracks':
+      api.finish('s1_barracks'); api.tell('§6Казарма перекрыта: стражникам есть где спать. На надвратную башню встал лучник Савва.');
+      S.npcs.savva = 'post'; api.save(); stage1Check(api); break;
     case 'arrived:demyan': break;
     case 'block': {
       const g = api.castle.slots && api.castle.slots.gatehouse;
@@ -295,3 +305,33 @@ export function onEvent(name, api, ev) {
     }
   }
 }
+
+// ---------- Реплики мимоходом ----------
+// Когда игрок проходит рядом с жителем: одна строка над панелью предметов.
+const BARKS = {
+  ostap: ['Стой, кто идёт? А, это ты.', 'Ночью гляди в оба.'],
+  mitka: ['Здорово!', 'Остап опять ворчит.'],
+  zhdan: ['Тихо сегодня.'], gavrila: ['Служба.'], luka: ['Капитан велел площадь обходить.'],
+  vsevolod: ['Подойди…', 'Замок оживает. Я слышу.'],
+  agafya: ['Голодный? Заходи на кухню.'], frol: ['Ласточка тебя помнит.'],
+  demyan: ['Как служба?', 'Стены держим.'], gordey: ['Молот поёт!'], vaska: ['Здрасьте!'],
+  ignat: ['Всё по описи.'], dunya: ['Ой, извините, я тут мою.'], varlaam: ['Мир тебе.'],
+  evsey: ['Тише: я считаю буквы.'], lenz: ['Звёзды сегодня ясные.'], semka: ['Голуби вернулись!'],
+  marfa: ['Не трогай склянки.'], prokhor: ['Темноты не боюсь.'], timosha: ['♪ Ушёл во тьму, вернётся в зарю… ♪'],
+  kuzma: ['Здорово, охотник.'], nastya: ['Заходи, гость.'], nikodim: ['…'], liza: ['Привет!'], grach: ['Тише, зверя спугнёшь.'],
+  sych: ['Я за тобой смотрю.'], pakhom: ['Каши хочешь?'], grinya: ['Чего уставился?'], ryzhy: ['Ну?'],
+};
+export function bark(id, api, pl) {
+  const late = lateBark(id, api, pl);
+  if (late) return late;
+  if (id === 'ostap' && night() && api.has('s0_night')) return 'Стой у ворот! Сейчас пойдут!';
+  const list = BARKS[id];
+  return list && Math.random() < 0.6 ? list[Math.floor(Math.random() * list.length)] : null;
+}
+// Переход к этапу (команда /scriptevent acastle:jump <этап>), для проверки в игре
+export function jump(n, api) {
+  if (n < 1 || n > 9) { api.tell('§7Номер этапа — от 1 до 9.'); return; }
+  jumpLate(n, api, { QUESTS });
+  if (n === 1) { api.S.npcs.demyan = 'gate'; api.stageGuards(1); api.start('s1_captain'); api.save(); }
+}
+export { STARTS };

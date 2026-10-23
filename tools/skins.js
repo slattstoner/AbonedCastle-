@@ -776,6 +776,67 @@ const NPC = [
     W.furHat(K, '#4a3420', '#8a2a24', { tall: 1 });
     return K;
   } },
+  { id: 'kuzma', group: 'taiga', name: 'Старшина Кузьма', stage: 2, role: 'старшина охотничьей артели', draw: (s) => {
+    const K = person({ skin: SKIN.weather, hair: '#7a6a5a', hairStyle: 'shaggy', beard: 'full', beardColor: '#8a7a68', eyes: '#4a5a3a', age: 1 }, s);
+    W.shirt(K, '#6a5a44', { slit: false }); W.trousers(K, '#4a4034'); W.boots(K, '#3a2616', 7, { cuff: '#8a6a44' });
+    W.kaftan(K, '#8a6a44', { len: 8, collar: '#d8ccb0', fur: 1, open: 1 }); // волчий полушубок
+    W.belt(K, '#3a2a1a', { y: 8, part: 'jacket', buckle: '#8a8a8a' }); W.knife(K, 1, 8); W.pouch(K, '#5a3a20', 5, 9);
+    W.strap(K, '#5a3a20'); W.quiver(K);
+    W.furHat(K, '#5a4630', '#6a2a20');
+    return K;
+  } },
+  { id: 'hunter', group: 'taiga', name: 'Охотник Ерофей', stage: 2, role: 'охотник артели; у него нож с клеймом замка', draw: (s) => {
+    const K = person({ skin: SKIN.ruddy, hair: '#a86a30', hairStyle: 'short', beard: 'short', beardColor: '#a86a30', eyes: '#4a6a4a', freckles: 1 }, s);
+    W.shirt(K, '#7a8a5a', { slit: false }); W.trousers(K, '#4a4a3a'); W.boots(K, '#3a2616', 6);
+    W.vest(K, '#6a4a2a', { fur: 1, len: 9 });
+    W.belt(K, '#3a2a1a', { y: 8, part: 'jacket' }); W.knife(K, 6, 8);
+    W.bracer(K, '#4a3020', 'lArm');
+    W.hood(K, '#4a5a3a', { cape: true });
+    return K;
+  } },
+  { id: 'nastya', group: 'taiga', name: 'Настя Воронина', stage: 3, role: 'хозяйка лесного хутора', draw: (s) => {
+    const K = person({ skin: SKIN.fair, hair: '#6a3a1e', hairStyle: 'parted', blush: 1, eyes: '#5a7a3a', mouth: '#b85a50' }, s);
+    W.shirt(K, '#f0e8d8', { emb: '#3a6a3a', skin: SKIN.fair, slit: false });
+    W.trousers(K, '#7a3a2a'); W.boots(K, '#5a3a22', 9);
+    W.kaftan(K, '#7a3a2a', { len: 12, sleeves: false, trim: '#3a6a3a' }); // сарафан
+    W.apron(K, '#e8dcc0', { top: 6, len: 6, hem: '#3a6a3a', stains: '#8a7a5a' });
+    W.kerchief(K, '#3a6a3a', { dots: '#e8dcc0', hair: '#6a3a1e' }); W.braid(K, '#6a3a1e', '#3a6a3a');
+    return K;
+  } },
+  { id: 'nikodim', group: 'taiga', name: 'Отшельник Никодим', stage: 4, role: 'бывший солдат острога; загнал мальчишку в болото', draw: (s) => {
+    const K = person({ skin: SKIN.old, hair: '#c8c4bc', hairStyle: 'long', beard: 'long', beardColor: '#d8d4cc', eyes: '#5a5a4a', age: 1, scar: 'cheek' }, s);
+    W.shirt(K, '#8a7e6a', { slit: false }); W.trousers(K, '#5a5244'); W.lapti(K);
+    W.kaftan(K, '#6a604e', { len: 12 }); // ветхая ряса
+    W.patch(K, 'jacket', 'front', 5, 6, '#7a705e'); W.patch(K, 'lSleeve', 'front', 1, 4, '#5a5040');
+    W.belt(K, '#a08a5a', { y: 8, part: 'jacket' }); // верёвка
+    W.cross(K, '#8a6a3a', 4);
+    return K;
+  } },
+  { id: 'liza', group: 'taiga', name: 'Лиза, ученица картографа', stage: 5, role: 'ученица Ленца, ведёт дом картографа', draw: (s) => {
+    const K = person({ skin: SKIN.fair, hair: '#d8b070', hairStyle: 'parted', freckles: 1, eyes: '#4a6a9a', mouth: '#c06060' }, s);
+    W.shirt(K, '#e8e0d0', { emb: '#22305a', skin: SKIN.fair }); W.trousers(K, '#3a3a4a'); W.boots(K, '#3a2616', 7);
+    W.vest(K, '#22305a', { len: 10, lace: '#d8b040' });
+    W.belt(K, '#5a3a20', { y: 8, part: 'jacket' }); W.pouch(K, '#5a3a20', 1, 9);
+    W.strap(K, '#5a3a20'); K.side('jacket', 'back', (x, y) => (x >= 5 && x <= 6 && y <= 8 ? { c: '#8a5a30', t: y === 0 ? 0.6 : 0 } : undefined)); // тубус учителя
+    W.braid(K, '#d8b070', '#22305a'); W.glasses(K, '#8a6a3a');
+    return K;
+  } },
+  { id: 'grach', group: 'taiga', name: 'Лесник Ефим Грач', stage: 5, role: 'лесник, отец Сёмки и Даши', draw: (s) => {
+    const K = person({ skin: SKIN.weather, hair: '#2a2420', hairStyle: 'short', beard: 'full', beardColor: '#3a3028', eyes: '#3a3a2a', age: 1 }, s);
+    W.shirt(K, '#5a6a4a', { slit: false }); W.trousers(K, '#3e3a30'); W.boots(K, '#2a1a12', 7, { cuff: '#4a3020' });
+    W.kaftan(K, '#3e4a34', { len: 8, collar: '#2a3424' });
+    W.belt(K, '#2a1a10', { y: 8, part: 'jacket', buckle: '#8a8a8a' }); W.knife(K, 1, 8); W.pouch(K, '#4a3020', 5, 9);
+    W.cap(K, '#2a3424', { feather: '#3a3a3a' }); // перо глухаря
+    return K;
+  } },
+  { id: 'watchman', group: 'taiga', name: 'Сторож Гаврила', stage: 8, role: 'сторож лесопилки, отдаёт счета Ножова', draw: (s) => {
+    const K = person({ skin: SKIN.old, hair: '#9a948a', hairStyle: 'bald', beard: 'droop', beardColor: '#aaa49a', eyes: '#5a4a3a', age: 1, blush: 1 }, s);
+    W.shirt(K, '#a89a7a', { slit: false }); W.trousers(K, '#4a4438'); W.lapti(K);
+    W.kaftan(K, '#c8a878', { len: 9, collar: '#e0d4b8', fur: 1 }); // тулуп
+    W.belt(K, '#5a3a20', { y: 8, part: 'jacket' }); W.keys(K, 6, 9);
+    W.furHat(K, '#6a5a44', '#5a4a3a', { tall: 1 });
+    return K;
+  } },
   // ===== Противник =====
   { id: 'nozhov', group: 'other', name: 'Савелий Ножов', stage: 8, role: 'приказчик лесопилки, бывший казначей замка', draw: (s) => {
     const K = person({ skin: SKIN.pale, hair: '#1a1818', hairStyle: 'slick', beard: 'goatee', beardColor: '#1a1818', eyes: '#3a3a2a', age: 1 }, s);
