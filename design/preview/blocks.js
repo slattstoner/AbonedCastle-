@@ -191,6 +191,13 @@
     gold_ore: { n: 'Золотая руда', c: '#a3955a' },
     redstone_ore: { n: 'Редстоуновая руда', c: '#8a5a5a' },
     lapis_ore: { n: 'Лазуритовая руда', c: '#5a6a8f' },
+    // Двор
+    yellow_stained_glass_pane: { n: 'Жёлтый витраж', c: '#d9c246', s: 'pane', t: 1 },
+    red_stained_glass_pane: { n: 'Красный витраж', c: '#a33a2f', s: 'pane', t: 1 },
+    blue_stained_glass_pane: { n: 'Синий витраж', c: '#3a4d9c', s: 'pane', t: 1 },
+    oxeye_daisy: { n: 'Ромашка', c: '#ecebe2', s: 'small' },
+    azure_bluet: { n: 'Хаустония', c: '#d7dfea', s: 'small' },
+    yellow_wool: { n: 'Жёлтая шерсть', c: '#d6b22c' },
   };
   window.BLOCKS = B;
 })();

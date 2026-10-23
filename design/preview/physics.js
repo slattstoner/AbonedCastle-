@@ -3,9 +3,9 @@
 // Работает и в просмотрщике, и в сборщике (tools/build.js).
 (function () {
   // Сквозь эти блоки не видно и свет не проходит — как у сплошных блоков игры.
-  const NOT_SOLID = /leaves|glass|slab|stairs|fence|wall|pane|bars|door|trapdoor|carpet|sign|banner|ladder|frame|lantern|candle|torch|chain|bed|chest|campfire|cauldron|lectern|pot|skull|plant|fern|grass$|bush|mushroom|poppy|roots|web|sapling|potatoes|carrots|beetroot|water|cake|vine|plate|shelf$|lever|button|bell|stand|anvil|grindstone|enchanting|composter|azalea|dandelion|cornflower|allium|lily/;
+  const NOT_SOLID = /leaves|glass|slab|stairs|fence|wall|pane|bars|door|trapdoor|carpet|sign|banner|ladder|frame|lantern|candle|torch|chain|bed|chest|campfire|cauldron|lectern|pot|skull|plant|fern|grass$|bush|mushroom|poppy|roots|web|sapling|potatoes|carrots|beetroot|water|cake|vine|plate|shelf$|lever|button|bell|stand|anvil|grindstone|enchanting|composter|azalea|dandelion|cornflower|allium|lily|daisy|bluet/;
   // Сквозь эти блоки можно пройти (ковры, свечи, факелы, двери и т. п.).
-  const PASS = /carpet|_door$|banner|ladder|vine|candle|torch|poppy|dandelion|cornflower|allium|lily_of_the_valley|fern|short_grass|sapling|button|pressure_plate|sign|frame|cobweb|water|lantern|hanging_roots|mushroom|lever|iron_chain/;
+  const PASS = /carpet|_door$|banner|ladder|vine|candle|torch|poppy|dandelion|cornflower|allium|lily_of_the_valley|oxeye_daisy|azure_bluet|fern|short_grass|sapling|button|pressure_plate|sign|frame|cobweb|water|lantern|hanging_roots|mushroom|lever|iron_chain/;
 
   // Ниже слоя земли пустая клетка шаблона — это грунт мира, а не воздух.
   const EARTH = { id: 'dirt' };

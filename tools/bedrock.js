@@ -34,7 +34,7 @@ const SLABS = { has: (id) => id.endsWith('_slab') };
 const STAIRS = { has: (id) => id.endsWith('_stairs') };
 const WALLS = { has: (id) => id.endsWith('_wall') };
 const FENCE = (id) => id.endsWith('_fence');
-const PANES = new Set(['glass_pane', 'iron_bars']);
+const PANES = { has: (id) => id === 'iron_bars' || id.endsWith('glass_pane') }; // и цветные витражи
 const CARDINAL = new Set(['furnace', 'smoker', 'anvil', 'pumpkin', 'carved_pumpkin', 'stonecutter']);
 const NOT_SOLID = /leaves|glass|slab|stairs|fence|wall|pane|bars|door|trapdoor|carpet|sign|banner|ladder|frame|lantern|candle|torch|chain|bed|chest|campfire|cauldron|lectern|pot|skull|plant|fern|grass$|bush|mushroom|poppy|roots|web|sapling|potatoes|carrots|beetroot|water|cake|vine/;
 
