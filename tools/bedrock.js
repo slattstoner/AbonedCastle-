@@ -14,8 +14,11 @@ const WEIRDO = { e: 0, w: 1, s: 2, n: 3 }; // ступени: высокая с�
 const LEGACY4 = { s: 0, w: 1, n: 2, e: 3 }; // кровати, точило, улей, горшки
 const VINE_BIT = { s: 1, w: 2, n: 4, e: 8 };
 const STEP = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
-const BED_COLOR = { red_bed: 14, brown_bed: 12 };
-const BANNER_BASE = { red_banner: 1, brown_banner: 3 };
+const BED_COLOR = { white_bed: 0, blue_bed: 11, brown_bed: 12, green_bed: 13, red_bed: 14 };
+// Цвета знамён в Bedrock: 0 чёрный, 1 красный, 3 коричневый, 4 синий, 11 жёлтый, 15 белый.
+const BANNER_BASE = { red_banner: 1, brown_banner: 3, blue_banner: 4, white_banner: 15 };
+const TORCH_FACE = { n: 'south', s: 'north', e: 'west', w: 'east' };
+const item = (name) => T.compound({ Name: T.string('minecraft:' + name), Count: T.byte(1), Damage: T.short(0), WasPickedUp: T.byte(0) });
 
 const RENAME = {
   rooted_dirt: 'dirt_with_roots',
@@ -25,7 +28,7 @@ const RENAME = {
   large_fern: 'fern',
   cobblestone_stairs: 'stone_stairs',
 };
-const AXIS = new Set(['spruce_log', 'stripped_spruce_log', 'dark_oak_log', 'iron_chain']);
+const AXIS = new Set(['spruce_log', 'stripped_spruce_log', 'dark_oak_log', 'stripped_dark_oak_log', 'dark_oak_wood', 'iron_chain']);
 // Плиты, ступени, стены, заборы, двери и люки узнаём по окончанию имени.
 const SLABS = { has: (id) => id.endsWith('_slab') };
 const STAIRS = { has: (id) => id.endsWith('_stairs') };
@@ -122,7 +125,7 @@ function toBedrock(blk, get, BLOCKS, slot = {}) {
       st.facing_direction = DIR6[OPP[f || 'n']];
     }
     entity = be('Sign', { FrontText: signText(slot.sign || blk.text), BackText: signText(''), IsWaxed: T.byte(1) });
-  } else if (id === 'red_banner' || id === 'brown_banner') {
+  } else if (id in BANNER_BASE) {
     if (blk.stand !== undefined) {
       name = 'standing_banner';
       st.ground_sign_direction = blk.stand;
@@ -130,16 +133,23 @@ function toBedrock(blk, get, BLOCKS, slot = {}) {
       name = 'wall_banner';
       st.facing_direction = DIR6[OPP[f || 'n']];
     }
-    entity = be('Banner', { Base: T.int(BANNER_BASE[id]), Type: T.int(0) });
+    const pats = (blk.pat || []).map(([p, c]) => T.compound({ Pattern: T.string(p), Color: T.int(c) }));
+    entity = be('Banner', { Base: T.int(BANNER_BASE[id]), Type: T.int(0), ...(pats.length ? { Patterns: T.list(TYPE.COMPOUND, pats) } : {}) });
   } else if (id === 'ladder') st.facing_direction = DIR6[OPP[f || 'n']];
   else if (id === 'item_frame') {
     st = { facing_direction: DIR6[OPP[f || 'n']], item_frame_map_bit: false, item_frame_photo_bit: false };
     const fields = { ItemRotation: T.float(0), ItemDropChance: T.float(1) };
     if (slot.book) fields.Item = bookItem(slot.book);
+    else if (blk.item) fields.Item = item(blk.item);
     entity = be('ItemFrame', fields);
   } else if (id === 'vine') st.vine_direction_bits = VINE_BIT[f || 'n'];
   else if (id === 'lantern') st.hanging = !!blk.hang;
-  else if (id === 'candle') st = { candles: 0, lit: !!blk.lit };
+  else if (/candle$/.test(id)) st = { candles: (blk.n || 1) - 1, lit: !!blk.lit };
+  else if (id === 'torch' || id === 'soul_torch') st.torch_facing_direction = blk.f ? TORCH_FACE[blk.f] : 'top';
+  else if (id === 'lever') st = { lever_direction: 'up_east_west', open_bit: false };
+  else if (id.endsWith('_pressure_plate')) st.redstone_signal = 0;
+  else if (id.endsWith('_shelf')) st = { 'minecraft:cardinal_direction': CARD[f || 's'], powered_bit: false, powered_shelf_type: 0 };
+  else if (id === 'soul_campfire') st = { extinguished: false, 'minecraft:cardinal_direction': 'south' };
   else if (id === 'campfire' || id === 'campfire_out') {
     name = 'campfire';
     st = { extinguished: id === 'campfire_out', 'minecraft:cardinal_direction': 'south' };
@@ -171,7 +181,7 @@ function toBedrock(blk, get, BLOCKS, slot = {}) {
     entity = be('DecoratedPot', fields);
   } else if (id === 'cauldron') st = { cauldron_liquid: 'water', fill_level: blk.water ? 6 : 0 };
   else if (id === 'composter') st.composter_fill_level = 0;
-  else if (id === 'red_bed' || id === 'brown_bed') {
+  else if (id in BED_COLOR) {
     name = 'bed';
     st = { direction: LEGACY4[f || 's'], head_piece_bit: !!blk.head, occupied_bit: false };
     entity = be('Bed', { color: T.byte(BED_COLOR[id]) });

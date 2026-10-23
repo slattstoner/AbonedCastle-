@@ -19,7 +19,7 @@ const PACK = {
   description: 'Постройки хвойного биома: хижины, лагеря, ориентиры, хутора, острог и скит. С тайниками и историями. Пробный замок: /function castle',
   header: '6f3d2a8e-4c1b-4f7a-9e2d-5b8c1a7f3e90',
   module: 'a2c94e17-8b3f-4d6a-b1e5-0f7d9c3a2b48',
-  version: [0, 4, 0],
+  version: [0, 4, 1],
   minEngine: [1, 21, 120],
 };
 // Частота: spacing — размер ячейки в чанках (одна попытка на ячейку), separation — минимальный зазор.
@@ -123,8 +123,9 @@ const CONTAINERS = new Set(['chest', 'barrel', 'decorated_pot', 'suspicious_grav
 
 // Опора: растения, свечи, ковры и сыпучие блоки должны на чём-то стоять, висячие
 // фонари — висеть, лестницы и рамки — крепиться к стене. Иначе в игре они осыплются.
-const NEEDS_FLOOR = /fern|grass$|bush|mushroom|poppy|sapling|candle|carpet|flower_pot|cake|potatoes|carrots|beetroot|deadbush|suspicious_gravel|spruce_door|campfire|lantern|stand/;
-const ATTACHED = new Set(['ladder', 'item_frame', 'vine', 'spruce_sign', 'brown_banner', 'red_banner', 'painting']);
+const NEEDS_FLOOR = /fern|grass$|bush|mushroom|poppy|sapling|candle|carpet|flower_pot|cake|potatoes|carrots|beetroot|deadbush|suspicious_gravel|spruce_door|campfire|lantern|stand|torch|lever|pressure_plate/;
+const ATTACHED = new Set(['ladder', 'item_frame', 'vine', 'spruce_sign', 'brown_banner', 'red_banner', 'blue_banner', 'white_banner', 'painting']);
+const OPPOSITE = { n: 's', s: 'n', e: 'w', w: 'e' };
 const STEP = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
 function checkSupport(sid, blocks, get) {
   for (const v of blocks) {
@@ -132,6 +133,11 @@ function checkSupport(sid, blocks, get) {
     if (v.y === -1) continue;
     const below = get(v.x, v.y - 1, v.z);
     if ((v.id === 'lantern' || v.id === 'soul_lantern') && v.hang) { if (!get(v.x, v.y + 1, v.z)) warn(`${at}: висит в воздухе`); continue; }
+    if ((v.id === 'torch' && v.f) || v.id.endsWith('_shelf')) {
+      const [dx, dz] = STEP[v.id === 'torch' ? v.f : OPPOSITE[v.f || 's']];
+      if (!get(v.x + dx, v.y, v.z + dz)) warn(`${at}: не к чему крепиться`);
+      continue;
+    }
     if (ATTACHED.has(v.id) && v.stand === undefined) {
       const [dx, dz] = STEP[v.f || 'n'];
       if (!get(v.x + dx, v.y, v.z + dz)) warn(`${at}: не к чему крепиться`);
@@ -249,9 +255,32 @@ for (const s of STRUCTURES) {
 // игра не загружает), а функция castle ставит их все вокруг игрока.
 {
   const n = STRUCTURES.length;
+  load('design/preview/physics.js');
   load('design/preview/castle/castle.js');
   const castle = STRUCTURES.splice(n)[0];
   const b = castle.build();
+  // Проверки донжона: дойти до каждой комнаты, двери не упираются в стену, нет тёмных мест.
+  {
+    const { placed, light, walk, inside } = b.lighting;
+    const P = CastlePhysics;
+    const near = (m) => { for (let dy = 0; dy <= 1; dy++) for (let dx = -3; dx <= 3; dx++) for (let dz = -3; dz <= 3; dz++) if (walk.has(m.x + dx, m.y + dy, m.z + dz)) return true; return false; };
+    const BEHIND_SECRET = ['Древнее святилище'];
+    for (const m of b.marks) if (m.type === 'room' && !BEHIND_SECRET.includes(m.title) && (m.y < -1 || b.keepArea(m.x, m.z)) && !near(m)) warn(`замок: не дойти до «${m.title}» (${m.x},${m.y},${m.z})`);
+    let doors = 0;
+    for (const v of b.blocks.values()) {
+      if (!v.id.endsWith('_door') || v.top || !(v.y < -1 || b.keepArea(v.x, v.z))) continue;
+      const [dx, dz] = v.f === 'e' || v.f === 'w' ? [1, 0] : [0, 1];
+      const sides = [[v.x - dx, v.z - dz], [v.x + dx, v.z + dz]].map(([x, z]) => walk.stand(x, v.y, z));
+      if (!sides[0] || !sides[1]) warn(`замок: дверь (${v.x},${v.y},${v.z}) ${v.id} упирается в стену или мебель`);
+      doors++;
+    }
+    const dark = inside.filter(([x, y, z]) => light.at(x, y, z) < (y <= -2 ? 6 : 8));
+    const levels = {};
+    for (const [x, y, z] of inside) { const k = y <= -2 ? 'подземелье' : 'y' + y; const l = light.at(x, y, z); const e = levels[k] || (levels[k] = { n: 0, min: 99, sum: 0 }); e.n++; e.min = Math.min(e.min, l); e.sum += l; }
+    console.log(`Замок: проверено дверей ${doors}, комнат ${b.marks.filter((m) => m.type === 'room').length}; клеток пола под крышей ${inside.length}, автофакелов ${placed.length}, тёмных клеток ${dark.length}`);
+    console.log('Свет по уровням: ' + Object.entries(levels).sort().map(([k, e]) => `${k}: мин ${e.min}, ср ${(e.sum / e.n).toFixed(1)}`).join('; '));
+    for (const [x, y, z] of dark.slice(0, 15)) warn(`замок: темно (${light.at(x, y, z)}) в (${x},${y},${z})`);
+  }
   const tmpl = [...b.blocks.values()].filter((v) => !v.env);
   const map = new Map(tmpl.map((v) => [v.x + ',' + v.y + ',' + v.z, v]));
   const get = (x, y, z) => { const v = map.get(x + ',' + y + ',' + z); return v && v.id !== 'air' ? v : undefined; };
