@@ -19,7 +19,7 @@ const PACK = {
   description: 'Постройки хвойного биома: хижины, лагеря, ориентиры, хутора, острог и скит. С тайниками и историями. Пробный замок: /function castle',
   header: '6f3d2a8e-4c1b-4f7a-9e2d-5b8c1a7f3e90',
   module: 'a2c94e17-8b3f-4d6a-b1e5-0f7d9c3a2b48',
-  version: [0, 4, 3],
+  version: [0, 5, 0],
   minEngine: [1, 21, 120],
 };
 // Частота: spacing — размер ячейки в чанках (одна попытка на ячейку), separation — минимальный зазор.
@@ -141,7 +141,9 @@ function checkSupport(sid, blocks, get) {
     if (v.id === 'item_frame' && v.f === 'u') { if (!below) warn(`${at}: нет опоры снизу`); continue; }
     if ((ATTACHED.has(v.id) || v.id.endsWith('_banner')) && v.stand === undefined) {
       const [dx, dz] = STEP[v.f || 'n'];
-      if (!get(v.x + dx, v.y, v.z + dz)) warn(`${at}: не к чему крепиться`);
+      const wall = get(v.x + dx, v.y, v.z + dz);
+      if (!wall) warn(`${at}: не к чему крепиться`);
+      else if (v.id === 'ladder' && /glass|pane|bars/.test(wall.id)) warn(`${at}: лестница на стекле или решётке — в игре отвалится`);
       continue;
     }
     if ((NEEDS_FLOOR.test(v.id) || v.stand !== undefined) && !(v.id === 'spruce_door' && v.top) && !below) warn(`${at}: нет опоры снизу`);
@@ -287,10 +289,27 @@ for (const s of STRUCTURES) {
     for (const [k, list] of Object.entries(slots)) if (list.length > 1) warn(`замок: слот «${k}» встречается ${list.length} раза: ${list.join(', ')}`);
     console.log(`Тайники замка: ${Object.keys(slots).length} слотов — ${Object.keys(slots).join(', ')}`);
   }
-  const tmpl = [...b.blocks.values()].filter((v) => !v.env);
+  // Восстановленный замок (конец сюжета) — для проверок и заплаток этапов
+  const tmplFull = [...b.blocks.values()].filter((v) => !v.env);
+  const mapFull = new Map(tmplFull.map((v) => [v.x + ',' + v.y + ',' + v.z, v]));
+  const getFull = (x, y, z) => { const v = mapFull.get(x + ',' + y + ',' + z); return v && v.id !== 'air' ? v : undefined; };
+  checkSupport('castle', tmplFull.filter((v) => v.id !== 'air'), getFull);
+  // В мире замок встаёт в упадке (castle.js: ruins), этапы сюжета накладывают заплатки
+  const R = b.ruin;
+  const tmpl = [...R.blocks.values()].filter((v) => !v.env);
   const map = new Map(tmpl.map((v) => [v.x + ',' + v.y + ',' + v.z, v]));
   const get = (x, y, z) => { const v = map.get(x + ',' + y + ',' + z); return v && v.id !== 'air' ? v : undefined; };
-  checkSupport('castle', tmpl.filter((v) => v.id !== 'air'), get);
+  checkSupport('замок в упадке', tmpl.filter((v) => v.id !== 'air'), get);
+  {
+    // В упадке до жилых помещений этапа 0 и по главному пути всё равно можно дойти
+    const W = CastlePhysics.walk({ get: (x, y, z) => map.get(x + ',' + y + ',' + z) }, b.walkOpts.box, b.walkOpts.starts);
+    const near = (m) => { for (let dy = 0; dy <= 1; dy++) for (let dx = -3; dx <= 3; dx++) for (let dz = -3; dz <= 3; dz++) if (W.has(m.x + dx, m.y + dy, m.z + dz)) return true; return false; };
+    for (const t of castle.startRooms) {
+      const m = b.marks.find((mk) => mk.type === 'room' && mk.title === t);
+      if (!m) warn(`замок: нет помещения «${t}»`);
+      else if (!near(m)) warn(`замок в упадке: не дойти до «${t}»`);
+    }
+  }
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (const v of tmpl) [v.x, v.y, v.z].forEach((c, k) => { lo[k] = Math.min(lo[k], c); hi[k] = Math.max(hi[k], c); });
   // Основание: толща грунта под территорией и склон вокруг неё (castle.js, foundation).
@@ -329,8 +348,54 @@ for (const s of STRUCTURES) {
     lines.push(`structure load ${NS}:${name} ~${x0 - ORIGIN[0]} ~${lo[1] - ORIGIN[1]} ~${z0 - ORIGIN[2]}`);
     parts++;
   }
-  lines.push(`tellraw @s {"rawtext":[{"text":"Замок поставлен: ${parts} кусков. Ворота у вас за спиной, донжон впереди к северу."}]}`);
+  // «Сердце замка» — метка в каменной камере под площадью, от неё работают функции этапов
+  const HEART = [ORIGIN[0], -20, ORIGIN[2]];
+  const HEART_SEL = '@e[type=armor_stand,name=acastle_heart]';
+  lines.push(`kill ${HEART_SEL}`, `summon armor_stand acastle_heart ~ ~${HEART[1] - ORIGIN[1]} ~`);
+  lines.push(`tellraw @s {"rawtext":[{"text":"Замок поставлен в упадке: ${parts} кусков. Ворота у вас за спиной, донжон впереди к северу. Восстановление по этапам: /function castle_stage_1 … castle_stage_9, всё сразу: /function castle_full"}]}`);
   write('functions/castle.mcfunction', lines.join('\n') + '\n');
+
+  // ---------- Этапы восстановления ----------
+  // Заплатка этапа: клетки его зон в восстановленном виде, остальные клетки куска пустые
+  // (не трогают мир). Режется на куски 64×64, как и сам замок.
+  const stageReport = [];
+  for (const st of castle.stagesInfo) {
+    if (!st.n) continue;
+    const groups = new Map();
+    for (const [k, i] of R.owner) {
+      if (R.zones[i].stage !== st.n) continue;
+      const [x, y, z] = k.split(',').map(Number);
+      const g = Math.floor((x - lo[0]) / PART) + ',' + Math.floor((z - lo[2]) / PART);
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push([x, y, z, mapFull.get(k)]);
+    }
+    const fl = [
+      `# Этап ${st.n} «${st.title}». Приходят: ${st.npc}.`,
+      `# Восстанавливается: ${st.rooms}.`,
+      `execute unless entity ${HEART_SEL} run tellraw @s {"rawtext":[{"text":"Сначала поставьте замок: /function castle"}]}`,
+    ];
+    let k = 0, n = 0;
+    for (const list of groups.values()) {
+      const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+      for (const c of list) for (let q = 0; q < 3; q++) { mn[q] = Math.min(mn[q], c[q]); mx[q] = Math.max(mx[q], c[q]); }
+      const cells = [];
+      for (const [x, y, z, blk] of list) {
+        if (!blk && y <= -2) continue; // ниже земли пусто — это грунт, его не трогаем
+        const at = { x: x - mn[0], y: y - mn[1], z: z - mn[2] };
+        if (!blk || blk.env || blk.id === 'air') cells.push({ ...at, block: { name: 'minecraft:air', states: {} } });
+        else cells.push({ ...at, block: toBedrock(blk, getFull, BLOCKS, CONTAINERS.has(blk.id) && blk.theme ? { lootTable: themeTable(blk.theme) } : {}) });
+      }
+      const name = `castle_s${st.n}_${k++}`;
+      write(`structures/${NS}/${name}.mcstructure`, mcstructure([mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells));
+      fl.push(`execute as ${HEART_SEL} at @s run structure load ${NS}:${name} ~${mn[0] - HEART[0]} ~${mn[1] - HEART[1]} ~${mn[2] - HEART[2]}`);
+      n += cells.length;
+    }
+    fl.push(`execute if entity ${HEART_SEL} run tellraw @s {"rawtext":[{"text":"Этап ${st.n} «${st.title}»: восстановлено — ${st.rooms}. Если где-то не встало, подойдите ближе и повторите."}]}`);
+    write(`functions/castle_stage_${st.n}.mcfunction`, fl.join('\n') + '\n');
+    stageReport.push(`${st.n} ${st.title} — ${n} блоков, кусков ${k}`);
+  }
+  write('functions/castle_full.mcfunction', ['# Весь замок сразу восстановленным (для проверки)', ...castle.stagesInfo.filter((st) => st.n).map((st) => `function castle_stage_${st.n}`)].join('\n') + '\n');
+  console.log('Этапы восстановления: ' + stageReport.join('; '));
   console.log(`Замок: ${tmpl.length} блоков, ${parts} кусков, размер ${hi[0] - lo[0] + 1}×${hi[2] - lo[2] + 1}, высота ${hi[1] - lo[1] + 1}`);
   const ores = Object.entries(foundCount).filter(([k]) => k.endsWith('_ore')).map(([k, n]) => `${k.replace('_ore', '')} ${n}`).join(', ');
   console.log(`Основание: ${Object.values(foundCount).reduce((a, n) => a + n, 0)} блоков грунта, руда: ${ores}`);

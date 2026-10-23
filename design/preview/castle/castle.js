@@ -201,15 +201,15 @@
   const HERALD = [['bo', 11], ['flo', 11]]; // герб рода: жёлтая кайма и цветок на красном
   const kit = (w) => ({
     // Стул-ступень: look — куда смотрит сидящий
-    chair: (x, y, z, look, wood = 'dark_oak') => w.set(x, y, z, wood + '_stairs', { f: OPP[look] }),
-    bench: (x1, z1, x2, z2, y, look, wood = 'spruce') => box(x1, y, z1, x2, y, z2, (x, yy, z) => w.set(x, yy, z, wood + '_stairs', { f: OPP[look] })),
+    chair: (x, y, z, look, wood = 'dark_oak') => w.set(x, y, z, wood + '_stairs', { f: OPP[look], fur: 1 }),
+    bench: (x1, z1, x2, z2, y, look, wood = 'spruce') => box(x1, y, z1, x2, y, z2, (x, yy, z) => w.set(x, yy, z, wood + '_stairs', { f: OPP[look], fur: 1 })),
     // Столешница из верхних плит
-    table: (x1, y, z1, x2, z2, id = 'dark_oak_slab') => w.fill(x1, y, z1, x2, y, z2, id, { h: 'top' }),
+    table: (x1, y, z1, x2, z2, id = 'dark_oak_slab') => w.fill(x1, y, z1, x2, y, z2, id, { h: 'top', fur: 1 }),
     // Столик на ножке: забор и нажимная плита
-    stand: (x, y, z, plate = 'dark_oak_pressure_plate') => { w.set(x, y, z, 'dark_oak_fence'); w.set(x, y + 1, z, plate); },
+    stand: (x, y, z, plate = 'dark_oak_pressure_plate') => { w.set(x, y, z, 'dark_oak_fence', { fur: 1 }); w.set(x, y + 1, z, plate); },
     candle: (x, y, z, n = 3, id = 'candle') => w.set(x, y, z, id, { lit: 1, n }),
     // Подсвечник: забор с пучком свечей сверху
-    candlestand: (x, y, z, n = 4) => { w.set(x, y, z, 'dark_oak_fence'); w.set(x, y + 1, z, 'candle', { lit: 1, n }); },
+    candlestand: (x, y, z, n = 4) => { w.set(x, y, z, 'dark_oak_fence', { fur: 1 }); w.set(x, y + 1, z, 'candle', { lit: 1, n }); },
     torch: (x, y, z, wall) => w.set(x, y, z, 'torch', { f: wall }),
     hang: (x, y, z, id = 'lantern') => w.set(x, y, z, id, { hang: 1 }),
     // Люстра: цепь от потолка (ceil — высота блока потолка), крестовина из забора,
@@ -226,7 +226,7 @@
     },
     // Шкаф: две бочки дверцами наружу
     wardrobe: (x, y, z, look) => { w.set(x, y, z, 'barrel', { f: look }); w.set(x, y + 1, z, 'barrel', { f: look }); },
-    shelf: (x, y, z, look) => w.set(x, y, z, 'dark_oak_shelf', { f: look }),
+    shelf: (x, y, z, look) => w.set(x, y, z, 'dark_oak_shelf', { f: look, fur: 1 }),
     // Ковёр с каймой: только на пустой пол (или поверх другого ковра), мебель не затирает
     rug: (x1, z1, x2, z2, y, inner, border) => box(x1, y, z1, x2, y, z2, (x, yy, z) => {
       const v = w.get(x, yy, z);
@@ -239,8 +239,8 @@
     arms: (x, y, z, wall, item) => w.set(x, y, z, 'item_frame', { f: wall, item }),
     // Кровать под балдахином: x1..x2, z1..z2 — столбики по углам, сверху ткань
     canopy: (x1, z1, x2, z2, y, wool) => {
-      for (const [x, z] of [[x1, z1], [x2, z1], [x1, z2], [x2, z2]]) w.fill(x, y, z, x, y + 2, z, 'dark_oak_fence');
-      w.fill(x1, y + 3, z1, x2, y + 3, z2, wool);
+      for (const [x, z] of [[x1, z1], [x2, z1], [x1, z2], [x2, z2]]) w.fill(x, y, z, x, y + 2, z, 'dark_oak_fence', { fur: 1 });
+      w.fill(x1, y + 3, z1, x2, y + 3, z2, wool, { fur: 1 });
     },
     pot: (x, y, z, plant) => w.set(x, y, z, 'flower_pot', { plant }),
   });
@@ -349,7 +349,7 @@
     for (const L of [0, 1, 2, 3, 4, 5]) { hole(L, 3, 5); hole(L, 35, 5); hole(L, 5, 35); hole(L, 33, 35); }
     for (const i of [3, 35]) hole(5, i, 5, 2);
     air(w, 5, 30, 3, 5, 31, 3); air(w, 33, 30, 3, 33, 31, 3);
-    for (const [x, z, f] of [[-4, 0, 'w'], [42, 0, 'e']]) w.fill(x, 30, z, x, 37, z, 'ladder', { f });
+    for (const [x, z, f] of [[-4, 1, 'w'], [42, 1, 'e']]) w.fill(x, 30, z, x, 37, z, 'ladder', { f }); // рядом с бойницей, не на стекле
 
     // Средняя башня: ниша трона, гардеробная хозяина, дозорные
     ring(w, 14, -1, -6, 24, 38, 0); air(w, 15, 0, -5, 23, 38, -1);
@@ -380,7 +380,7 @@
     // Служебная винтовая лестница (юго-запад): из подклета к буфетной и наверх
     solid(w, -2, -1, 36, 2, 36, 40, STONE);
     spiral2(w, -4, 34, 4, 42, [3, 35], true, [[0, 6], [6, 12], [12, 18], [18, 24], [24, 30], [30, 30]], -1);
-    w.fill(-4, 30, 38, -4, 37, 38, 'ladder', { f: 'w' });
+    w.fill(-4, 30, 39, -4, 37, 39, 'ladder', { f: 'w' });
     w.room(3, 0, 35, 'Служебная лестница', 'Винтовая лестница для слуг в юго-западной башне: из кухни в буфетную у Большого зала и выше, до крыши.');
     w.room(35, 0, 35, 'Парадная лестница', 'Широкая винтовая лестница юго-восточной башни: все этажи, крыша и верх башни.');
 
@@ -701,7 +701,7 @@
     w.room(38, 30, 0, 'Дозорная', 'Верх северо-восточной башни: дозорный костёр, скамья для часовых.');
     K.chair(19, 24, -5, 'n'); table(17, 24, -3, 18, -3); K.chair(16, 24, -3, 'e'); w.set(23, 24, -2, 'chest', { f: 'w' }); K.chandelier(19, 29, -3, 0, 2, false);
     w.room(19, 24, -3, 'Дозорная средней башни', 'Комната дозорного над нишей трона: окно на север, стол, сундук.');
-    w.set(19, 30, -3, 'bell'); w.fill(15, 30, -3, 15, 39, -3, 'ladder', { f: 'w' }); K.hang(21, 38, -3); K.hang(17, 38, -3);
+    w.set(19, 30, -3, 'bell'); w.fill(15, 30, -2, 15, 39, -2, 'ladder', { f: 'w' }); K.hang(21, 38, -3); K.hang(17, 38, -3);
     w.room(19, 30, -3, 'Колокольня', 'Верхняя комната средней башни с набатным колоколом. Лестница ведёт на смотровую площадку.');
     K.hang(3, 36, 38); w.set(-3, 30, 36, 'barrel', { f: 'e' });
     w.room(19, 30, 19, 'Крыша', 'Плоская кровля за зубцами, над ней четыре угловые башни и средняя колокольня.');
@@ -1525,6 +1525,308 @@
     }
   }
 
+  // ======================= ЗАПУСТЕНИЕ И ВОССТАНОВЛЕНИЕ =======================
+  // Замок находят в упадке. Описан он один раз — в восстановленном виде, а
+  // запустение накладывается поверх по зонам. У каждой зоны свой этап сюжета:
+  // когда этап пройден, зона возвращается к восстановленному виду. Сборщик пишет
+  // для этапа «заплатку» (только клетки его зон) и функцию castle_stage_N.
+  // Тайники (slot), сундуки, бочки, кафедры, двери, кровати и лестницы запустение
+  // не трогает — их содержимое и проходы не зависят от этапа.
+  const STAGES = [
+    { n: 0, title: 'Упадок', npc: 'король Всеволод, повариха Агафья, конюх Фрол, стражники Остап и Митька', rooms: 'опочивальня короля и гардеробная, кухня, конюшня, ворота и надвратные башни, парадная лестница' },
+    { n: 1, title: 'Стража', npc: 'капитан Демьян Беляк, три стражника, лучник', rooms: 'бреши в стенах, угловые башни, казарма во дворе, караульный этаж донжона, караул у входа, зубцы и верх башен донжона' },
+    { n: 2, title: 'Кузня', npc: 'кузнец Гордей, подмастерье Васька', rooms: 'кузница, ристалище, парадная оружейная, арсенал, башенная оружейная' },
+    { n: 3, title: 'Хозяйство', npc: 'кастелян Игнат, служанка Дуня', rooms: 'дом управителя, подклет (пекарня, кладовые, погреба, колодезная), служебная лестница, буфетная, хлебная, счётная палата, казна, сокровищница, комната служанок, бельевая, амбар, площадь с колодцем и лавками, двор и дорожки' },
+    { n: 4, title: 'Вера', npc: 'отец Варлаам', rooms: 'часовня во дворе, склеп, кладбище, часовня донжона, ризница' },
+    { n: 5, title: 'Знание', npc: 'переписчик Евсей, звездочёт Ленц, голубятник Сёмка', rooms: 'библиотека со скрипторием, сени библиотеки, архив грамот, кабинет хозяина, комната звездочёта, голубятня' },
+    { n: 6, title: 'Исцеление', npc: 'травница Марфа', rooms: 'лекарская, лаборатория, огород' },
+    { n: 7, title: 'Подземелье', npc: 'тюремщик Прохор', rooms: 'катакомбы (обвалы разобраны), темница, караульня подклета' },
+    { n: 8, title: 'Пир', npc: 'менестрель Тимоша, служанки, гости', rooms: 'Большой зал, сени, зал совета, лестничный зал, галереи, музыкантская, солар, гостевые покои, горница, покои хозяйки, детская, покои гостя' },
+    { n: 9, title: 'Наследие', npc: 'король умирает, замок переходит игроку', rooms: 'трон в нише средней башни, колокольня, знамёна на всех башнях' },
+  ];
+  // Помещения, до которых игрок должен дойти и в упадке (живут люди этапа 0)
+  const START_ROOMS = ['Кухня', 'Опочивальня хозяина', 'Гардеробная', 'Конюшня', 'Ворота', 'Большой зал', 'Горница', 'Парадная лестница'];
+
+  function ruinZones(KX, KZ, X2, Z2, CX) {
+    const ST = [0, 6, 12, 18, 24, 30];
+    const kb = (i1, y1, j1, i2, y2, j2) => [KX + i1, y1, KZ + j1, KX + i2, y2, KZ + j2];
+    const kp = (i, y, j) => [KX + i, y, KZ + j];
+    // Комната донжона по рамке стен; у наружных стен — вместе с толщей стены и окнами
+    const room = (L, i1, j1, i2, j2) => kb(i1 === 2 ? 0 : i1 + 1, ST[L], j1 === 2 ? 0 : j1 + 1, i2 === 36 ? 38 : i2 - 1, ST[L] + 4, j2 === 36 ? 38 : j2 - 1);
+    const tower = (k, y1, y2) => { const [a, c] = { nw: [-5, -5], ne: [33, -5] }[k]; return kb(a, y1, c, a + 10, y2, c + 10); };
+    const mid = (y1, y2) => kb(14, y1, -6, 24, y2, -1);
+    const Z = (stage, title, kind, boxes, o = {}) => ({ stage, title, kind, boxes, heavy: 1, ...o });
+    const wallTop = (x1, z1, x2, z2) => [x1, -1, z1, x2, 11, z2];
+    const ctower = (x1, z1) => [x1, -1, z1, x1 + 8, 28, z1 + 8];
+    const banner = (x, y1, z, y2) => [x, y1, z, x, y2, z];
+    return [
+      // Этап 0 — здесь живут с самого начала, не разрушено
+      Z(0, 'Кухня', 'lock', [room(0, 2, 19, 14, 36)]),
+      Z(0, 'Опочивальня короля', 'lock', [room(3, 14, 2, 28, 14)]),
+      Z(0, 'Гардеробная', 'lock', [mid(17, 23)]),
+      Z(0, 'Парадная лестница', 'lock', [kb(33, -1, 33, 43, 42, 43)]),
+      Z(0, 'Пристройка со входом', 'lock', [kb(15, -1, 39, 23, 14, 48)]),
+      Z(0, 'Конюшня', 'lock', [[26, -1, 86, 38, 12, 100]]),
+      Z(0, 'Ворота', 'lock', [[CX - 9, -1, 123, CX + 9, 16, 131]]),
+      // Этап 9 — знамёна и трон (раньше прочих, чтобы их клетки достались этому этапу)
+      Z(9, 'Знамёна на башнях', 'strip', [banner(KX, 38, KZ, 40), banner(KX + 38, 38, KZ, 40), banner(KX, 38, KZ + 38, 40), banner(KX + 38, 38, KZ + 38, 40),
+        banner(KX + 19, 40, KZ - 3, 42), banner(4, 26, 4, 28), banner(X2 - 4, 26, 4, 28), banner(4, 26, Z2 - 4, 28), banner(X2 - 4, 26, Z2 - 4, 28)], { re: /banner|fence/ }),
+      Z(9, 'Трон', 'room', [mid(5, 16)], { strips: [[kb(19, 8, -5, 19, 8, -5), /gold_block/]] }),
+      Z(9, 'Колокольня', 'room', [mid(29, 42)]),
+      // Этап 1 — стража: стены, башни, казармы
+      Z(1, 'Крепостные стены', 'wall', [wallTop(9, 3, X2 - 9, 4), wallTop(3, 9, 4, Z2 - 9), wallTop(X2 - 4, 9, X2 - 3, Z2 - 9), wallTop(9, Z2 - 4, CX - 10, Z2 - 3), wallTop(CX + 10, Z2 - 4, X2 - 9, Z2 - 3)],
+        { breaches: [[30, 3, 36, 4, 2], [3, 96, 4, 101, 2], [X2 - 4, 58, X2 - 3, 63, 3]] }),
+      Z(1, 'Угловые башни стены', 'wall', [ctower(0, 0), ctower(X2 - 8, 0), ctower(0, Z2 - 8), ctower(X2 - 8, Z2 - 8)], { holes: [[X2 - 4, 15, 4, 2.5, 9]], erode: 16 }),
+      Z(1, 'Казарма', 'room', [[10, -1, 70, 34, 17, 80]], { holes: [[18, 10, 77, 2, 6]] }),
+      Z(1, 'Казарма донжона', 'room', [room(4, 2, 2, 36, 20)]),
+      Z(1, 'Комната капитана', 'room', [room(4, 2, 20, 14, 36)]),
+      Z(1, 'Осадный склад', 'room', [room(4, 24, 20, 36, 36)]),
+      Z(1, 'Дозорная средней башни', 'room', [mid(24, 28)]),
+      Z(1, 'Караул у входа', 'room', [room(1, 24, 31, 28, 36)]),
+      Z(1, 'Верх донжона', 'wall', [kb(-6, 29, -7, 44, 41, 44)], { erode: 30, holes: [[...kp(40, 34, 3), 2, 6]] }),
+      // Этап 2 — кузня
+      Z(2, 'Кузница', 'room', [[9, -1, 85, 21, 14, 97]], { cuts: [[11, 9, 87, 13, 13, 88]] }),
+      Z(2, 'Ристалище', 'room', [[104, -1, 26, 120, 3, 52]]),
+      Z(2, 'Парадная оружейная', 'room', [room(1, 2, 13, 10, 23)]),
+      Z(2, 'Арсенал', 'room', [room(4, 14, 20, 24, 36)]),
+      Z(2, 'Башенная оружейная', 'room', [tower('ne', 24, 28)]),
+      // Этап 3 — хозяйство
+      Z(3, 'Пекарня', 'room', [room(0, 2, 2, 14, 19)]),
+      Z(3, 'Кладовые', 'room', [room(0, 14, 2, 24, 36)]),
+      Z(3, 'Винный погреб', 'room', [room(0, 24, 2, 36, 19)]),
+      Z(3, 'Ледник', 'room', [mid(0, 4)]),
+      Z(3, 'Колодезная', 'room', [tower('nw', 0, 4)]),
+      Z(3, 'Погреб-холодильник', 'room', [tower('ne', 0, 4)]),
+      Z(3, 'Служебная лестница', 'stair', [kb(-5, -1, 33, 5, 38, 43)]),
+      Z(3, 'Буфетная', 'room', [room(1, 2, 23, 10, 36)]),
+      Z(3, 'Хлебная', 'room', [room(1, 10, 31, 14, 36)]),
+      Z(3, 'Счётная палата', 'room', [room(1, 28, 2, 36, 13)]),
+      Z(3, 'Казна', 'room', [tower('ne', 6, 10)]),
+      Z(3, 'Сокровищница', 'room', [tower('ne', 12, 16)]),
+      Z(3, 'Комната служанок', 'room', [room(3, 2, 24, 14, 36)]),
+      Z(3, 'Бельевая', 'room', [room(3, 24, 24, 36, 36)]),
+      Z(3, 'Дом управителя', 'room', [[95, -1, 5, 109, 18, 21]], { cuts: [[99, 0, 19, 105, 5, 20]] }),
+      Z(3, 'Амбар', 'room', [[7, -1, 11, 23, 15, 25]], { holes: [[12, 7, 16, 2.5, 7]] }),
+      Z(3, 'Площадь у ворот', 'room', [[50, -1, 100, 76, 7, 118]], { cuts: [[69, 3, 107, 73, 7, 111], [72, 1, 109, 72, 2, 109], [52, 2, 101, 54, 2, 104, 0.6], [52, 2, 113, 54, 2, 116, 0.6], [54, 0, 104, 54, 1, 104], [52, 0, 116, 52, 1, 116]] }),
+      // Этап 4 — вера
+      Z(4, 'Часовня, склеп и кладбище', 'room', [[87, -12, 70, 118, 27, 107]], { holes: [[94, 8, 83, 2, 6]] }),
+      Z(4, 'Часовня донжона', 'room', [room(2, 2, 2, 10, 15)]),
+      Z(4, 'Ризница', 'room', [tower('nw', 12, 16)]),
+      // Этап 5 — знание
+      Z(5, 'Библиотека', 'room', [kb(39, -1, 8, 58, 30, 30)], { holes: [[...kp(51, 17, 23), 2, 9]] }),
+      Z(5, 'Сени библиотеки', 'room', [room(1, 28, 13, 36, 24)]),
+      Z(5, 'Архив грамот', 'room', [tower('nw', 6, 10)]),
+      Z(5, 'Кабинет хозяина', 'room', [room(2, 28, 2, 36, 13)]),
+      Z(5, 'Комната звездочёта', 'room', [tower('nw', 18, 22)]),
+      Z(5, 'Голубятня', 'room', [tower('nw', 24, 28)]),
+      // Этап 6 — исцеление
+      Z(6, 'Лекарская', 'room', [room(2, 28, 24, 36, 31)]),
+      Z(6, 'Лаборатория', 'room', [tower('ne', 18, 22)]),
+      Z(6, 'Огород', 'yard', [[7, -1, 29, 31, 4, 59]], { heavy: 1.6, cuts: [[24, 2, 45, 28, 2, 48, 0.6]] }),
+      // Этап 7 — подземелье: обвалы перекрывают ходы
+      Z(7, 'Катакомбы', 'crypt', [kb(-11, -23, -21, 61, -2, 58)], { fills: [kb(44, -10, 31, 46, -7, 33), kb(12, -10, -1, 13, -7, -1), kb(18, -10, 1, 20, -7, 2)] }),
+      Z(7, 'Караульня подклета', 'room', [room(0, 24, 19, 36, 36)]),
+      // Этап 8 — пир: парадные и жилые покои
+      Z(8, 'Большой зал', 'room', [kb(11, 5, 0, 27, 18, 26)], {
+        holes: [[...kp(13, 17, 22), 1.6, 1]], cuts: [kb(17, 12, 13, 21, 16, 17)],
+        place: [[...kp(19, 6, 16), 'dark_oak_fence'], [...kp(20, 6, 15), 'dark_oak_fence'], [...kp(18, 6, 14), 'lantern'], [...kp(19, 6, 15), 'cobblestone_slab']],
+      }),
+      Z(8, 'Сени за перегородкой', 'room', [room(1, 10, 27, 28, 31)], { heavy: 0.6 }),
+      Z(8, 'Входные сени', 'room', [room(1, 14, 31, 24, 36)], { heavy: 0.6 }),
+      Z(8, 'Зал совета', 'room', [room(1, 2, 2, 10, 13)]),
+      Z(8, 'Лестничный зал', 'room', [room(1, 28, 24, 36, 36)], { heavy: 0.6 }),
+      Z(8, 'Галерея менестрелей', 'room', [room(2, 10, 27, 28, 31)]),
+      Z(8, 'Музыкантская', 'room', [room(2, 14, 31, 24, 36)]),
+      Z(8, 'Галерея над залом', 'room', [room(2, 28, 13, 36, 24)]),
+      Z(8, 'Площадка второго этажа', 'room', [room(2, 24, 31, 36, 36)]),
+      Z(8, 'Солар', 'room', [room(2, 2, 15, 10, 31)]),
+      Z(8, 'Гостевые покои', 'room', [room(2, 2, 31, 14, 36)]),
+      Z(8, 'Горница', 'room', [room(3, 2, 14, 36, 24)], { heavy: 0.7 }),
+      Z(8, 'Покои хозяйки', 'room', [room(3, 2, 2, 14, 14)], { // пролом в наружной стене, обломки внизу
+        cuts: [kb(0, 19, 9, 2, 20, 11, 0.85), kb(0, 21, 10, 1, 21, 10)],
+        place: [[...kp(-1, 0, 9), 'cobblestone'], [...kp(-1, 0, 10), 'mossy_cobblestone'], [...kp(-1, 1, 10), 'cobblestone_slab'], [...kp(-2, 0, 10), 'mossy_cobblestone_slab'], [...kp(-1, 0, 11), 'gravel'], [...kp(-2, 0, 11), 'cobblestone_slab']],
+      }),
+      Z(8, 'Детская', 'room', [room(3, 28, 2, 36, 14)]),
+      Z(8, 'Покои гостя', 'room', [room(3, 14, 24, 24, 36)]),
+      // Двор целиком — последним: трава, кусты, заросшие дорожки, погасшие фонари
+      Z(3, 'Двор', 'yard', [[-6, -1, -6, X2 + 6, 3, Z2 + 6]]),
+    ];
+  }
+
+  // Накладывает запустение на восстановленный замок. Возвращает карту блоков в
+  // упадке и для каждой изменённой клетки — номер зоны, которая её изменила.
+  function ruins(full, zones) {
+    const blocks = new Map(full.blocks);
+    const owner = new Map(), locked = new Set();
+    const key = (x, y, z) => x + ',' + y + ',' + z;
+    const get = (x, y, z) => blocks.get(key(x, y, z));
+    let zi = -1;
+    const set = (x, y, z, id, p) => {
+      const k = key(x, y, z);
+      if (locked.has(k)) return false;
+      const o = owner.get(k);
+      if (o !== undefined && o !== zi) return false;
+      owner.set(k, zi);
+      blocks.set(k, { ...(p || {}), x, y, z, id });
+      return true;
+    };
+    const opaque = (v) => window.CastlePhysics ? CastlePhysics.isOpaque(v) : !!v && v.id !== 'air';
+    const has = (v) => !!v && v.id !== 'air' && v.id !== 'cobweb';
+    const isAir = (x, y, z) => !has(get(x, y, z)) && !(get(x, y, z) && get(x, y, z).id === 'cobweb');
+    const PROTECT = /chest|barrel|decorated_pot|lectern|suspicious_gravel|_sign$|_door$|ladder|_bed$|bell|anvil|grindstone|furnace|smoker|brewing|enchanting|jukebox|noteblock|loom|cartography|fletching|smithing|composter|cauldron|water/;
+    const removable = (v) => has(v) && !v.slot && !v.theme && !PROTECT.test(v.id);
+    const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    const nearDoor = (x, y, z) => N4.some(([dx, dz]) => { const n = get(x + dx, y, z + dz), m = get(x + dx, y - 1, z + dz); return (n && /_door$|ladder|fence_gate/.test(n.id)) || (m && /_door$/.test(m.id)); });
+    const RUBBLE = ['cobblestone', 'mossy_cobblestone', 'cobblestone_slab', 'mossy_cobblestone_slab', 'gravel', 'mossy_cobblestone_slab'];
+    const CAVE = [['gravel', 3], ['cobblestone', 3], ['mossy_cobblestone', 2], ['andesite', 1], ['stone', 1]];
+    const STONE = /^(stone_bricks|mossy_stone_bricks|cracked_stone_bricks|cobblestone|mossy_cobblestone|stone)$/;
+    const rngOf = (s) => {
+      let a = 7; for (const ch of s) a = (Math.imul(a, 31) + ch.charCodeAt(0)) | 0;
+      return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    };
+    const eachBox = ([x1, y1, z1, x2, y2, z2], fn) => { for (let x = x1; x <= x2; x++) for (let y = y1; y <= y2; y++) for (let z = z1; z <= z2; z++) fn(x, y, z); };
+    // Мусор на пол у стены: не в узком ходу, не у двери и не у лестницы
+    const rubbleOk = (x, y, z) => {
+      if (!opaque(get(x, y - 1, z)) || !isAir(x, y + 1, z) || nearDoor(x, y, z)) return false;
+      const w = N4.map(([dx, dz]) => opaque(get(x + dx, y, z + dz)));
+      const n = w.filter(Boolean).length;
+      return n >= 1 && n <= 2 && !(w[0] && w[1]) && !(w[2] && w[3]);
+    };
+    const pick = (r, arr) => arr[Math.floor(r() * arr.length)];
+    const rubble = (r, x, y, z) => { const id = pick(r, RUBBLE); set(x, y, z, id, /slab/.test(id) ? {} : undefined); };
+
+    function roomOps(z, r) {
+      const h = z.heavy, stair = z.kind === 'stair', crypt = z.kind === 'crypt';
+      for (const bx of z.boxes) eachBox(bx, (x, y, zz) => {
+        const v = get(x, y, zz);
+        if (has(v)) {
+          const id = v.id;
+          if (v.slot || v.theme) return;
+          if (id === 'lantern' && v.hang) { if (r() < 0.75 * Math.min(h, 1)) set(x, y, zz, 'air'); }
+          else if (id === 'lantern') { if (r() < 0.6) set(x, y, zz, 'air'); }
+          else if (id === 'torch') { if (r() < 0.7) set(x, y, zz, 'air'); }
+          else if (/candle$/.test(id)) { if (v.lit) set(x, y, zz, id, { ...v, lit: 0 }); }
+          else if (id === 'campfire') set(x, y, zz, 'campfire_out');
+          else if (stair) { if (id === 'stone_bricks' && r() < 0.15) set(x, y, zz, 'cracked_stone_bricks'); }
+          else if (/carpet$/.test(id) && id !== 'moss_carpet') { if (r() < 0.5 * h) set(x, y, zz, 'air'); }
+          else if (/glass_pane$/.test(id)) { if (r() < 0.65) set(x, y, zz, 'air'); }
+          else if (removable(v) && (v.fur || /^(flower_pot|cake|item_frame)$|_banner$/.test(id))) { if (r() < 0.45 * h) set(x, y, zz, 'air'); }
+          else if (id === 'stone_bricks') { const q = r(); if (q < 0.16) set(x, y, zz, 'cracked_stone_bricks'); else if (q < 0.24) set(x, y, zz, 'mossy_stone_bricks'); }
+          return;
+        }
+        if (stair || (v && v.id === 'cobweb')) return;
+        // Пустая клетка: паутина под потолком, мусор и мох на полу
+        const walls = N4.filter(([dx, dz]) => opaque(get(x + dx, y, zz + dz))).length;
+        if (opaque(get(x, y + 1, zz)) && walls >= 2 && isAir(x, y - 1, zz) && isAir(x, y - 2, zz)) { if (r() < (crypt ? 0.6 : 0.45) * Math.min(h, 1)) set(x, y, zz, 'cobweb'); return; }
+        if (rubbleOk(x, y, zz)) { const q = r(); if (q < 0.07 * h) rubble(r, x, y, zz); else if (q < 0.1 * h) set(x, y, zz, 'moss_carpet'); }
+      });
+    }
+    function yardOps(z, r) {
+      const h = z.heavy;
+      for (const bx of z.boxes) for (let x = bx[0]; x <= bx[3]; x++) for (let zz = bx[2]; zz <= bx[5]; zz++) {
+        const g = get(x, -1, zz);
+        if (!g || !g.g || /farmland|water/.test(g.id)) continue;
+        if (/gravel|grass_path|coarse_dirt|cobblestone/.test(g.id) && r() < 0.45 * Math.min(h, 1.2)) set(x, -1, zz, 'grass_block', { g: 1 });
+        if (!isAir(x, 0, zz) || nearDoor(x, 0, zz) || get(x, 0, zz)) continue;
+        const q = r();
+        if (q < 0.15 * h) set(x, 0, zz, 'short_grass');
+        else if (q < 0.21 * h) set(x, 0, zz, 'fern');
+        else if (q < 0.225 * h && !N4.some(([dx, dz]) => has(get(x + dx, 0, zz + dz)))) set(x, 0, zz, 'azalea_leaves');
+      }
+      for (const bx of z.boxes) eachBox(bx, (x, y, zz) => { const v = get(x, y, zz); if (v && v.id === 'lantern' && !v.hang && r() < 0.6) set(x, y, zz, 'air'); });
+    }
+    // Осыпаются только тонкие выступы наверху: зубцы и парапеты
+    function erode(z, r, y0) {
+      for (const bx of z.boxes) eachBox(bx, (x, y, zz) => {
+        const v = get(x, y, zz);
+        if (y < y0 || !v || !STONE.test(v.id) || has(get(x, y + 1, zz)) || !has(get(x, y - 1, zz))) return;
+        if (N4.filter(([dx, dz]) => !has(get(x + dx, y, zz + dz))).length >= 2 && r() < 0.25) set(x, y, zz, 'air');
+      });
+    }
+    // Обломки там, где упал потолок: на первый сплошной пол ниже
+    const debrisBelow = (r, x, y, zz) => {
+      for (let yy = y - 1; yy >= y - 16; yy--) {
+        const v = get(x, yy, zz);
+        if (!has(v)) continue;
+        if (opaque(v) && isAir(x, yy + 1, zz) && r() < 0.7) rubble(r, x, yy + 1, zz);
+        return;
+      }
+    };
+    function hole(r, [cx, cy, cz, rad, hh]) {
+      const R2 = Math.ceil(rad);
+      for (let dx = -R2; dx <= R2; dx++) for (let dz = -R2; dz <= R2; dz++) {
+        if (dx * dx + dz * dz > rad * rad + r() * 1.5) continue;
+        for (let y = cy; y <= cy + hh; y++) { const v = get(cx + dx, y, cz + dz); if (has(v) && !v.slot && !v.theme) set(cx + dx, y, cz + dz, 'air'); }
+        debrisBelow(r, cx + dx, cy, cz + dz);
+      }
+    }
+    // Брешь в стене: провал клином, у подножия с обеих сторон завалы
+    function breach(r, [x1, z1, x2, z2, yb]) {
+      const alongX = x2 - x1 >= z2 - z1, a1 = alongX ? x1 : z1, a2 = alongX ? x2 : z2, c = (a1 + a2) / 2;
+      for (let x = x1; x <= x2; x++) for (let zz = z1; zz <= z2; zz++) {
+        const t = Math.abs((alongX ? x : zz) - c);
+        for (let y = Math.round(yb + t * 1.6 + r()); y <= 12; y++) { const v = get(x, y, zz); if (has(v)) set(x, y, zz, 'air'); }
+      }
+      for (let a = a1 - 2; a <= a2 + 2; a++) for (const side of [-1, 1]) for (let d = 1; d <= 3; d++) {
+        const x = alongX ? a : (side < 0 ? x1 - d : x2 + d), zz = alongX ? (side < 0 ? z1 - d : z2 + d) : a;
+        const hgt = Math.max(0, 2 - Math.abs(a - c) / 2.5 - d * 0.6 + r());
+        for (let y = 0; y < hgt && y < 3; y++) if (isAir(x, y, zz) && opaque(get(x, y - 1, zz))) rubble(r, x, y, zz);
+      }
+    }
+    // Висит ли блок, лишившись опоры
+    const STEP = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
+    const OPPF = { n: 's', s: 'n', e: 'w', w: 'e' };
+    function loose(v, x, y, zz) {
+      const id = v.id, below = get(x, y - 1, zz), above = get(x, y + 1, zz);
+      if (/_door$|ladder|_bed$/.test(id) || v.slot) return false;
+      if (id === 'lantern' || id === 'soul_lantern') return v.hang ? !has(above) : !has(below);
+      if (id === 'iron_chain') return (!v.a || v.a === 'y') && !has(above);
+      const wallDir = (id === 'torch' && v.f) || (id === 'item_frame' && v.f && v.f !== 'u') || (/_banner$/.test(id) && v.stand === undefined) || id === 'vine' ? v.f || 'n' : /_shelf$/.test(id) ? OPPF[v.f || 's'] : null;
+      if (wallDir) { const [dx, dz] = STEP[wallDir]; return !has(get(x + dx, y, zz + dz)); }
+      if (/candle|carpet|flower_pot|cake|pressure_plate|campfire|skull|lever|brewing_stand|short_grass|fern|poppy|allium|cornflower|dandelion|lily|daisy|bluet|_banner|torch/.test(id) || (id === 'item_frame' && v.f === 'u')) return !has(below);
+      return false;
+    }
+    function settle(z) {
+      for (let pass = 0; pass < 6; pass++) {
+        let n = 0;
+        for (const [x1, y1, z1, x2, y2, z2] of z.boxes) eachBox([x1 - 1, y1 - 1, z1 - 1, x2 + 1, y2 + 1, z2 + 1], (x, y, zz) => {
+          const v = get(x, y, zz);
+          if (has(v) && loose(v, x, y, zz) && set(x, y, zz, 'air')) n++;
+        });
+        if (!n) break;
+      }
+    }
+
+    zones.forEach((z, i) => {
+      zi = i;
+      if (z.kind === 'lock') { for (const bx of z.boxes) eachBox(bx, (x, y, zz) => locked.add(key(x, y, zz))); return; }
+      const r = rngOf(z.title);
+      for (const [bx, re] of z.strips || []) eachBox(bx, (x, y, zz) => { const v = get(x, y, zz); if (v && re.test(v.id)) set(x, y, zz, 'air'); });
+      if (z.kind === 'strip') { for (const bx of z.boxes) eachBox(bx, (x, y, zz) => { const v = get(x, y, zz); if (v && z.re.test(v.id)) set(x, y, zz, 'air'); }); return; }
+      for (const f of z.fills || []) eachBox(f, (x, y, zz) => { const v = get(x, y, zz); if (!v || !PROTECT.test(v.id)) set(x, y, zz, CATA_PICK(r, CAVE)); });
+      for (const c of z.cuts || []) eachBox(c, (x, y, zz) => { const v = get(x, y, zz); if (has(v) && !v.slot && !v.theme && !PROTECT.test(v.id) && (c[6] === undefined || r() < c[6])) set(x, y, zz, 'air'); });
+      for (const b of z.breaches || []) breach(r, b);
+      for (const hl of z.holes || []) hole(r, hl);
+      for (const [x, y, zz, id, p] of z.place || []) set(x, y, zz, id, p);
+      if (z.kind === 'yard') yardOps(z, r);
+      else roomOps(z, r);
+      if (z.kind === 'wall') erode(z, r, z.erode || 9);
+      settle(z);
+    });
+    return { blocks, owner, zones };
+  }
+  // Выбор из палитры [id, вес] собственным генератором зоны
+  const CATA_PICK = (r, pal) => { let t = r() * pal.reduce((a, [, w]) => a + w, 0); for (const [id, w] of pal) if ((t -= w) < 0) return id; return pal[0][0]; };
+
+  // Вид замка после этапа s: клетки зон с этапом больше s — в упадке
+  function stageView(full, R, s) {
+    const out = new Builder(1);
+    out.marks = full.marks;
+    out.blocks = new Map(full.blocks);
+    for (const [k, i] of R.owner) if (R.zones[i].stage > s) out.blocks.set(k, R.blocks.get(k));
+    return out;
+  }
+
   // ======================= ОСНОВАНИЕ =======================
   // Замок не подгоняется к рельефу, поэтому под ним — своя толща грунта, как в
   // обычном мире: сверху земля, ниже камень с прожилками руды, гнёздами гравия,
@@ -1611,7 +1913,20 @@
       'Под замком своя толща грунта с рудой, по краям — травяной склон до 24 блоков вниз',
     ],
     foundation: foundation([-6, -6, 133, 137], -25),
-    build() {
+    stagesInfo: STAGES,
+    startRooms: START_ROOMS,
+    // Кнопки в просмотрщике: замок в упадке, после каждого этапа и восстановленный
+    states: STAGES.map((st) => ({ id: String(st.n), label: st.n === 0 ? 'Упадок' : st.n === 9 ? 'Всё' : String(st.n) })),
+    // Без state — восстановленный замок с подсветкой и картой запустения (b.ruin) для сборщика
+    build(state) {
+      if (!this.cache) this.cache = fullCastle();
+      if (state === undefined) return this.cache;
+      return stageView(this.cache, this.cache.ruin, +state);
+    },
+  });
+
+  function fullCastle() {
+    {
       const b = new Builder(2025);
       b.carve = true;
       const X2 = 127, Z2 = 131, CX = 63;
@@ -1656,8 +1971,13 @@
           placeOk: (x, y, z) => y <= -2 || (inKeep(x, z) && !inWall(x, z)),
         });
         b.keepArea = inKeep;
+        b.walkOpts = { box: [-8, -24, -8, X2 + 8, 44, Z2 + 8], starts: [[KX + 19, 0, KZ + 50], [KX + 8, 0, KZ + 40], [KX + 30, 0, KZ + 40], [KX + 48, 0, KZ + 32], [CX, 0, Z2 - 12]] };
       }
+      // Камера для «сердца замка» — метки под площадью у ворот, от которой
+      // функции этапов накладывают заплатки
+      b.set(CX, -20, Z2 - 33, 'air'); b.set(CX, -19, Z2 - 33, 'air');
+      b.ruin = ruins(b, ruinZones(KX, KZ, X2, Z2, CX));
       return b;
-    },
-  });
+    }
+  }
 })();
