@@ -36,7 +36,7 @@ const NOT_SOLID = /leaves|glass|slab|stairs|fence|wall|pane|bars|door|trapdoor|c
 function isSolid(b, BLOCKS) {
   if (!b) return false;
   const def = BLOCKS[b.id] || {};
-  return !def.s && !def.t && !NOT_SOLID.test(b.id);
+  return (!def.s || def.s === 'shelf') && !def.t && !NOT_SOLID.test(b.id);
 }
 
 // Текст записки → предмет «Написанная книга» для кафедры или рамки.

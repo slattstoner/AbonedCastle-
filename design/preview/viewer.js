@@ -28,6 +28,14 @@
     lectern: () => [[0.25, 0, 0.25, 0.75, 0.75, 0.75], [0, 0.75, 0, 1, 0.95, 1]],
     cauldron: () => [[0, 0.2, 0, 1, 1, 0.12], [0, 0.2, 0.88, 1, 1, 1], [0, 0.2, 0, 0.12, 1, 1], [0.88, 0.2, 0, 1, 1, 1], [0, 0, 0, 1, 0.3, 1]],
     saw: () => [[0, 0, 0, 1, 0.56, 1], [0.45, 0.56, 0.1, 0.55, 0.95, 0.9]],
+    // Книжная полка: доски и два ряда корешков разного цвета.
+    shelf: (b) => {
+      const BOOKS = ['#8c2f27', '#2f4f7a', '#3d6b35', '#7a5a2a', '#5a3a6b', '#a07a35'];
+      const out = [[0, 0, 0, 1, 0.08, 1, '#5b4027'], [0, 0.46, 0, 1, 0.54, 1, '#5b4027'], [0, 0.92, 0, 1, 1, 1, '#5b4027']];
+      for (const [y0, y1] of [[0.08, 0.46], [0.54, 0.92]])
+        for (let k = 0; k < 4; k++) out.push([k * 0.25, y0, 0.04, (k + 1) * 0.25, y1 - (k % 2) * 0.06, 0.96, BOOKS[Math.floor(hash(b.x + k, b.y + y0 * 10, b.z) * BOOKS.length)]]);
+      return out;
+    },
   };
   // Заборы, стены и панели соединяются с соседями.
   const LINKED = {
@@ -66,7 +74,7 @@
     }
     const base = (SHAPES[s] || SHAPES.full)(blk);
     if (s === 'stairs' && blk.h === 'top') return base.map((bx) => rotate([bx[0], 1 - bx[4], bx[2], bx[3], 1 - bx[1], bx[5]], blk.f));
-    return base.map((bx) => rotate(bx, blk.f));
+    return base.map((bx) => { const r = rotate(bx, blk.f); if (bx[6]) r.push(bx[6]); return r; });
   }
 
   function hash(x, y, z) {
@@ -127,7 +135,7 @@
       if ((blk.env || blk.g) && !state.env) continue;
       const def = BLOCKS[blk.id] || { c: '#ff00ff' };
       const list = def.t ? items.t : items.o;
-      for (const bx of boxesFor(blk, get)) list.push({ blk, bx, c: def.c });
+      for (const bx of boxesFor(blk, get)) list.push({ blk, bx, c: bx[6] || def.c });
     }
     const m4 = new THREE.Matrix4(), col = new THREE.Color();
     for (const [key, mat] of [['o', matOpaque], ['t', matGlass]]) {

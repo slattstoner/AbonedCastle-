@@ -157,7 +157,7 @@ h2 { font-family: var(--font-display); font-size: 19px; margin: 0 0 10px; }
 <script>
 // Кнопки этажей: выставляют срез по высоте и прячут грунт для подземелья.
 (function () {
-  const floors = [['Весь замок', null, true], ['Подземелье', -8, false], ['1 этаж', 6, true], ['2 этаж', 13, true], ['3 этаж', 20, true]];
+  const floors = [['Весь замок', null, true], ['Подземелье', -6, false], ['1 · подклет', 4, true], ['2 · Большой зал', 10, true], ['3 · галереи', 16, true], ['4 · жилой', 22, true], ['5 · караул', 28, true]];
   const box = document.getElementById('floors'), cut = document.getElementById('cut'), env = document.getElementById('env');
   for (const [label, y, e] of floors) {
     const btn = document.createElement('button');

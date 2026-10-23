@@ -75,8 +75,8 @@
     lantern: { n: 'Фонарь', c: '#e9b34c', s: 'small' },
     candle: { n: 'Свеча', c: '#e7d7a9', s: 'candle' },
     torch: { n: 'Факел', c: '#f2c453', s: 'torch' },
-    bookshelf: { n: 'Книжная полка', c: '#7b5c3b' },
-    chiseled_bookshelf: { n: 'Резная книжная полка', c: '#5f4a2f' },
+    bookshelf: { n: 'Книжная полка', c: '#7b5c3b', s: 'shelf' },
+    chiseled_bookshelf: { n: 'Резная книжная полка', c: '#5f4a2f', s: 'shelf' },
     lectern: { n: 'Кафедра', c: '#8b6337', s: 'lectern' },
     cartography_table: { n: 'Стол картографа', c: '#6c5034' },
     fletching_table: { n: 'Стол лучника', c: '#c8b27b' },
@@ -156,6 +156,10 @@
     cornflower: { n: 'Василёк', c: '#4a6ad1', s: 'small' },
     dandelion: { n: 'Одуванчик', c: '#e2c82d', s: 'small' },
     lily_of_the_valley: { n: 'Ландыш', c: '#e9ecef', s: 'small' },
+    noteblock: { n: 'Нотный блок', c: '#6b4a2e' },
+    jukebox: { n: 'Проигрыватель', c: '#5d3d2a' },
+    packed_ice: { n: 'Плотный лёд', c: '#9cbbe8' },
+    polished_blackstone: { n: 'Полированный чернокамень', c: '#35303a' },
   };
   window.BLOCKS = B;
 })();
