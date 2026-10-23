@@ -1,5 +1,8 @@
-// Скины жителей замка: рисуются кодом в формате скина игрока 64×64
-// (основной слой + верхний: шлем, капюшон, корона, накидка, подол).
+// Скины жителей замка и шайки Рыжего: рисуются кодом в формате скина игрока 64×64
+// (основной слой + верхний: волосы объёмом, шлемы, шапки, кафтаны, плащи, подолы).
+// Свет падает сверху и спереди: у каждой грани своя яркость, низ темнее верха,
+// внутренние стороны рук и ног в тени. Цвета берутся из «лестницы» оттенков
+// (светлее — теплее, темнее — холоднее), как в пиксельной графике.
 // node tools/skins.js → design/skins/*.png и design/skins/lineup.html (просмотр).
 // Сборщик берёт отсюда скины тех жителей, что уже есть в игре.
 'use strict';
@@ -28,8 +31,14 @@ function png(w, h, rgba) {
 // ---------- Цвета ----------
 const hex = (c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
 const toHex = (r, g, b) => '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
-const shade = (c, k) => { const [r, g, b] = hex(c); return toHex(r * k, g * k, b * k); };
 const mix = (a, b, t) => { const A = hex(a), B = hex(b); return toHex(A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t); };
+// Оттенок t: 0 — сам цвет, +1 светлее (теплее), −1 темнее (холоднее). Шаг — половина ступени.
+function tone(c, t) {
+  t = Math.round(t * 2) / 2;
+  const [r, g, b] = hex(c);
+  if (t >= 0) return mix(toHex(r * (1 + 0.15 * t), g * (1 + 0.15 * t), b * (1 + 0.15 * t)), '#fff0d0', Math.min(0.5, 0.07 * t));
+  return mix(toHex(r * (1 + 0.19 * t), g * (1 + 0.19 * t), b * (1 + 0.19 * t)), '#18203a', Math.min(0.5, -0.07 * t));
+}
 
 // ---------- Развёртки частей тела (как у скина игрока) ----------
 // u, v — левый верхний угол развёртки; w — ширина, h — высота, d — глубина.
@@ -41,6 +50,7 @@ const PARTS = {
   rLeg: [0, 16, 4, 12, 4], rPants: [0, 32, 4, 12, 4],
   lLeg: [16, 48, 4, 12, 4], lPants: [0, 48, 4, 12, 4],
 };
+const OVER = { head: 'hat', body: 'jacket', rArm: 'rSleeve', lArm: 'lSleeve', rLeg: 'rPants', lLeg: 'lPants' };
 function faces(part) {
   const [u, v, w, h, d] = PARTS[part];
   return {
@@ -48,29 +58,47 @@ function faces(part) {
     right: [u, v + d, d, h], front: [u + d, v + d, w, h], left: [u + d + w, v + d, d, h], back: [u + 2 * d + w, v + d, w, h],
   };
 }
+// Свет по граням и по высоте части; внутренние стороны рук и ног в тени
+const FACE_LIGHT = { top: 0.6, front: 0, right: -0.4, left: -0.4, back: -0.6, bottom: -1.2 };
+const GRAD = { head: [0.1, -0.2], body: [0.3, -0.4], rArm: [0.3, -0.3], lArm: [0.3, -0.3], rLeg: [0, -0.5], lLeg: [0, -0.5] };
+const INNER = { rArm: 'left', lArm: 'right', rLeg: 'left', lLeg: 'right' };
+const basePart = (p) => Object.keys(OVER).find((k) => k === p || OVER[k] === p);
 
-// Холст скина. Цвет null — прозрачная клетка (только для верхнего слоя).
+// Холст скина. Пустая клетка — прозрачная (бывает только на верхнем слое).
 function Skin(seed) {
   const px = new Array(64 * 64).fill(null);
   let s = seed >>> 0 || 1;
   const rnd = () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
-  const set = (x, y, c) => { if (x >= 0 && x < 64 && y >= 0 && y < 64) px[y * 64 + x] = c; };
-  const get = (x, y) => px[y * 64 + x];
   const K = {
-    rnd, set, get, px,
-    // Ткань с лёгкой неровностью: цвет каждой клетки чуть плавает.
-    cloth: (c, amp = 0.06) => c && shade(c, 1 - amp + rnd() * amp * 2),
-    // Покрасить грань части: fn(x, y, w, h) → цвет (undefined — не трогать).
-    face(part, side, fn) {
-      const [x0, y0, w, h] = faces(part)[side];
-      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const c = fn(x, y, w, h); if (c !== undefined) set(x0 + x, y0 + y, c); }
+    rnd, px,
+    get: (x, y) => px[y * 64 + x],
+    // Покрасить часть. fn(x, y, side, w, h, u) → краска или undefined (не трогать), null (стереть).
+    // Краска — строка цвета или { c, t (оттенок), n (шум), flat (без света) }.
+    // u — номер столбца по кругу: правый бок → перёд → левый бок → спина.
+    paint(part, fn, sides = ['right', 'front', 'left', 'back', 'top', 'bottom']) {
+      const bp = basePart(part), over = part !== bp;
+      const [, , W, , D] = PARTS[part];
+      const off = { right: 0, front: D, left: D + W, back: 2 * D + W, top: 0, bottom: 0 };
+      for (const side of sides) {
+        const [x0, y0, w, h] = faces(part)[side];
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+          const r = fn(x, y, side, w, h, off[side] + x);
+          if (r === undefined) continue;
+          if (r === null) { px[(y0 + y) * 64 + x0 + x] = null; continue; }
+          const p = typeof r === 'string' ? { c: r } : r;
+          let t = p.t || 0;
+          if (!p.flat) {
+            t += FACE_LIGHT[side];
+            if (side !== 'top' && side !== 'bottom') { const [a, b] = GRAD[bp]; t += a + (b - a) * (y / (h - 1)); }
+            if (INNER[bp] === side) t -= 0.35;
+            if (over) t += 0.15;
+          }
+          if (p.n) t += (rnd() * 2 - 1) * p.n;
+          px[(y0 + y) * 64 + x0 + x] = p.flat && !p.n && !p.t ? p.c : tone(p.c, t);
+        }
+      }
     },
-    // Все четыре боковые грани и, по желанию, верх и низ
-    around(part, fn, caps) {
-      for (const side of ['right', 'front', 'left', 'back']) K.face(part, side, (x, y, w, h) => fn(x, y, side, w, h));
-      if (caps) for (const side of ['top', 'bottom']) K.face(part, side, (x, y, w, h) => caps(x, y, side, w, h));
-    },
-    fill(part, c, amp) { K.around(part, () => K.cloth(c, amp), () => K.cloth(c, amp)); },
+    side(part, side, fn) { K.paint(part, fn, [side]); },
     png() {
       const buf = Buffer.alloc(64 * 64 * 4);
       px.forEach((c, i) => { if (c) { const [r, g, b] = hex(c); buf[i * 4] = r; buf[i * 4 + 1] = g; buf[i * 4 + 2] = b; buf[i * 4 + 3] = 255; } });
@@ -80,364 +108,664 @@ function Skin(seed) {
   return K;
 }
 
-// ---------- Общий рисунок человека ----------
-// o: skin, hair, hairStyle (short|long|bald|bowl|curly), beard (none|stubble|mustache|short|full|long), beardColor,
-// eyes, brows, shirt (рукава), tunic, belt, trousers, boots, sleeves (long|short|rolled), robe (подол на ногах),
-// freckles, blush, age (морщины), soot.
+// ---------- Материалы ----------
+const M = {
+  cloth: (c, n = 0.25) => ({ c, n }),
+  // Ткань со складками: продольные тени через несколько столбцов
+  folds: (c, u, every = 3, n = 0.2) => ({ c, t: u % every === 0 ? -0.5 : 0, n }),
+  // Кольчуга: колечки рядами со сдвигом
+  mail: (x, y) => ({ c: '#8f959c', t: (x + (y % 2)) % 2 ? 0.5 : -0.6, n: 0.15 }),
+  fur: (c) => ({ c, n: 0.9 }),
+  leather: (c, y, x) => ({ c, t: (x + y * 3) % 7 === 0 ? -0.5 : 0, n: 0.2 }),
+  metal: (c, y) => ({ c, t: y === 0 ? 0.8 : 0, n: 0.1 }),
+  // Волосы прядями: светлая прядь, тень между прядями
+  hair: (c, x, y) => ({ c, t: (x * 3 + y) % 5 === 0 ? 0.7 : (x % 2 ? 0 : -0.45), n: 0.15 }),
+};
+
+// ---------- Человек ----------
+// o.skin, o.hair, o.hairStyle: short | parted | long | bald | bowl | curly | shaggy | slick | tonsure
+// o.beard: stubble | mustache | droop (длинные усы) | goatee | short | full | long; o.beardColor
+// o.eyes, o.brows, o.age (морщины), o.freckles, o.blush, o.soot, o.scar ('cheek' | 'brow'), o.patch (повязка на глазу)
 function person(o, seed) {
   const K = Skin(seed);
-  const skin = o.skin, sk = (k) => shade(skin, k);
-  const hair = o.hair || '#4a3020', beardC = o.beardColor || hair;
-  // Голова: кожа, волосы сверху и сзади
-  K.around('head', (x, y, side) => {
-    let c = K.cloth(skin, 0.03);
-    if (side === 'back') c = y < (o.hairStyle === 'bald' ? 2 : o.hairStyle === 'long' ? 8 : 6) ? K.cloth(hair, 0.1) : c;
-    if (side === 'right' || side === 'left') {
-      const lim = o.hairStyle === 'bald' ? 2 : o.hairStyle === 'long' ? 8 : 4;
-      const nearBack = side === 'right' ? x < 4 : x > 3;
-      if (y < 2 || (y < lim && (nearBack || o.hairStyle === 'long')) || (o.hairStyle !== 'bald' && y < 3)) c = K.cloth(hair, 0.1);
-      if (o.hairStyle === 'long' && y >= 3 && !nearBack && x === (side === 'right' ? 7 : 0)) c = K.cloth(skin, 0.03);
-    }
-    if (side === 'front') {
-      if (o.hairStyle === 'bald') { if (y === 0) c = sk(0.95); }
-      else if (o.hairStyle === 'bowl' && y < 3) c = K.cloth(hair, 0.1);
-      else if (y < 2 || (y === 2 && (x === 0 || x === 7))) c = K.cloth(hair, 0.1);
-      else if (o.hairStyle === 'curly' && y === 2 && x % 3 !== 1) c = K.cloth(hair, 0.1);
-      if (o.hairStyle === 'long' && (x === 0 || x === 7) && y < 7) c = K.cloth(hair, 0.1);
-    }
-    return c;
-  }, (x, y, side) => (side === 'top' ? (o.hairStyle === 'bald' && x > 1 && x < 6 && y > 1 && y < 7 ? K.cloth(skin, 0.04) : K.cloth(hair, 0.1)) : sk(0.8)));
-  // Лицо
-  K.face('head', 'front', (x, y) => {
-    const eye = o.eyes || '#3b5a8a';
-    if (y === 3 && (x === 1 || x === 2 || x === 5 || x === 6)) return shade(o.brows || hair, 0.85);
-    if (y === 4) { if (x === 1 || x === 6) return '#f2f2f2'; if (x === 2 || x === 5) return eye; }
-    if (y === 5 && (x === 3 || x === 4)) return sk(0.86);
-    if (y === 6 && (x === 3 || x === 4)) return o.mouth || mix(sk(0.75), '#a04040', 0.35);
-    if (o.blush && y === 5 && (x === 1 || x === 6)) return mix(skin, '#e08080', 0.45);
-    if (o.freckles && y === 5 && (x === 1 || x === 2 || x === 5 || x === 6) && (x + y) % 2) return sk(0.82);
-    if (o.age && y === 5 && (x === 0 || x === 7)) return sk(0.88);
-    return undefined;
+  const skin = o.skin, hair = o.hair || '#4a3020', bc = o.beardColor || hair, hs = o.hairStyle || 'short';
+  const S = (t = 0, n = 0.08) => ({ c: skin, t, n });
+  const H = (x, y) => M.hair(hair, x, y);
+  // --- Голова: кожа, уши, тень под подбородком
+  K.paint('head', (x, y, side) => {
+    if (side === 'top') return S(0.2);
+    if (side === 'bottom') return S(-0.6);
+    if ((side === 'right' || side === 'left') && (x === 3 || x === 4) && (y === 4 || y === 5)) return S(-0.6); // ухо
+    if (side === 'front' && y === 7) return S(-0.3);
+    return S();
   });
-  // Борода и усы
-  const beard = o.beard || 'none';
-  if (beard !== 'none') {
-    K.face('head', 'front', (x, y) => {
-      const b = K.cloth(beardC, 0.08);
-      if (beard === 'stubble') return y >= 6 && (x + y) % 2 === 0 && x !== 3 && x !== 4 ? shade(skin, 0.7) : undefined;
-      if (y === 5 && (x === 2 || x === 5) && beard !== 'short') return b;
-      if (y === 6 && x >= 2 && x <= 5) return beard === 'mustache' && (x === 3 || x === 4) ? b : b;
-      if (beard === 'mustache') return y === 7 && (x === 1 || x === 6) ? b : undefined;
-      if (y === 6 && (x <= 1 || x >= 6) && beard !== 'short') return b;
-      if (y === 7) return (x === 3 || x === 4) && beard === 'short' ? shade(skin, 0.75) : b;
-      return undefined;
-    });
-    // мундштук рта в бороде
-    if (beard === 'full' || beard === 'long') K.face('head', 'front', (x, y) => (y === 7 && (x === 3 || x === 4) ? shade(beardC, 0.7) : undefined));
-    for (const side of ['right', 'left']) K.face('head', side, (x, y) => {
-      const front = side === 'right' ? x > 4 : x < 3;
-      if (beard === 'stubble' || beard === 'mustache') return undefined;
-      return front && y >= 5 ? K.cloth(beardC, 0.08) : undefined;
-    });
-    if (beard === 'long') {
-      // длинная борода спускается на грудь (верхний слой тела)
-      K.face('jacket', 'front', (x, y) => (x >= 1 && x <= 6 && y < (x === 1 || x === 6 ? 2 : x === 2 || x === 5 ? 4 : 5) ? K.cloth(beardC, 0.08) : undefined));
+  // --- Волосы
+  const hairSide = (x, y, side) => {
+    const nearBack = side === 'right' ? x < 4 : x > 3;
+    const edge = side === 'right' ? 7 - x : x; // 0 — у лица
+    switch (hs) {
+      case 'bald': case 'tonsure': return y >= 2 && y <= 4 && nearBack;
+      case 'long': return y < 8 && !(edge === 0 && y >= 3 && y <= 6) && !((edge === 1 || edge === 2) && (y === 4 || y === 5));
+      case 'slick': return y < 3 || (nearBack && y < 4);
+      default: return y < 3 || (nearBack && y < (hs === 'shaggy' || hs === 'curly' ? 6 : 5)) || (edge > 0 && y < 4 && hs !== 'bowl');
     }
+  };
+  const hairFront = (x, y) => {
+    switch (hs) {
+      case 'bald': return false;
+      case 'tonsure': return false;
+      case 'bowl': return y < 3;
+      case 'parted': return y === 0 || (y === 1 && x !== 4 && x !== 3) || (y === 2 && (x <= 1 || x >= 6));
+      case 'long': return y < 2 || ((x === 0 || x === 7) && y < 7) || (y === 2 && (x <= 1 || x >= 6));
+      case 'curly': return y < 2 || (y === 2 && x % 3 !== 1);
+      case 'shaggy': return y < 2 || (y === 2 && [0, 1, 3, 6, 7].includes(x)) || (y === 3 && (x === 0 || x === 7));
+      case 'slick': return y < 1 || (y === 1 && x !== 5 && x !== 6);
+      default: return y < 2 || (y === 2 && (x === 0 || x === 7 || x === 5));
+    }
+  };
+  K.paint('head', (x, y, side) => {
+    if (side === 'top') return hs === 'bald' ? (x > 1 && x < 6 && y > 1 ? S(0.4 + (x === 3 && y === 3 ? 0.8 : 0)) : H(x, y)) : hs === 'tonsure' && x > 2 && x < 5 && y > 2 && y < 5 ? S(0.4) : H(x, y);
+    if (side === 'bottom') return undefined;
+    if (side === 'back') return hs === 'bald' || hs === 'tonsure' ? (y >= 2 && y <= 4 ? H(x, y) : undefined) : y < (hs === 'long' ? 8 : 6) ? H(x, y) : undefined;
+    if (side === 'front') return hairFront(x, y) ? H(x, y) : undefined;
+    return hairSide(x, y, side) ? H(x, y) : undefined;
+  });
+  // объём волос на верхнем слое
+  if (['curly', 'shaggy', 'long'].includes(hs)) K.paint('hat', (x, y, side) => {
+    if (side === 'top') return K.rnd() < 0.45 ? H(x, y) : undefined;
+    if (side === 'front') return y === 0 && K.rnd() < 0.6 ? H(x, y) : hs === 'shaggy' && y === 1 && x % 3 === 0 ? H(x, y) : undefined;
+    if (side === 'bottom') return undefined;
+    if (side === 'back') return y < (hs === 'long' ? 8 : 5) && K.rnd() < 0.5 ? H(x, y) : undefined;
+    return y < 3 && K.rnd() < 0.4 ? H(x, y) : undefined;
+  });
+  // --- Лицо
+  const eye = o.eyes || '#3b5a8a', brow = o.brows || (hs === 'bald' || hs === 'tonsure' ? bc : hair);
+  K.side('head', 'front', (x, y) => {
+    if (y === 3 && (x === 1 || x === 2 || x === 5 || x === 6)) return { c: brow, t: -0.5 };
+    if (y === 4) {
+      if (o.patch && x >= 5 && x <= 6) return { c: '#1e1a18', t: 0 };
+      if (x === 1 || x === 6) return { c: '#ece8e0', flat: 1 };
+      if (x === 2 || x === 5) return { c: eye, t: -0.3 };
+    }
+    if (y === 5 && x === 4) return S(-0.7); // тень от носа
+    if (y === 5 && x === 3) return S(0.2);
+    if (y === 6 && (x === 3 || x === 4)) return o.mouth ? { c: o.mouth } : { c: mix(skin, '#9a3a3a', 0.45), t: -0.2 };
+    if (y === 5 && (x === 2 || x === 5) && o.age) return S(-0.45);
+    if (y === 6 && (x === 1 || x === 6) && o.age) return S(-0.35);
+    if (y === 5 && (x === 1 || x === 6) && o.blush) return { c: mix(skin, '#d86a6a', 0.4) };
+    if (o.freckles && ((y === 5 && (x === 1 || x === 6)) || (y === 5 && (x === 2 || x === 5) && o.freckles > 1))) return S(-0.8);
+    return undefined;
+  }, ['front']);
+  if (o.patch) { // ремешок повязки
+    K.paint('head', (x, y, side) => (side === 'front' ? (y === 3 && x >= 4 ? { c: '#2a2220' } : undefined) : side === 'left' || side === 'right' || side === 'back' ? (y === 3 ? { c: '#2a2220' } : undefined) : undefined), ['front', 'left', 'right', 'back']);
   }
-  if (o.soot) for (const [x, y] of [[1, 6], [6, 5], [7, 6]]) K.face('head', 'front', (fx, fy) => (fx === x && fy === y ? sk(0.6) : undefined));
-
-  // Тело: рубаха/рубище, пояс
-  const tunic = o.tunic || '#7a5a3a';
-  K.around('body', (x, y, side) => {
-    if (o.belt && y === (o.beltY ?? 8)) return side === 'front' && (x === 3 || x === 4) ? (o.buckle || '#c8a040') : K.cloth(o.belt, 0.05);
-    if (y === 0 && side === 'front' && x >= 3 && x <= 4 && o.collar !== false) return sk(0.95);
-    return K.cloth(y > 9 && o.hem ? shade(tunic, 0.85) : tunic);
-  }, (x, y, side) => (side === 'top' ? K.cloth(tunic) : K.cloth(o.trousers || '#4a4038')));
-  // Руки
-  const shirt = o.shirt || tunic;
-  for (const arm of ['rArm', 'lArm']) K.around(arm, (x, y) => {
-    const sl = o.sleeves || 'long';
-    if (sl === 'short' && y >= 4) return K.cloth(skin, 0.03);
-    if (sl === 'rolled' && y >= 6) return y === 6 ? shade(shirt, 0.8) : K.cloth(skin, 0.03);
-    if (y >= 11) return o.gloves ? K.cloth(o.gloves, 0.05) : K.cloth(skin, 0.03);
-    if (y === 10 && o.cuff) return K.cloth(o.cuff, 0.05);
-    return K.cloth(shirt);
-  }, (x, y, side) => (side === 'top' ? K.cloth(shirt) : o.gloves ? o.gloves : sk(0.9)));
-  // Ноги: штаны и сапоги
-  const boots = o.boots || '#3a2a1e';
-  for (const leg of ['rLeg', 'lLeg']) K.around(leg, (x, y) => {
-    if (y >= (o.bootTop ?? 7)) return y === 11 ? shade(boots, 0.7) : K.cloth(boots, 0.05);
-    return K.cloth(o.trousers || '#4a4038');
-  }, (x, y, side) => (side === 'top' ? K.cloth(o.trousers || '#4a4038') : shade(boots, 0.6)));
-  // Длинный подол (рубаха, ряса, сарафан) — верхний слой ног
-  if (o.robe) {
-    const len = o.robeLen ?? 12;
-    for (const leg of ['rPants', 'lPants']) K.around(leg, (x, y) => (y < len ? (y === len - 1 ? shade(o.robe, 0.8) : K.cloth(o.robe)) : undefined));
+  if (o.scar === 'cheek') K.side('head', 'front', (x, y) => ((x === 6 && y === 5) || (x === 7 && y === 6) || (x === 6 && y === 6) ? { c: mix(skin, '#ffffff', 0.25), t: -0.2 } : undefined));
+  if (o.scar === 'brow') K.side('head', 'front', (x, y) => ((x === 5 && y === 2) || (x === 5 && y === 3) || (x === 4 && y === 5) ? { c: mix(skin, '#e8c0b0', 0.4) } : undefined));
+  // --- Борода
+  const B = (x, y, t = 0) => ({ ...M.hair(bc, x, y + 1), t: (M.hair(bc, x, y + 1).t || 0) + t });
+  const beard = o.beard;
+  if (beard) {
+    K.paint('head', (x, y, side) => {
+      if (side === 'front') {
+        switch (beard) {
+          case 'stubble': return y >= 6 && x !== 3 && x !== 4 && (x + y) % 2 === 0 ? S(-0.9) : y === 7 && (x === 3 || x === 4) ? S(-0.8) : undefined;
+          case 'mustache': return (y === 6 && x >= 2 && x <= 5 && !(x === 3 || x === 4)) || (y === 5 && x >= 2 && x <= 5 && x !== 3 && x !== 4) ? B(x, y) : undefined;
+          case 'droop': return (y === 5 && (x === 2 || x === 5)) || (y === 6 && (x === 2 || x === 5 || x === 1 || x === 6)) || (y === 7 && (x === 1 || x === 6)) ? B(x, y) : undefined;
+          case 'goatee': return (y === 5 && (x === 2 || x === 5)) || (y === 7 && x >= 2 && x <= 5) || (y === 6 && (x === 2 || x === 5)) ? B(x, y) : undefined;
+          case 'short': return (y === 7 && !(x === 3 || x === 4) ) || (y === 7 && (x === 3 || x === 4)) ? B(x, y) : (y === 6 && (x <= 1 || x >= 6)) || (y === 5 && (x === 0 || x === 7)) || (y === 5 && (x === 2 || x === 5)) ? B(x, y) : undefined;
+          default: // full, long
+            if (y === 6 && (x === 3 || x === 4)) return { c: mix(skin, '#9a3a3a', 0.45), t: -0.4 };
+            return (y >= 6) || (y === 5 && x !== 3 && x !== 4) ? B(x, y, y === 7 && (x === 3 || x === 4) ? -0.3 : 0) : undefined;
+        }
+      }
+      if ((side === 'right' || side === 'left') && !['stubble', 'mustache', 'droop', 'goatee'].includes(beard)) {
+        const edge = side === 'right' ? 7 - x : x;
+        return edge < 4 && y >= (beard === 'short' ? 5 : 4) + (edge === 3 ? 1 : 0) ? B(x, y) : undefined;
+      }
+      return undefined;
+    }, ['front', 'right', 'left']);
+    if (beard === 'full' || beard === 'long') K.paint('hat', (x, y, side) => {
+      if (side === 'front') return y === 7 && (x <= 2 || x >= 5) ? B(x, y) : undefined;
+      return undefined;
+    }, ['front']);
+    if (beard === 'long') K.side('jacket', 'front', (x, y) => {
+      const w = [3, 3, 3, 2, 2, 1, 1][y];
+      return w !== undefined && x >= 4 - w && x <= 3 + w ? B(x, y, y > 4 ? -0.2 : 0.1) : undefined;
+    });
   }
-  if (o.soot) for (const arm of ['rArm', 'lArm']) K.around(arm, (x, y) => (y > 6 && K.rnd() < 0.12 ? shade(skin, 0.6) : undefined));
+  if (o.soot) K.side('head', 'front', (x, y) => ([[1, 6], [6, 5], [7, 6], [2, 2]].some(([a, b]) => a === x && b === y) ? S(-1.2) : undefined));
   return K;
 }
 
-// ---------- Детали ----------
-const D = {
-  // Кольчуга: серые колечки в шахматку
-  mail(K, part, rows = [0, 12], amp = 1) {
-    K.around(part, (x, y) => (y >= rows[0] && y < rows[1] ? ((x + y) % 2 ? shade('#9aa0a6', 0.95 + K.rnd() * 0.1 * amp) : shade('#6c7278', 0.95 + K.rnd() * 0.1)) : undefined));
+// ---------- Одежда ----------
+const RL = ['rLeg', 'lLeg'], RA = ['rArm', 'lArm'], RLP = ['rPants', 'lPants'], RAS = ['rSleeve', 'lSleeve'];
+const W = {
+  // Рубаха до бёдер; ворот косоворотки и вышивка по подолу и обшлагам
+  shirt(K, c, { emb, sleeves = 'long', skin, len = 12, slit = true } = {}) {
+    K.paint('body', (x, y, side, w, h, u) => {
+      if (side === 'top') return M.cloth(c);
+      if (side === 'bottom') return undefined;
+      if (emb && y === len - 1) return { c: emb, t: u % 2 ? 0 : -0.5 };
+      if (side === 'front' && slit && y < 3 && x === 2) return { c: emb || c, t: -0.6 };
+      if (side === 'front' && y === 0 && (x === 3 || x === 4)) return { c: skin || c, t: -0.2 };
+      return M.folds(c, u, 4);
+    });
+    for (const a of RA) K.paint(a, (x, y, side, w, h, u) => {
+      if (side === 'bottom') return skin ? { c: skin, t: -0.4 } : undefined;
+      if (side === 'top') return M.cloth(c);
+      const end = sleeves === 'short' ? 4 : sleeves === 'rolled' ? 6 : 10;
+      if (y < end) return emb && y === end - 1 && sleeves === 'long' ? { c: emb } : y === end - 1 && sleeves === 'rolled' ? { c, t: 0.4 } : M.folds(c, u, 5);
+      if (skin) return { c: skin, n: 0.08, t: y === 11 ? -0.2 : 0 };
+      return undefined;
+    });
   },
-  // Сюрко (накидка поверх кольчуги) с гербом: красное поле, жёлтая башня
-  tabard(K, color = '#9c2a22', trim = '#d8b040', emblem = true) {
-    for (const side of ['front', 'back']) K.face('jacket', side, (x, y) => {
+  trousers(K, c) {
+    for (const l of RL) K.paint(l, (x, y, side, w, h, u) => (side === 'bottom' ? undefined : M.folds(c, u, 4)));
+  },
+  // Сапоги с отворотом и складками
+  boots(K, c, top = 6, { cuff, red } = {}) {
+    for (const l of RL) K.paint(l, (x, y, side) => {
+      if (side === 'top') return undefined;
+      if (side === 'bottom') return { c, t: -1.4 };
+      if (y < top) return undefined;
+      if (y === 11) return { c, t: -1.2 };
+      if (y === top && cuff) return { c: cuff, t: 0.3 };
+      if (side === 'front' && y === 10) return { c, t: 0.6 }; // носок
+      return { c, t: (y - top) % 2 ? -0.3 : 0.2, n: 0.15 };
+    });
+  },
+  // Онучи с перекрёстными оборами и лапти
+  lapti(K, { cloth = '#d8ccb0', bast = '#b89a5a' } = {}) {
+    for (const l of RL) K.paint(l, (x, y, side, w, h, u) => {
+      if (side === 'top') return undefined;
+      if (side === 'bottom') return { c: bast, t: -0.8 };
+      if (y < 6) return undefined;
+      if (y >= 10) return { c: bast, t: (x + y) % 2 ? 0.3 : -0.4 };
+      return (u + y) % 4 === 0 || (u - y + 16) % 4 === 0 ? { c: '#6a5030', t: -0.3 } : M.cloth(cloth, 0.15);
+    });
+  },
+  belt(K, c, { y = 8, buckle, sash, part = 'body' } = {}) {
+    K.paint(part, (x, yy, side, w, h, u) => {
+      if (side === 'top' || side === 'bottom' || yy !== y) return undefined;
+      if (buckle && side === 'front' && (x === 3 || x === 4)) return { c: buckle, t: x === 3 ? 0.6 : -0.2 };
+      return { c, t: u % 2 ? 0 : -0.25 };
+    });
+    if (sash) K.side('jacket', 'front', (x, yy) => (x === 1 && yy > y && yy <= y + 3 ? { c: sash, t: yy === y + 3 ? -0.4 : 0 } : x === 2 && yy === y + 1 ? { c: sash, t: -0.3 } : undefined));
+  },
+  // Кафтан на верхнем слое: перёд с застёжкой, рукава, полы на ногах
+  kaftan(K, c, { trim, len = 6, buttons, collar, open, sleeves = true, fur } = {}) {
+    K.paint('jacket', (x, y, side, w, h, u) => {
+      if (side === 'bottom') return undefined;
+      if (side === 'top') return M.cloth(c);
+      if (open && side === 'front' && x >= 3 && x <= 4) return undefined;
+      if (side === 'front' && buttons && (x === 3 || x === 4) && y < 11) return x === 3 && y % 2 === 1 ? { c: buttons, t: 0.6 } : { c, t: -0.6 };
+      if (trim && side === 'front' && (open ? x === 2 || x === 5 : x === 3)) return { c: trim, t: y % 3 ? 0 : 0.5 };
+      if (trim && y === 11) return { c: trim, t: u % 2 ? 0 : -0.4 };
+      if (collar && y === 0) return { c: collar, n: fur ? 0.9 : 0.2, t: 0.2 };
+      return M.folds(c, u, 4);
+    });
+    if (sleeves) for (const a of RAS) K.paint(a, (x, y, side, w, h, u) => {
+      if (side === 'bottom') return undefined;
+      if (side === 'top') return M.cloth(c);
+      if (y > 10) return undefined;
+      if (y === 10 && trim) return { c: trim };
+      if (y === 10 && fur) return M.fur(collar || c);
+      return M.folds(c, u, 5);
+    });
+    if (len) for (const l of RLP) K.paint(l, (x, y, side, w, h, u) => {
+      if (side === 'top' || side === 'bottom' || y >= len) return undefined;
+      if (open && side === 'front' && ((l === 'rPants' && x === 3) || (l === 'lPants' && x === 0))) return { c, t: -0.6 };
+      if (trim && y === len - 1) return { c: trim, t: u % 2 ? 0 : -0.4 };
+      return M.folds(c, u, 3);
+    });
+  },
+  // Безрукавка (кожаная, меховая)
+  vest(K, c, { lace, fur, len = 10 } = {}) {
+    K.paint('jacket', (x, y, side, w, h, u) => {
+      if (side === 'bottom' || y >= len) return undefined;
+      if (side === 'top') return fur ? M.fur(c) : M.cloth(c);
+      if (side === 'front' && x >= 3 && x <= 4) return lace && y % 2 && y < len - 1 ? { c: lace, t: -0.2 } : undefined;
+      return fur ? M.fur(c) : M.leather(c, y, u);
+    });
+  },
+  // Длинный подол: сарафан, ряса, платье (верхний слой ног)
+  skirt(K, c, { len = 12, hem } = {}) {
+    for (const l of RLP) K.paint(l, (x, y, side, w, h, u) => {
+      if (side === 'top' || side === 'bottom' || y >= len) return undefined;
+      if (hem && y === len - 1) return { c: hem, t: u % 2 ? 0.2 : -0.3 };
+      return M.folds(c, u, 3);
+    });
+  },
+  apron(K, c, { top = 2, len = 7, hem, stains } = {}) {
+    K.side('jacket', 'front', (x, y) => {
+      if (y < top) return x === 1 || x === 6 ? { c, t: -0.3 } : undefined;
+      if (x < 1 || x > 6) return y === 8 ? { c, t: -0.6 } : undefined;
+      if (stains && K.rnd() < 0.035) return { c: stains, n: 0.2 };
+      return M.cloth(c, 0.15);
+    });
+    K.paint('jacket', (x, y, side) => (y === 8 && (side === 'left' || side === 'right' || side === 'back') ? { c, t: -0.4 } : undefined), ['left', 'right', 'back']);
+    for (const l of RLP) K.side(l, 'front', (x, y) => {
+      if (y >= len || (l === 'rPants' && x === 0) || (l === 'lPants' && x === 3)) return undefined;
+      if (hem && y === len - 1) return { c: hem };
+      if (stains && K.rnd() < 0.035) return { c: stains, n: 0.2 };
+      return { c, n: 0.15, t: y === len - 1 ? -0.4 : 0 };
+    });
+  },
+  mail(K, { arms = 9, skirt = 3 } = {}) {
+    K.paint('body', (x, y, side) => (side === 'bottom' ? undefined : M.mail(x, y)));
+    for (const a of RA) K.paint(a, (x, y, side) => (side === 'top' || y < arms ? M.mail(x, y) : undefined), ['right', 'front', 'left', 'back', 'top']);
+    for (const l of RL) K.paint(l, (x, y, side) => (y < skirt && side !== 'bottom' && side !== 'top' ? M.mail(x, y) : undefined));
+  },
+  // Сюрко поверх кольчуги: поле, кайма, герб замка — жёлтая башня
+  tabard(K, c = '#9c2a22', trim = '#d8b040') {
+    const tower = (x, y) => (y >= 2 && y <= 7 && x >= 3 && x <= 4) || (y === 2 && (x === 2 || x === 5)) || (y === 3 && (x === 2 || x === 5)) || (y === 1 && (x === 2 || x === 5 || x === 3 || x === 4) && x !== 3);
+    for (const side of ['front', 'back']) K.side('jacket', side, (x, y) => {
       if (x === 0 || x === 7) return undefined;
-      if (y === 11) return trim;
-      if (x === 1 || x === 6) return K.cloth(shade(color, 0.85));
-      if (emblem && side === 'front') {
-        const tower = (x >= 3 && x <= 4 && y >= 3 && y <= 7) || (y === 2 && (x === 2 || x === 5 || x === 3 || x === 4) && x !== 3) || (y === 3 && (x === 2 || x === 5)) || (y === 2 && x === 2) || (y === 2 && x === 5);
-        if (tower) return y === 7 ? shade(trim, 0.8) : trim;
-      }
-      return K.cloth(color, 0.05);
+      if (y === 11 || ((x === 1 || x === 6) && y > 0)) return { c: trim, t: y % 2 ? 0 : -0.3 };
+      if (side === 'front' && tower(x, y)) return { c: trim, t: y === 7 ? -0.5 : x === 3 ? 0.4 : 0 };
+      if (side === 'front' && y === 7 && (x === 2 || x === 5)) return { c: trim, t: -0.4 };
+      return { c, n: 0.2 };
     });
-    for (const leg of ['rPants', 'lPants']) K.around(leg, (x, y, side) => (y < 3 && (side === 'front' || side === 'back') ? (y === 2 ? trim : K.cloth(color, 0.05)) : undefined));
+    for (const l of RLP) K.paint(l, (x, y, side) => (y < 3 && (side === 'front' || side === 'back') ? (y === 2 ? { c: trim } : { c, n: 0.2 }) : undefined), ['front', 'back']);
   },
-  // Шелом с наносником и бармицей (верхний слой головы)
-  helmet(K, steel = '#a8adb2', plume) {
-    K.around('hat', (x, y, side) => {
-      const st = K.cloth(steel, 0.06);
-      if (y === 0) return shade(steel, 1.1);
-      if (y === 1) return side === 'front' ? shade(steel, 0.8) : st;
-      if (side === 'front') return (x === 3 || x === 4) && y <= 4 ? shade(steel, 0.85) : undefined;
-      if (y <= 2) return st;
-      // бармица — кольчужная сетка на шее
-      if (side === 'back' || (side === 'right' && x < 6) || (side === 'left' && x > 1)) return y >= 4 ? ((x + y) % 2 ? '#8a9096' : '#5c6268') : st;
-      return undefined;
-    }, (x, y, side) => (side === 'top' ? (plume && x >= 3 && x <= 4 ? plume : (x + y) % 3 ? steel : shade(steel, 1.12)) : undefined));
-  },
-  hood(K, c, faceOpen = true) {
-    K.around('hat', (x, y, side) => {
-      if (side === 'front') return y <= 1 || ((x === 0 || x === 7) && faceOpen) ? K.cloth(c) : undefined;
-      return K.cloth(c);
-    }, (x, y, side) => (side === 'top' ? K.cloth(c) : undefined));
-  },
-  kerchief(K, c, dots) {
-    K.around('hat', (x, y, side) => {
-      const col = dots && (x + 2 * y) % 4 === 0 ? dots : K.cloth(c);
-      if (side === 'front') return y <= 1 ? col : undefined;
-      if (side === 'back') return y <= 6 ? col : y === 7 && (x === 3 || x === 4) ? shade(c, 0.8) : undefined;
-      return y <= 4 || (side === 'right' ? x < 3 : x > 4) && y <= 6 ? col : undefined;
-    }, (x, y, side) => (side === 'top' ? K.cloth(c) : undefined));
-  },
-  crown(K) {
-    const gold = '#e0b33a';
-    K.around('hat', (x, y, side) => {
-      if (y === 2) return shade(gold, 0.85);
-      if (y === 1) return (x + (side === 'front' ? 0 : 1)) % 3 === 1 && side === 'front' ? (x < 4 ? '#c0283a' : '#2f5fb0') : gold;
-      if (y === 0) return x % 3 === 1 ? shade(gold, 1.1) : undefined;
-      if (y === 3 && side !== 'front') return '#f2efe6'; // меховая опушка
+  // Плащ за спиной и на плечах
+  cloak(K, c, { clasp = '#d8b040', fur, len = 10, hood } = {}) {
+    K.paint('jacket', (x, y, side, w, h, u) => {
+      if (side === 'back') return fur && y === 0 ? M.fur(fur) : M.folds(c, u, 2, 0.25);
+      if (side === 'left' || side === 'right') return fur && y === 0 ? M.fur(fur) : M.folds(c, u, 3);
+      if (side === 'top') return fur ? M.fur(fur) : M.cloth(c);
+      if (side === 'front') return y === 0 ? (x === 0 || x === 7 ? { c: clasp, t: 0.5 } : fur && x !== 3 && x !== 4 ? M.fur(fur) : undefined) : x === 0 || x === 7 ? M.cloth(c) : undefined;
       return undefined;
     });
+    for (const a of RAS) K.paint(a, (x, y, side) => (y < 2 && side !== 'bottom' ? (fur ? M.fur(fur) : M.cloth(c)) : undefined));
+    for (const l of RLP) K.side(l, 'back', (x, y, w, h, u) => (y < len ? M.folds(c, x, 2) : undefined));
+    if (hood) K.side('hat', 'back', (x, y) => (y >= 5 ? M.cloth(c) : undefined));
   },
-  furHat(K, c = '#6b4a2e', top = '#3d6b4a') {
-    K.around('hat', (x, y) => (y <= 2 ? K.cloth(y === 2 ? c : c, 0.15) : undefined), (x, y, side) => (side === 'top' ? (x > 0 && x < 7 && y > 0 && y < 7 ? K.cloth(top) : K.cloth(c, 0.15)) : undefined));
-  },
-  // Плащ на спине (верхний слой тела, задняя грань и края)
-  cloak(K, c, clasp = '#d8b040', fur) {
-    K.face('jacket', 'back', () => K.cloth(c));
-    for (const side of ['right', 'left']) K.face('jacket', side, () => K.cloth(shade(c, 0.9)));
-    K.face('jacket', 'front', (x, y) => (y === 0 && (x === 0 || x === 7) ? clasp : x === 0 || x === 7 ? K.cloth(c) : undefined));
-    for (const leg of ['rPants', 'lPants']) K.face(leg, 'back', (x, y) => (y < 10 ? K.cloth(c) : undefined));
-    if (fur) {
-      K.face('jacket', 'back', (x, y) => (y === 0 ? (x % 2 ? '#f0ece0' : '#202020') : undefined));
-      K.face('jacket', 'front', (x, y) => (y === 0 ? (x === 3 || x === 4 ? undefined : x % 2 ? '#f0ece0' : '#202020') : undefined));
-      for (const side of ['right', 'left']) K.face('jacket', side, (x, y) => (y === 0 ? (x % 2 ? '#f0ece0' : '#202020') : undefined));
+  hood(K, c, { cape = true, mask } = {}) {
+    K.paint('hat', (x, y, side) => {
+      if (side === 'bottom') return undefined;
+      if (side === 'front') return y <= 1 || x === 0 || x === 7 ? M.cloth(c) : mask && y >= 5 ? M.cloth(mask, 0.15) : undefined;
+      if (side === 'top') return M.cloth(c);
+      return M.cloth(c);
+    });
+    if (cape) {
+      K.paint('jacket', (x, y, side) => (y < 3 && side !== 'bottom' ? { c, n: 0.2, t: y === 2 ? -0.5 : 0 } : undefined));
+      for (const a of RAS) K.paint(a, (x, y, side) => (y < 2 && side !== 'bottom' ? M.cloth(c) : undefined));
     }
   },
-  apron(K, c = '#ece6d6', legs = 8, top = 2) {
-    K.face('jacket', 'front', (x, y) => (x >= 1 && x <= 6 && y >= top ? K.cloth(c, 0.04) : (y === 8 || (y < top && (x === 1 || x === 6))) ? shade(c, 0.8) : undefined));
-    K.face('rPants', 'front', (x, y) => (y < legs && x >= 1 ? (y === legs - 1 ? shade(c, 0.85) : K.cloth(c, 0.04)) : undefined));
-    K.face('lPants', 'front', (x, y) => (y < legs && x <= 2 ? (y === legs - 1 ? shade(c, 0.85) : K.cloth(c, 0.04)) : undefined));
-  },
-  // Перевязь наискось через грудь (колчан, сумка, гусли)
-  strap(K, c) {
-    K.face('jacket', 'front', (x, y) => (x === 7 - Math.floor(y * 0.65) || x === 7 - Math.floor(y * 0.65) - 1 ? K.cloth(c, 0.05) : undefined));
-    K.face('jacket', 'back', (x, y) => (x === Math.floor(y * 0.65) ? K.cloth(c, 0.05) : undefined));
-  },
-  quiver(K) {
-    K.face('jacket', 'back', (x, y) => {
-      if (x >= 4 && x <= 6 && y >= 1 && y <= 9) return y === 1 ? shade('#5a3a20', 0.8) : K.cloth('#7a4e2a', 0.08);
-      if (y === 0 && x >= 4 && x <= 6) return x === 5 ? '#e8e8e8' : '#c03030';
+  // Шелом с наносником и бармицей
+  helmet(K, steel = '#a8adb2', { plume, rim = '#c8a040' } = {}) {
+    K.paint('hat', (x, y, side) => {
+      if (side === 'bottom') return undefined;
+      if (side === 'top') return plume && (x === 3 || x === 4) ? { c: plume, n: 0.3, t: 0.3 } : { c: steel, t: (x === 3 || x === 4) && (y === 3 || y === 4) ? 1 : 0.4, n: 0.1 };
+      if (y === 0) return { c: steel, t: 0.5 };
+      if (y === 2) return side === 'front' ? (x === 3 || x === 4 ? { c: steel, t: -0.2 } : { c: rim, t: 0.2 }) : { c: rim, t: 0.1 };
+      if (side === 'front') return y === 1 ? { c: steel, t: 0.1 } : (x === 3 || x === 4) && y <= 5 ? { c: steel, t: x === 3 ? 0.3 : -0.3 } : undefined;
+      if (y === 1) return { c: steel, t: 0 };
+      const edge = side === 'right' ? 7 - x : side === 'left' ? x : 9;
+      if (y >= 3 && edge > 1) return M.mail(x, y); // бармица
       return undefined;
     });
   },
-  cross(K, c = '#d8d8d8', y0 = 2) {
-    K.face('body', 'front', (x, y) => (((x === 3 || x === 4) && y >= y0 && y <= y0 + 4) || (y === y0 + 1 && x >= 2 && x <= 5) ? c : undefined));
+  // Платок: на макушке, по бокам, узел сзади
+  kerchief(K, c, { dots, hair } = {}) {
+    K.paint('hat', (x, y, side) => {
+      const col = dots && (x + 2 * y) % 4 === 0 ? { c: dots } : M.cloth(c, 0.2);
+      if (side === 'bottom') return undefined;
+      if (side === 'top') return col;
+      if (side === 'front') return y <= 1 ? col : undefined;
+      if (side === 'back') return y <= 6 ? col : y === 7 && (x === 3 || x === 4) ? { c, t: -0.6 } : undefined;
+      const edge = side === 'right' ? 7 - x : x;
+      return y <= 5 && edge > 0 ? col : y <= 7 && edge > 3 ? col : undefined;
+    });
+    if (hair) K.side('head', 'front', (x, y) => (y === 2 && x >= 2 && x <= 5 ? M.hair(hair, x, y) : undefined));
   },
-  keys(K, y = 8) {
-    K.face('body', 'front', (x, fy) => ((x === 6 && fy >= y && fy <= y + 2) || (x === 5 && fy === y + 2) ? '#d0a838' : undefined));
+  // Шапка с меховым околышем
+  furHat(K, fur = '#6b4a2e', top = '#3d6b4a', { tall } = {}) {
+    K.paint('hat', (x, y, side) => {
+      if (side === 'bottom') return undefined;
+      if (side === 'top') return x > 0 && x < 7 && y > 0 && y < 7 ? { c: top, n: 0.2, t: 0.2 } : M.fur(fur);
+      if (y === 0 && tall) return { c: top, t: 0.3 };
+      return y <= (tall ? 2 : 1) ? M.fur(fur) : undefined;
+    });
   },
-  buttons(K, c = '#d0a838', from = 1, to = 7) {
-    K.face('body', 'front', (x, y) => ((x === 3 || x === 4) && y >= from && y <= to ? (x === 3 && y % 2 === 0 ? c : shade(K.get(20 + x, 20 + y) || '#000000', 0.85)) : undefined));
+  cap(K, c, { brim, feather } = {}) {
+    K.paint('hat', (x, y, side) => {
+      if (side === 'bottom') return undefined;
+      if (side === 'top') return M.cloth(c);
+      if (y === 1 && brim) return { c: brim, t: 0.2 };
+      return y <= 1 ? M.cloth(c) : undefined;
+    });
+    if (feather) K.side('hat', 'left', (x, y) => ((x === 4 && y === 0) || (x === 5 && y === 0) || (x === 4 && y === 1) ? { c: feather, t: x === 5 ? 0.6 : 0 } : undefined));
   },
-  stars(K, part, c = '#f0d860', p = 0.08) {
-    K.around(part, (x, y) => (K.rnd() < p ? c : undefined));
+  gloves(K, c, from = 10) {
+    for (const a of RA) K.paint(a, (x, y, side) => (side === 'bottom' ? { c, t: -0.6 } : side !== 'top' && y >= from ? { c, t: y === from ? 0.4 : 0, n: 0.15 } : undefined));
   },
-  glasses(K) {
-    K.face('hat', 'front', (x, y) => (y === 4 && (x === 0 || x === 3 || x === 4 || x === 7) ? '#5a4630' : y === 4 && (x === 1 || x === 2 || x === 5 || x === 6) ? undefined : undefined));
-    K.face('hat', 'right', (x, y) => (y === 4 && x >= 4 ? '#5a4630' : undefined));
-    K.face('hat', 'left', (x, y) => (y === 4 && x <= 3 ? '#5a4630' : undefined));
+  bracer(K, c, arm = 'lArm') {
+    K.paint(arm, (x, y, side) => (side !== 'top' && side !== 'bottom' && y >= 7 && y <= 9 ? M.leather(c, y, x) : undefined));
   },
-  braid(K, c) {
-    K.face('jacket', 'back', (x, y) => ((x === 3 || x === 4) && y <= 9 ? (y === 9 ? '#c03030' : (x + y) % 2 ? K.cloth(c, 0.08) : shade(c, 0.8)) : undefined));
+  // Перевязь наискось через грудь
+  strap(K, c, { buckle } = {}) {
+    K.side('jacket', 'front', (x, y) => { const sx = 7 - Math.floor(y * 0.62); return x === sx || x === sx - 1 ? (buckle && y === 5 && x === sx ? { c: buckle, t: 0.5 } : { c, t: x === sx ? 0 : -0.4 }) : undefined; });
+    K.side('jacket', 'back', (x, y) => { const sx = Math.floor(y * 0.62); return x === sx || x === sx + 1 ? { c, t: x === sx ? 0 : -0.4 } : undefined; });
+  },
+  quiver(K) {
+    K.side('jacket', 'back', (x, y) => {
+      if (y === 0 && x >= 4 && x <= 6) return { c: x === 5 ? '#e8e8e8' : '#b83030' };
+      if (y === 1 && x >= 4 && x <= 6) return { c: '#5a3a20', t: -0.4 };
+      if (x >= 4 && x <= 6 && y >= 2 && y <= 9) return { c: '#7a4e2a', t: x === 4 ? 0.3 : x === 6 ? -0.4 : 0, n: 0.15 };
+      return undefined;
+    });
+  },
+  pouch(K, c, x0 = 5, y0 = 9) {
+    K.side('jacket', 'front', (x, y) => (x >= x0 && x <= x0 + 1 && y >= y0 && y <= y0 + 1 ? { c, t: y === y0 ? 0.3 : -0.2 } : undefined));
+  },
+  knife(K, x0 = 1, y0 = 9) {
+    K.side('jacket', 'front', (x, y) => (x === x0 && y >= y0 && y <= y0 + 2 ? { c: y === y0 ? '#c8c8c8' : '#4a3020', t: 0 } : undefined));
+  },
+  keys(K, x0 = 6, y0 = 9) {
+    K.side('jacket', 'front', (x, y) => ((x === x0 && y >= y0 && y <= y0 + 2) || (x === x0 - 1 && y === y0 + 2) ? { c: '#d0a838', t: y === y0 ? 0.5 : 0 } : undefined));
+  },
+  cross(K, c = '#d8d8d8', y0 = 3) {
+    K.side('jacket', 'front', (x, y) => (((x === 3 || x === 4) && y >= y0 && y <= y0 + 4) || (y === y0 + 1 && x >= 2 && x <= 5) ? { c, t: x === 3 ? 0.6 : 0 } : (x === 2 && y < y0 && y === y0 - 1 - 0) || (x === 5 && y === y0 - 1) || ((x === 1 || x === 6) && y === y0 - 2) ? { c: '#9a9a9a' } : undefined));
+  },
+  // Узор по полю: звёзды, заплаты, пятна
+  sprinkle(K, part, c, p, t = 0) { K.paint(part, (x, y, side) => (side !== 'top' && side !== 'bottom' && K.rnd() < p ? { c, t } : undefined)); },
+  patch(K, part, side, x0, y0, c) { K.side(part, side, (x, y) => (x >= x0 && x <= x0 + 1 && y >= y0 && y <= y0 + 1 ? { c, t: (x + y) % 2 ? 0 : -0.3, n: 0.1 } : undefined)); },
+  glasses(K, c = '#5a4630') {
+    K.side('hat', 'front', (x, y) => (y === 4 && (x === 0 || x === 3 || x === 4 || x === 7) ? { c } : (y === 3 || y === 5) && (x === 1 || x === 2 || x === 5 || x === 6) ? { c, t: -0.2 } : undefined));
+    K.paint('hat', (x, y, side) => (y === 4 && (side === 'right' ? x >= 4 : x <= 3) ? { c } : undefined), ['left', 'right']);
+  },
+  braid(K, c, tie = '#c03030') {
+    K.side('jacket', 'back', (x, y) => ((x === 3 || x === 4) && y <= 9 ? (y === 9 ? { c: tie } : M.hair(c, x + (y % 2), y)) : undefined));
+    K.side('hat', 'back', (x, y) => ((x === 3 || x === 4) && y >= 6 ? M.hair(c, x, y) : undefined));
   },
   headband(K, c, beads) {
-    K.around('hat', (x, y, side) => (y === 1 ? (beads && side === 'front' && x % 2 ? beads : K.cloth(c)) : y === 0 && side === 'front' && x >= 2 && x <= 5 ? K.cloth(c) : undefined));
+    K.paint('hat', (x, y, side) => (side === 'top' || side === 'bottom' ? undefined : y === 1 ? (beads && side === 'front' && x % 2 ? { c: beads, t: 0.5 } : M.cloth(c)) : side === 'front' && y === 0 && x >= 2 && x <= 5 ? { c, t: 0.3 } : undefined));
+  },
+  crown(K, gold = '#e0b33a', fur = '#5a3a24') {
+    K.paint('hat', (x, y, side) => {
+      if (side === 'bottom') return undefined;
+      if (side === 'top') return x >= 2 && x <= 5 && y >= 2 && y <= 5 ? { c: gold, t: 0.5 } : undefined;
+      if (y === 3) return M.fur(fur);
+      if (y === 2) return { c: gold, t: x % 2 ? 0.3 : -0.2 };
+      if (y === 1) return side === 'front' && (x === 3 || x === 4) ? { c: '#c0283a', t: x === 3 ? 0.6 : 0 } : side === 'front' && (x === 1 || x === 6) ? { c: '#2f5fb0', t: 0.3 } : { c: gold, t: 0.2 };
+      if (y === 0) return x === 0 || x === 3 || x === 4 || x === 7 ? { c: gold, t: 0.8 } : undefined;
+      return undefined;
+    });
+  },
+  // Гусли за спиной
+  gusli(K) {
+    K.side('jacket', 'back', (x, y) => {
+      const lo = 1 + Math.floor((9 - y) / 4), hi = 6 - Math.floor((9 - y) / 6);
+      if (y >= 2 && y <= 9 && x >= lo && x <= hi) return x === lo || x === hi || y === 2 || y === 9 ? { c: '#6a4020', t: 0 } : (x % 2 ? { c: '#e0d090', t: 0.6 } : { c: '#a8743a' });
+      return undefined;
+    });
   },
 };
 
 // ---------- Жители ----------
-const SKIN = { light: '#e8b796', fair: '#f0c4a4', ruddy: '#e0a07e', tan: '#c98d66', old: '#e0b49a', dark: '#a8724e' };
+const SKIN = { light: '#e6b494', fair: '#f0c6a6', ruddy: '#dda080', tan: '#c88c64', old: '#dcb49c', dark: '#a87250', pale: '#e8c8b4', weather: '#c49070' };
+const GUARD = (K, o) => { W.trousers(K, '#4a4038'); W.mail(K); W.gloves(K, '#5a3a22'); W.boots(K, '#3a2616', 6, { cuff: '#5a3a22' }); W.tabard(K, o.field, o.trim); W.belt(K, '#4a3020', { y: 8, buckle: '#c8a040' }); W.helmet(K, o.steel, o); };
+
 const NPC = [
-  { id: 'vsevolod', name: 'Король Всеволод', stage: 0, role: 'старый больной король, хозяин замка', draw: (s) => {
-    const K = person({ skin: SKIN.old, hair: '#d8d8d4', hairStyle: 'long', beard: 'long', beardColor: '#e6e6e2', eyes: '#5a6a7a', age: 1,
-      tunic: '#6a1f3a', shirt: '#6a1f3a', cuff: '#d8b040', belt: '#d8b040', buckle: '#c0283a', trousers: '#4a1a2e', boots: '#8a2a20', robe: '#5a1830', hem: 1 }, s);
-    D.crown(K); D.cloak(K, '#7a2238', '#e0b33a', true);
-    K.face('body', 'front', (x, y) => ((x === 3 || x === 4) && y > 8 ? '#d8b040' : undefined));
+  // ===== Этап 0 =====
+  { id: 'vsevolod', group: 'castle', name: 'Король Всеволод', stage: 0, role: 'старый больной король, хозяин замка', draw: (s) => {
+    const K = person({ skin: SKIN.old, hair: '#dcdcd6', hairStyle: 'long', beard: 'long', beardColor: '#e8e8e2', eyes: '#5a6a7a', age: 1 }, s);
+    W.shirt(K, '#e8dcc0', { emb: '#b8302a', skin: SKIN.old });
+    W.trousers(K, '#4a1a2e'); W.boots(K, '#9a2a20', 7, { cuff: '#d8b040' });
+    W.kaftan(K, '#6a1f3a', { trim: '#d8b040', len: 11, collar: '#d8b040' });
+    W.belt(K, '#d8b040', { y: 7, buckle: '#c0283a', part: 'jacket' });
+    W.cloak(K, '#7a2238', { clasp: '#e0b33a', fur: '#eeeae0', len: 11 });
+    K.paint('jacket', (x, y, side) => (side !== 'bottom' && side !== 'top' && y === 0 && (x + y) % 3 === 0 ? { c: '#1e1a18' } : undefined)); // хвостики горностая
+    W.crown(K);
     return K;
   } },
-  { id: 'agafya', name: 'Повариха Агафья', stage: 0, role: 'кухня', draw: (s) => {
-    const K = person({ skin: SKIN.ruddy, hair: '#7a4a2a', hairStyle: 'short', blush: 1, eyes: '#5a4a2a',
-      tunic: '#3e5f8a', shirt: '#ece6d6', sleeves: 'rolled', trousers: '#3e5f8a', boots: '#4a3020', robe: '#3e5f8a', mouth: '#b05050' }, s);
-    D.kerchief(K, '#b8302a', '#f2ece0'); D.apron(K, '#ece6d6', 9, 1);
+  { id: 'agafya', group: 'castle', name: 'Повариха Агафья', stage: 0, role: 'кухня', draw: (s) => {
+    const K = person({ skin: SKIN.ruddy, hair: '#7a4a2a', hairStyle: 'short', blush: 1, eyes: '#5a4a2a', age: 1, mouth: '#a84848' }, s);
+    W.shirt(K, '#efe8d8', { emb: '#b8302a', sleeves: 'rolled', skin: SKIN.ruddy });
+    W.trousers(K, '#3e5f8a'); W.boots(K, '#4a3020', 9);
+    W.kaftan(K, '#3e5f8a', { len: 11, sleeves: false, trim: '#b8302a' }); // сарафан
+    K.side('jacket', 'front', (x, y) => (y < 3 && (x === 0 || x === 7 || (x >= 2 && x <= 5)) ? null : undefined)); // лямки сарафана
+    W.apron(K, '#f2ede0', { top: 3, len: 9, hem: '#b8302a', stains: '#c8b8a0' });
+    W.kerchief(K, '#b8302a', { dots: '#f2ece0', hair: '#7a4a2a' });
     return K;
   } },
-  { id: 'frol', name: 'Конюх Фрол', stage: 0, role: 'конюшня', draw: (s) => {
-    const K = person({ skin: SKIN.tan, hair: '#5a3a1e', hairStyle: 'curly', beard: 'full', beardColor: '#5a3a1e', eyes: '#4a3a1a',
-      tunic: '#6e5232', shirt: '#4f6b3a', sleeves: 'rolled', belt: '#3a2a1a', trousers: '#5a4a3a', boots: '#3a2616', bootTop: 5 }, s);
-    // кожаная безрукавка со шнуровкой
-    K.face('jacket', 'front', (x, y) => (y < 10 && (x <= 2 || x >= 5) ? K.cloth('#7a5434', 0.08) : y < 10 && (x === 3 || x === 4) && y % 2 ? '#2a1a10' : undefined));
-    K.face('jacket', 'back', (x, y) => (y < 10 ? K.cloth('#7a5434', 0.08) : undefined));
+  { id: 'frol', group: 'castle', name: 'Конюх Фрол', stage: 0, role: 'конюшня', draw: (s) => {
+    const K = person({ skin: SKIN.weather, hair: '#5a3a1e', hairStyle: 'curly', beard: 'full', beardColor: '#6a4424', eyes: '#4a3a1a' }, s);
+    W.shirt(K, '#6a7a4a', { sleeves: 'rolled', skin: SKIN.weather, emb: '#3a4a2a' });
+    W.trousers(K, '#5a4a3a'); W.boots(K, '#3a2616', 5, { cuff: '#5a3a22' });
+    W.vest(K, '#7a5434', { lace: '#2a1a10' });
+    W.belt(K, '#3a2a1a', { y: 9, buckle: '#8a8a8a' }); W.pouch(K, '#5a3a20', 5, 10);
+    K.paint('hat', (x, y, side) => (side === 'top' && (x * 5 + y * 3) % 7 === 0 ? { c: '#d8c060', t: 0.3 } : undefined)); // соломинки в волосах
     return K;
   } },
-  { id: 'ostap', name: 'Стражник Остап', stage: 0, role: 'привратник, старший из двух', draw: (s) => {
-    const K = person({ skin: SKIN.ruddy, hair: '#8a8a86', hairStyle: 'short', beard: 'mustache', beardColor: '#a8a8a2', eyes: '#4a5a6a', age: 1,
-      tunic: '#7a7f86', shirt: '#7a7f86', belt: '#4a3020', trousers: '#5a4636', boots: '#3a2616', gloves: '#5a3a22' }, s);
-    D.mail(K, 'body'); D.mail(K, 'rArm', [0, 9]); D.mail(K, 'lArm', [0, 9]); D.tabard(K); D.helmet(K);
+  { id: 'ostap', group: 'castle', name: 'Стражник Остап', stage: 0, role: 'привратник, старший из двух', draw: (s) => {
+    const K = person({ skin: SKIN.weather, hair: '#8a8a86', hairStyle: 'short', beard: 'droop', beardColor: '#b0b0aa', eyes: '#4a5a6a', age: 1, scar: 'brow' }, s);
+    GUARD(K, {}); return K;
+  } },
+  { id: 'mitka', group: 'castle', name: 'Стражник Митька', stage: 0, role: 'привратник, молодой', draw: (s) => {
+    const K = person({ skin: SKIN.fair, hair: '#d8b060', hairStyle: 'bowl', freckles: 2, blush: 1, eyes: '#4a7ab0' }, s);
+    GUARD(K, { steel: '#b4b8bc' });
+    K.side('hat', 'front', (x, y) => ((y === 3 && (x === 0 || x === 1 || x === 6)) ? M.hair('#d8b060', x, y) : undefined)); // вихры из-под шлема
     return K;
   } },
-  { id: 'mitka', name: 'Стражник Митька', stage: 0, role: 'привратник, молодой', draw: (s) => {
-    const K = person({ skin: SKIN.fair, hair: '#d8b060', hairStyle: 'bowl', freckles: 1, blush: 1, eyes: '#4a7ab0',
-      tunic: '#7a7f86', shirt: '#7a7f86', belt: '#4a3020', trousers: '#5a4636', boots: '#3a2616', gloves: '#5a3a22' }, s);
-    D.mail(K, 'body'); D.mail(K, 'rArm', [0, 9]); D.mail(K, 'lArm', [0, 9]); D.tabard(K); D.helmet(K, '#b4b8bc');
-    // вихор из-под шлема
-    K.face('hat', 'front', (x, y) => (y === 2 && (x === 1 || x === 6) ? '#d8b060' : undefined));
+  // ===== Этап 1 =====
+  { id: 'demyan', group: 'castle', name: 'Капитан Демьян Беляк', stage: 1, role: 'начальник стражи, младший брат сотника Ярослава', draw: (s) => {
+    const K = person({ skin: SKIN.tan, hair: '#2a2220', hairStyle: 'short', beard: 'short', beardColor: '#2a2220', eyes: '#3a3020', scar: 'cheek' }, s);
+    W.trousers(K, '#3a3436'); W.mail(K); W.gloves(K, '#3a2a1e', 9); W.boots(K, '#2a1a12', 5, { cuff: '#8a1e1e' });
+    // зерцало: круглая пластина на груди, наплечники
+    K.side('jacket', 'front', (x, y) => {
+      if (y >= 1 && y <= 7 && x >= 1 && x <= 6) { const r = Math.hypot(x - 3.5, y - 4); return r < 1.6 ? { c: '#e0c050', t: 0.4 } : r < 3.3 ? { c: '#c0c4c8', t: (x + y) % 3 ? 0 : 0.6 } : undefined; }
+      return undefined;
+    });
+    for (const a of RAS) K.paint(a, (x, y, side) => (side !== 'bottom' && y < 3 ? { c: '#b8bcc0', t: y === 0 ? 0.6 : y === 2 ? -0.5 : 0 } : undefined));
+    W.belt(K, '#2a1a10', { y: 8, buckle: '#e0c050', part: 'jacket' });
+    W.cloak(K, '#8a1e1e', { clasp: '#e0c050', len: 11 });
+    W.helmet(K, '#c8ccd0', { plume: '#c03030' });
     return K;
   } },
-  { id: 'demyan', name: 'Капитан Демьян Беляк', stage: 1, role: 'начальник стражи, младший брат сотника Ярослава', draw: (s) => {
-    const K = person({ skin: SKIN.tan, hair: '#2a2220', hairStyle: 'short', beard: 'short', beardColor: '#2a2220', eyes: '#3a3020',
-      tunic: '#7a7f86', shirt: '#7a7f86', belt: '#2a1a10', buckle: '#e0c050', trousers: '#3a3436', boots: '#2a1a12', gloves: '#3a2a1e', cuff: '#8a1e1e' }, s);
-    D.mail(K, 'body'); D.mail(K, 'rArm', [0, 9]); D.mail(K, 'lArm', [0, 9]);
-    // пластинчатый доспех (зерцало) и красный плащ
-    K.face('jacket', 'front', (x, y) => (x >= 1 && x <= 6 && y >= 1 && y <= 7 ? (y % 2 ? '#c0c4c8' : '#8e9398') : y === 8 && x >= 1 && x <= 6 ? '#2a1a10' : undefined));
-    D.cloak(K, '#8a1e1e', '#e0c050');
-    D.helmet(K, '#c8ccd0', '#c03030');
-    K.face('head', 'front', (x, y) => (x === 6 && (y === 3 || y === 5) ? shade(SKIN.tan, 0.75) : undefined)); // шрам
-    return K;
-  } },
-  ...[['zhdan', 'Стражник Ждан', SKIN.light, '#6a4a2a', 'full', '#6a4a2a'], ['gavrila', 'Стражник Гаврила', SKIN.dark, '#1e1a18', 'short', '#1e1a18'], ['luka', 'Стражник Лука', SKIN.fair, '#a0522d', 'stubble', '#a0522d']].map(([id, name, sk, hair, beard, bc]) => ({
-    id, name, stage: 1, role: 'стражник гарнизона', draw: (s) => {
-      const K = person({ skin: sk, hair, hairStyle: 'short', beard, beardColor: bc, eyes: '#4a4a3a', tunic: '#7a7f86', shirt: '#7a7f86', belt: '#4a3020', trousers: '#4a4440', boots: '#3a2616', gloves: '#5a3a22' }, s);
-      D.mail(K, 'body'); D.mail(K, 'rArm', [0, 9]); D.mail(K, 'lArm', [0, 9]); D.tabard(K); D.helmet(K);
-      return K;
+  ...[['zhdan', 'Стражник Ждан', SKIN.light, '#6a4a2a', 'full', 'short'], ['gavrila', 'Стражник Гаврила', SKIN.dark, '#1e1a18', 'short', 'short'], ['luka', 'Стражник Лука', SKIN.fair, '#a0522d', 'stubble', 'shaggy']].map(([id, name, sk, hair, beard, hs]) => ({
+    id, group: 'castle', name, stage: 1, role: 'стражник гарнизона', draw: (s) => {
+      const K = person({ skin: sk, hair, hairStyle: hs, beard, beardColor: hair, eyes: '#4a4a3a', freckles: id === 'luka' ? 1 : 0 }, s);
+      GUARD(K, {}); return K;
     },
   })),
-  { id: 'savva', name: 'Лучник Савва', stage: 1, role: 'стрелок на стенах', draw: (s) => {
-    const K = person({ skin: SKIN.light, hair: '#5a3a1e', hairStyle: 'short', beard: 'stubble', eyes: '#3a6a3a',
-      tunic: '#4a6a3a', shirt: '#6a5038', belt: '#3a2a1a', trousers: '#5a4a38', boots: '#4a3020', gloves: '#6a4a2a', bootTop: 5 }, s);
-    D.hood(K, '#3a5a30'); D.strap(K, '#5a3a20'); D.quiver(K);
-    K.face('jacket', 'front', (x, y) => (y >= 10 ? K.cloth('#4a6a3a') : undefined));
+  { id: 'savva', group: 'castle', name: 'Лучник Савва', stage: 1, role: 'стрелок на стенах', draw: (s) => {
+    const K = person({ skin: SKIN.light, hair: '#5a3a1e', hairStyle: 'short', beard: 'stubble', eyes: '#3a6a3a' }, s);
+    W.shirt(K, '#6a5038', { slit: false }); W.trousers(K, '#4a5a34'); W.boots(K, '#4a3020', 5, { cuff: '#6a4a2a' });
+    W.vest(K, '#7a5a3a', { len: 11 }); W.belt(K, '#3a2a1a', { y: 8, buckle: '#8a8a8a', part: 'jacket' });
+    W.bracer(K, '#5a3a20', 'lArm'); W.gloves(K, '#6a4a2a', 11);
+    W.hood(K, '#3a5a30'); W.strap(K, '#5a3a20'); W.quiver(K);
     return K;
   } },
-  { id: 'gordey', name: 'Кузнец Гордей', stage: 2, role: 'кузница', draw: (s) => {
-    const K = person({ skin: SKIN.tan, hair: '#1a1614', hairStyle: 'bald', beard: 'full', beardColor: '#1a1614', eyes: '#3a2a1a', soot: 1,
-      tunic: '#8a6a4a', shirt: '#8a6a4a', sleeves: 'short', belt: '#2a1a10', trousers: '#3a3430', boots: '#2a1a12', gloves: '#4a3020' }, s);
-    D.apron(K, '#5a3a22', 10, 0);
+  // ===== Этап 2 =====
+  { id: 'gordey', group: 'castle', name: 'Кузнец Гордей', stage: 2, role: 'кузница', draw: (s) => {
+    const K = person({ skin: SKIN.tan, hair: '#1a1614', hairStyle: 'bald', beard: 'full', beardColor: '#1e1a18', eyes: '#3a2a1a', soot: 1 }, s);
+    W.shirt(K, '#8a6a4a', { sleeves: 'short', skin: SKIN.tan, slit: false });
+    W.trousers(K, '#3a3430'); W.boots(K, '#2a1a12', 6);
+    W.apron(K, '#5a3a22', { top: 0, len: 10, stains: '#2a1a10' });
+    W.gloves(K, '#4a3020', 8);
+    K.paint('hat', (x, y, side) => (side !== 'top' && side !== 'bottom' && y === 2 ? { c: '#7a2a20', n: 0.2 } : undefined)); // повязка от пота
+    W.sprinkle(K, 'rArm', '#3a2a20', 0.05); W.sprinkle(K, 'lArm', '#3a2a20', 0.05);
     return K;
   } },
-  { id: 'vaska', name: 'Подмастерье Васька', stage: 2, role: 'кузница', draw: (s) => {
-    const K = person({ skin: SKIN.fair, hair: '#c0582a', hairStyle: 'curly', freckles: 1, eyes: '#4a6a3a', soot: 1,
-      tunic: '#b8a888', shirt: '#b8a888', sleeves: 'rolled', belt: '#3a2a1a', trousers: '#5a5048', boots: '#3a2616' }, s);
-    D.apron(K, '#6a4a2e', 6, 3);
+  { id: 'vaska', group: 'castle', name: 'Подмастерье Васька', stage: 2, role: 'кузница', draw: (s) => {
+    const K = person({ skin: SKIN.fair, hair: '#c0582a', hairStyle: 'curly', freckles: 2, eyes: '#4a6a3a', soot: 1 }, s);
+    W.shirt(K, '#c8b898', { sleeves: 'rolled', skin: SKIN.fair, emb: '#8a3a2a' });
+    W.trousers(K, '#5a5048'); W.lapti(K);
+    W.apron(K, '#6a4a2e', { top: 3, len: 5, stains: '#2a1a10' });
+    W.belt(K, '#8a3a2a', { y: 8, sash: '#8a3a2a' });
     return K;
   } },
-  { id: 'ignat', name: 'Кастелян Игнат', stage: 3, role: 'управитель, главный по хозяйству', draw: (s) => {
-    const K = person({ skin: SKIN.light, hair: '#6a5a4a', hairStyle: 'short', beard: 'short', beardColor: '#7a6a5a', eyes: '#4a5a6a', age: 1,
-      tunic: '#2e5a3e', shirt: '#2e5a3e', cuff: '#d0a838', belt: '#3a2a1a', trousers: '#3a3a40', boots: '#3a2616', robe: '#2e5a3e', robeLen: 6 }, s);
-    D.buttons(K); D.keys(K); D.furHat(K, '#6b4a2e', '#2e5a3e');
+  // ===== Этап 3 =====
+  { id: 'ignat', group: 'castle', name: 'Кастелян Игнат', stage: 3, role: 'управитель, главный по хозяйству', draw: (s) => {
+    const K = person({ skin: SKIN.light, hair: '#6a5a4a', hairStyle: 'parted', beard: 'short', beardColor: '#8a7a6a', eyes: '#4a5a6a', age: 1 }, s);
+    W.shirt(K, '#e8dcc0'); W.trousers(K, '#3a3a40'); W.boots(K, '#3a2616', 6);
+    W.kaftan(K, '#2e5a3e', { buttons: '#d8b040', len: 7, trim: '#d8b040' });
+    K.side('jacket', 'front', (x, y) => (y >= 1 && y <= 7 && y % 2 && (x === 1 || x === 2 || x === 5 || x === 6) ? { c: '#d8b040', t: x === 1 || x === 6 ? -0.3 : 0.2 } : undefined)); // нашивки-«разговоры»
+    W.belt(K, '#a83030', { y: 8, sash: '#a83030', part: 'jacket' }); W.keys(K, 6, 9);
+    W.furHat(K, '#5a3a24', '#2e5a3e');
     return K;
   } },
-  { id: 'dunya', name: 'Служанка Дуня', stage: 3, role: 'комната служанок, бельевая', draw: (s) => {
-    const K = person({ skin: SKIN.fair, hair: '#e0c070', hairStyle: 'short', blush: 1, eyes: '#4a7ab0',
-      tunic: '#5a8ab8', shirt: '#f0ece0', trousers: '#5a8ab8', boots: '#6a3a20', robe: '#5a8ab8', collar: false }, s);
-    D.headband(K, '#b83030', '#e0c050'); D.braid(K, '#e0c070');
-    K.face('body', 'front', (x, y) => (y === 0 ? '#f0ece0' : undefined));
+  { id: 'dunya', group: 'castle', name: 'Служанка Дуня', stage: 3, role: 'комната служанок, бельевая', draw: (s) => {
+    const K = person({ skin: SKIN.fair, hair: '#e0c070', hairStyle: 'parted', blush: 1, eyes: '#4a7ab0', mouth: '#c05858' }, s);
+    W.shirt(K, '#f2ece0', { emb: '#c03030', skin: SKIN.fair, slit: false });
+    K.paint('rArm', (x, y, side) => (side !== 'top' && side !== 'bottom' && y === 2 ? { c: '#c03030', t: x % 2 ? 0.3 : 0 } : undefined)); K.paint('lArm', (x, y, side) => (side !== 'top' && side !== 'bottom' && y === 2 ? { c: '#c03030', t: x % 2 ? 0.3 : 0 } : undefined));
+    W.trousers(K, '#5a8ab8'); W.boots(K, '#8a3020', 9);
+    W.kaftan(K, '#5a8ab8', { len: 12, sleeves: false, trim: '#e0c050' });
+    K.side('jacket', 'front', (x, y) => (y < 2 && (x <= 1 || x >= 6 || x === 3 || x === 4) ? null : undefined));
+    W.apron(K, '#f8f4ea', { top: 6, len: 6, hem: '#c03030' });
+    W.headband(K, '#b83030', '#e0c050'); W.braid(K, '#e0c070');
     return K;
   } },
-  { id: 'varlaam', name: 'Отец Варлаам', stage: 4, role: 'священник часовни', draw: (s) => {
-    const K = person({ skin: SKIN.light, hair: '#8a7a6a', hairStyle: 'long', beard: 'long', beardColor: '#9a8a7a', eyes: '#4a3a2a', age: 1,
-      tunic: '#1e1e22', shirt: '#1e1e22', trousers: '#1e1e22', boots: '#1a1a1a', robe: '#1e1e22' }, s);
-    K.around('hat', (x, y, side) => (y <= 2 ? K.cloth('#18181c', 0.04) : undefined), (x, y, side) => (side === 'top' ? '#18181c' : undefined));
-    D.cross(K, '#d8d8d8', 5);
+  // ===== Этап 4 =====
+  { id: 'varlaam', group: 'castle', name: 'Отец Варлаам', stage: 4, role: 'священник часовни', draw: (s) => {
+    const K = person({ skin: SKIN.light, hair: '#8a7a6a', hairStyle: 'long', beard: 'long', beardColor: '#9a8a78', eyes: '#4a3a2a', age: 1 }, s);
+    W.shirt(K, '#26262c', { slit: false }); W.trousers(K, '#1e1e22'); W.boots(K, '#1a1a1a', 9);
+    W.kaftan(K, '#1e1e24', { len: 12 });
+    K.paint('hat', (x, y, side) => (side === 'bottom' ? undefined : side === 'top' ? { c: '#1a1a20', t: 0.4 } : y <= 2 ? { c: '#1a1a20', t: y === 0 ? 0.4 : 0, n: 0.1 } : undefined)); // камилавка
+    W.cross(K, '#e0e0e0', 5);
     return K;
   } },
-  { id: 'evsey', name: 'Переписчик Евсей', stage: 5, role: 'скрипторий, библиотека', draw: (s) => {
-    const K = person({ skin: SKIN.light, hair: '#8a6a4a', hairStyle: 'bald', beard: 'short', beardColor: '#8a6a4a', eyes: '#4a4a3a',
-      tunic: '#6a5a46', shirt: '#6a5a46', belt: '#3a2a1a', trousers: '#4a4038', boots: '#3a2a1e', robe: '#6a5a46' }, s);
-    // чернильные пятна на пальцах, перо за ухом
-    K.around('rArm', (x, y) => (y === 11 && x % 2 ? '#1a2a5a' : undefined));
-    K.face('hat', 'right', (x, y) => (x === 5 && y >= 1 && y <= 4 ? (y === 1 ? '#f0f0f0' : '#d8d8d8') : undefined));
+  // ===== Этап 5 =====
+  { id: 'evsey', group: 'castle', name: 'Переписчик Евсей', stage: 5, role: 'скрипторий, библиотека', draw: (s) => {
+    const K = person({ skin: SKIN.pale, hair: '#8a6a4a', hairStyle: 'tonsure', beard: 'short', beardColor: '#8a6a4a', eyes: '#4a4a3a', age: 1 }, s);
+    W.shirt(K, '#6a5a46', { slit: false }); W.trousers(K, '#4a4038'); W.boots(K, '#3a2a1e', 9);
+    W.kaftan(K, '#6a5a46', { len: 12 }); W.belt(K, '#3a2a1a', { y: 8, part: 'jacket' }); W.pouch(K, '#2a2a40', 5, 9);
+    K.side('rArm', 'front', (x, y) => (y === 11 && x % 2 ? { c: '#1a2a6a' } : undefined)); // чернила на пальцах
+    K.side('hat', 'right', (x, y) => (x === 5 && y >= 1 && y <= 4 ? { c: '#f0f0f0', t: y === 1 ? 0.5 : 0 } : undefined)); // перо за ухом
     return K;
   } },
-  { id: 'lenz', name: 'Звездочёт Ленц', stage: 5, role: 'картограф Аркадий Ленц, вернувшийся из квадрата Г-7', draw: (s) => {
-    const K = person({ skin: SKIN.old, hair: '#c8c8c4', hairStyle: 'short', beard: 'short', beardColor: '#c8c8c4', eyes: '#5a6a8a', age: 1,
-      tunic: '#22305a', shirt: '#22305a', cuff: '#d8b040', belt: '#5a3a20', trousers: '#2a2a3a', boots: '#3a2616', robe: '#22305a' }, s);
-    D.stars(K, 'body'); D.stars(K, 'rPants'); D.stars(K, 'lPants');
-    K.around('hat', (x, y) => (y <= 1 ? K.cloth('#1a2448') : undefined), (x, y, side) => (side === 'top' ? K.cloth('#1a2448') : undefined));
-    D.glasses(K);
+  { id: 'lenz', group: 'castle', name: 'Звездочёт Ленц', stage: 5, role: 'картограф Аркадий Ленц, вернувшийся из квадрата Г-7', draw: (s) => {
+    const K = person({ skin: SKIN.old, hair: '#c8c8c4', hairStyle: 'shaggy', beard: 'goatee', beardColor: '#d0d0cc', eyes: '#5a6a8a', age: 1 }, s);
+    W.shirt(K, '#d8d0c0'); W.trousers(K, '#2a2a3a'); W.boots(K, '#3a2616', 8);
+    W.kaftan(K, '#22305a', { len: 12, trim: '#d8b040' });
+    W.sprinkle(K, 'jacket', '#f0d860', 0.07, 0.6); W.sprinkle(K, 'rPants', '#f0d860', 0.06, 0.6); W.sprinkle(K, 'lPants', '#f0d860', 0.06, 0.6);
+    W.belt(K, '#5a3a20', { y: 8, part: 'jacket', buckle: '#c8a040' });
+    W.strap(K, '#5a3a20'); K.side('jacket', 'back', (x, y) => (x >= 5 && x <= 6 && y <= 8 ? { c: '#8a5a30', t: y === 0 ? 0.6 : 0 } : undefined)); // тубус с картами
+    W.glasses(K);
     return K;
   } },
-  { id: 'semka', name: 'Голубятник Сёмка', stage: 5, role: 'мальчишка с голубятни', draw: (s) => {
-    const K = person({ skin: SKIN.fair, hair: '#7a5a3a', hairStyle: 'bowl', freckles: 1, blush: 1, eyes: '#5a7a4a',
-      tunic: '#c8c0a8', shirt: '#c8c0a8', belt: '#6a3a20', trousers: '#6a6a70', boots: '#5a4030', bootTop: 9 }, s);
-    // заплатки и голубиное перо на шапке
-    K.face('lPants', 'front', (x, y) => (y >= 3 && y <= 5 && x >= 1 && x <= 2 ? '#8a6a4a' : undefined));
-    K.around('hat', (x, y) => (y <= 1 ? K.cloth('#5a5a60') : undefined), (x, y, side) => (side === 'top' ? K.cloth('#5a5a60') : undefined));
-    K.face('hat', 'left', (x, y) => (x === 2 && y <= 2 ? '#e8e8ec' : undefined));
+  { id: 'semka', group: 'castle', name: 'Голубятник Сёмка', stage: 5, role: 'мальчишка с голубятни', draw: (s) => {
+    const K = person({ skin: SKIN.fair, hair: '#7a5a3a', hairStyle: 'bowl', freckles: 2, blush: 1, eyes: '#5a7a4a' }, s);
+    W.shirt(K, '#c8c0a8', { emb: '#6a8ab0', skin: SKIN.fair }); W.trousers(K, '#6a6a70'); W.lapti(K);
+    W.belt(K, '#6a3a20', { y: 8, sash: '#6a3a20' });
+    W.patch(K, 'lLeg', 'front', 1, 2, '#8a6a4a'); W.patch(K, 'rArm', 'front', 1, 5, '#8a7a5a');
+    W.cap(K, '#5a5a60', { feather: '#eeeef2' });
+    K.paint('lSleeve', (x, y, side) => (side === 'top' ? { c: '#e8e8ec', t: x === 1 && y === 1 ? -1.5 : 0.3 } : undefined), ['top']); // голубь на плече
     return K;
   } },
-  { id: 'marfa', name: 'Травница Марфа', stage: 6, role: 'лекарская; та самая ведунья из сгоревшего дома', draw: (s) => {
-    const K = person({ skin: SKIN.old, hair: '#b8b4ac', hairStyle: 'long', eyes: '#4a6a3a', age: 1,
-      tunic: '#6a5032', shirt: '#d8d0b8', belt: '#3a5a2a', trousers: '#5a4630', boots: '#3a2a1e', robe: '#6a5032' }, s);
-    D.kerchief(K, '#4a6a3a'); D.strap(K, '#5a4a30');
-    // пучки трав на поясе
-    K.face('body', 'front', (x, y) => ((x === 1 || x === 5) && y >= 9 ? (y === 9 ? '#3a5a2a' : '#6a9a4a') : undefined));
+  // ===== Этап 6 =====
+  { id: 'marfa', group: 'castle', name: 'Травница Марфа', stage: 6, role: 'лекарская; та самая ведунья из сгоревшего дома', draw: (s) => {
+    const K = person({ skin: SKIN.old, hair: '#b8b4ac', hairStyle: 'long', eyes: '#4a6a3a', age: 1 }, s);
+    W.shirt(K, '#d8d0b8', { emb: '#4a6a3a', skin: SKIN.old }); W.trousers(K, '#5a4630'); W.boots(K, '#3a2a1e', 9);
+    W.kaftan(K, '#6a5032', { len: 12, sleeves: false });
+    W.belt(K, '#3a5a2a', { y: 8, part: 'jacket' }); W.strap(K, '#5a4a30'); W.pouch(K, '#7a6a40', 5, 9);
+    K.side('jacket', 'front', (x, y) => ((x === 1 || x === 2) && y >= 9 && y <= 11 ? { c: y === 9 ? '#3a5a2a' : (x + y) % 2 ? '#6a9a4a' : '#9ab060' } : undefined)); // пучки трав
+    W.kerchief(K, '#4a6a3a', { hair: '#b8b4ac' });
+    K.side('jacket', 'front', (x, y) => ((y === 1 && (x === 2 || x === 5)) || (y === 2 && (x === 3 || x === 4)) ? { c: '#a03030', t: 0.3 } : undefined)); // бусы
     return K;
   } },
-  { id: 'prokhor', name: 'Тюремщик Прохор', stage: 7, role: 'бывший углежог, знает тайны Рыжего', draw: (s) => {
-    const K = person({ skin: SKIN.ruddy, hair: '#2a2220', hairStyle: 'bald', beard: 'stubble', eyes: '#3a2a1a', soot: 1,
-      tunic: '#3a3430', shirt: '#5a4a3a', sleeves: 'rolled', belt: '#2a1a10', trousers: '#2e2a28', boots: '#1e1610' }, s);
-    K.face('jacket', 'front', (x, y) => (y < 10 && (x <= 1 || x >= 6) ? K.cloth('#2a221e') : undefined));
-    K.face('jacket', 'back', (x, y) => (y < 10 ? K.cloth('#2a221e') : undefined));
-    D.keys(K, 7); K.face('body', 'front', (x, y) => ((x === 1 || x === 2) && y >= 9 && y <= 10 ? '#8a8a8a' : undefined));
+  // ===== Этап 7 =====
+  { id: 'prokhor', group: 'castle', name: 'Тюремщик Прохор', stage: 7, role: 'бывший углежог, вытащил мальчика из болота', draw: (s) => {
+    const K = person({ skin: SKIN.ruddy, hair: '#2a2220', hairStyle: 'bald', beard: 'stubble', eyes: '#3a2a1a', soot: 1, age: 1 }, s);
+    W.shirt(K, '#5a4a3a', { sleeves: 'rolled', skin: SKIN.ruddy }); W.trousers(K, '#2e2a28'); W.boots(K, '#1e1610', 5);
+    W.vest(K, '#2a221e', { len: 11 });
+    W.belt(K, '#2a1a10', { y: 8, buckle: '#8a8a8a', part: 'jacket' }); W.keys(K, 6, 9); W.keys(K, 2, 9);
+    K.side('rArm', 'front', (x, y) => (y >= 8 && y <= 9 && x >= 1 ? { c: mix(SKIN.ruddy, '#a05040', 0.4) } : undefined)); // ожог
     return K;
   } },
-  { id: 'timosha', name: 'Менестрель Тимоша', stage: 8, role: 'музыкант, гусляр', draw: (s) => {
-    const K = person({ skin: SKIN.fair, hair: '#d8a040', hairStyle: 'long', beard: 'mustache', beardColor: '#d8a040', eyes: '#3a6a9a', blush: 1,
-      tunic: '#c8a020', shirt: '#b02a2a', belt: '#5a2a6a', trousers: '#b02a2a', boots: '#4a2a5a' }, s);
-    // кафтан на две половины: жёлтая и красная, ноги наоборот
-    K.around('body', (x, y, side) => ((side === 'front' && x >= 4) || (side === 'back' && x < 4) || side === 'left' ? (y === 8 ? undefined : K.cloth('#b02a2a')) : undefined));
-    K.around('lLeg', (x, y) => (y < 7 ? K.cloth('#c8a020') : undefined));
-    D.strap(K, '#7a4a20');
-    // шапка с пером
-    K.around('hat', (x, y) => (y <= 1 ? K.cloth('#3a6a4a') : undefined), (x, y, side) => (side === 'top' ? K.cloth('#3a6a4a') : undefined));
-    K.face('hat', 'left', (x, y) => (x >= 2 && x <= 4 && y === 0 ? '#e8e0f0' : x === 3 && y === 1 ? '#d8d0e0' : undefined));
+  // ===== Этап 8 =====
+  { id: 'timosha', group: 'castle', name: 'Менестрель Тимоша', stage: 8, role: 'гусляр, поёт песню о пропавшем княжиче', draw: (s) => {
+    const K = person({ skin: SKIN.fair, hair: '#d8a040', hairStyle: 'curly', beard: 'mustache', beardColor: '#d8a040', eyes: '#3a6a9a', blush: 1 }, s);
+    W.shirt(K, '#c8a020', { emb: '#b02a2a' }); W.trousers(K, '#b02a2a'); W.boots(K, '#4a2a5a', 7, { cuff: '#c8a020' });
+    // кафтан на две половины, ноги наоборот
+    K.paint('body', (x, y, side) => ((side === 'front' && x >= 4) || (side === 'back' && x < 4) || side === 'left' ? M.folds('#b02a2a', x, 4) : undefined), ['front', 'back', 'left']);
+    K.paint('lArm', (x, y, side) => (side !== 'bottom' && y < 10 ? M.folds('#b02a2a', x, 5) : undefined));
+    K.paint('lLeg', (x, y, side) => (side !== 'bottom' && y < 7 ? M.folds('#c8a020', x, 4) : undefined));
+    W.belt(K, '#5a2a6a', { y: 8, buckle: '#d8b040' });
+    W.gusli(K); W.strap(K, '#7a4a20');
+    W.cap(K, '#3a6a4a', { brim: '#c8a020', feather: '#e8e0f0' });
+    return K;
+  } },
+
+  // ===== Шайка Рыжего =====
+  { id: 'ryzhy', group: 'gang', name: 'Рыжий (Ефрем Рыжов)', stage: 5, role: 'атаман шайки; пропавший княжич Ефрем', draw: (s) => {
+    const K = person({ skin: SKIN.light, hair: '#c4501e', hairStyle: 'shaggy', beard: 'short', beardColor: '#b84a1c', eyes: '#4a8a4a', scar: 'brow', freckles: 1 }, s);
+    W.shirt(K, '#9a2a24', { emb: '#1e1a18', skin: SKIN.light });
+    W.trousers(K, '#2e2c2a'); W.boots(K, '#2a1a12', 5, { cuff: '#4a3020' });
+    W.vest(K, '#3a2a1e', { len: 10 });
+    W.belt(K, '#6a1a1a', { y: 8, sash: '#6a1a1a', part: 'jacket' }); W.knife(K, 6, 8);
+    W.bracer(K, '#3a2a1e', 'rArm'); W.bracer(K, '#3a2a1e', 'lArm');
+    W.cloak(K, '#5a5450', { clasp: '#a8a8a8', fur: '#8a8580', len: 6 }); // волчья шкура на плечах
+    K.side('jacket', 'back', (x, y) => (y >= 1 && y <= 6 ? M.fur('#7a7570') : undefined));
+    K.paint('hat', (x, y, side) => (side === 'back' && y >= 6 ? M.fur('#7a7570') : undefined), ['back']);
+    return K;
+  } },
+  { id: 'sych', group: 'gang', name: 'Сыч', stage: 5, role: 'дозорный шайки, одноглазый', draw: (s) => {
+    const K = person({ skin: SKIN.weather, hair: '#6a6056', hairStyle: 'short', beard: 'stubble', eyes: '#6a5a3a', patch: 1, age: 1 }, s);
+    W.shirt(K, '#7a7060', { slit: false }); W.trousers(K, '#5a5248'); W.lapti(K);
+    W.kaftan(K, '#5a5a4a', { len: 6 }); W.patch(K, 'jacket', 'front', 1, 4, '#7a6a4a'); W.patch(K, 'rSleeve', 'front', 1, 6, '#6a5a3a');
+    W.belt(K, '#4a3a2a', { y: 8, part: 'jacket' });
+    W.hood(K, '#4a463e', { cape: true });
+    K.side('hat', 'front', (x, y) => (y >= 2 && x >= 1 && x <= 6 ? undefined : undefined));
+    return K;
+  } },
+  { id: 'voron', group: 'gang', name: 'Ворон', stage: 5, role: 'лучник шайки', draw: (s) => {
+    const K = person({ skin: SKIN.light, hair: '#141418', hairStyle: 'short', eyes: '#2a2a2a' }, s);
+    W.shirt(K, '#2a2a30', { slit: false }); W.trousers(K, '#22222a'); W.boots(K, '#141210', 5);
+    W.vest(K, '#1e1c1c', { len: 11 }); W.belt(K, '#3a2a1a', { y: 8, part: 'jacket', buckle: '#6a6a6a' });
+    W.bracer(K, '#3a2a1e', 'lArm'); W.gloves(K, '#2a1e16', 11);
+    W.hood(K, '#18181e', { mask: '#26262c' }); W.strap(K, '#3a2a1a'); W.quiver(K);
+    return K;
+  } },
+  { id: 'grinya', group: 'gang', name: 'Гриня Кривой', stage: 5, role: 'силач шайки, с дубиной', draw: (s) => {
+    const K = person({ skin: SKIN.ruddy, hair: '#5a3a24', hairStyle: 'bald', beard: 'full', beardColor: '#5a3a24', eyes: '#3a2a1a', scar: 'cheek' }, s);
+    K.side('head', 'front', (x, y) => (x === 3 && y === 5 ? { c: SKIN.ruddy, t: -0.9 } : undefined)); // перебитый нос
+    W.shirt(K, '#8a7a60', { sleeves: 'short', skin: SKIN.ruddy, slit: false });
+    W.trousers(K, '#4a4034'); W.lapti(K, { cloth: '#c8bca0' });
+    W.vest(K, '#c8b090', { fur: 1, len: 9 }); // овчина
+    W.belt(K, '#a08a5a', { y: 8 }); // верёвка
+    K.paint('rArm', (x, y, side) => (side !== 'top' && side !== 'bottom' && y === 9 ? { c: '#8a8a8a', t: x % 2 ? 0.5 : 0 } : undefined)); // браслет
+    return K;
+  } },
+  { id: 'kunitsa', group: 'gang', name: 'Куница', stage: 5, role: 'разведчица шайки', draw: (s) => {
+    const K = person({ skin: SKIN.fair, hair: '#3a2418', hairStyle: 'parted', eyes: '#6a8a3a', mouth: '#b85a50' }, s);
+    W.shirt(K, '#c8b898', { slit: false }); W.trousers(K, '#4a3a2a'); W.boots(K, '#3a2616', 4, { cuff: '#5a3a22' });
+    W.vest(K, '#6a4a2a', { len: 10, lace: '#2a1a10' }); W.belt(K, '#2a1a10', { y: 8, part: 'jacket' }); W.knife(K, 1, 8); W.knife(K, 6, 8);
+    W.cloak(K, '#3a5a34', { clasp: '#8a8a8a', len: 8 });
+    W.braid(K, '#3a2418', '#3a5a34');
+    W.furHat(K, '#c8641e', '#c8641e'); // лисья шапка
+    K.side('hat', 'back', (x, y) => ((x === 3 || x === 4) && y >= 2 && y <= 5 ? { c: y === 5 ? '#f0ece0' : '#c8641e', n: 0.3 } : undefined)); // хвост
+    return K;
+  } },
+  { id: 'pakhom', group: 'gang', name: 'Пахом', stage: 5, role: 'старый кашевар шайки', draw: (s) => {
+    const K = person({ skin: SKIN.old, hair: '#a8a49c', hairStyle: 'bald', beard: 'full', beardColor: '#bcb8b0', eyes: '#5a5a4a', age: 1, blush: 1 }, s);
+    W.shirt(K, '#c8bca0', { emb: '#8a3a2a', skin: SKIN.old, sleeves: 'rolled' });
+    W.trousers(K, '#5a5044'); W.lapti(K);
+    W.kaftan(K, '#c8a878', { len: 6, collar: '#e8dcc0', fur: 1, open: 1 }); // тулуп
+    W.apron(K, '#d8d0c0', { top: 4, len: 6, stains: '#6a5040' });
+    W.belt(K, '#6a4a2a', { y: 8, part: 'jacket' });
+    return K;
+  } },
+  { id: 'shilo', group: 'gang', name: 'Шило', stage: 5, role: 'мальчишка-воришка', draw: (s) => {
+    const K = person({ skin: SKIN.fair, hair: '#3a2a20', hairStyle: 'shaggy', eyes: '#5a4a2a', freckles: 1, soot: 1 }, s);
+    W.shirt(K, '#9a9080', { slit: false }); W.trousers(K, '#4a4a4a'); W.lapti(K);
+    W.kaftan(K, '#6a5a44', { len: 8, open: 1 }); // кафтан не по росту
+    W.patch(K, 'jacket', 'back', 2, 3, '#8a6a4a'); W.patch(K, 'lSleeve', 'front', 1, 7, '#4a5a6a'); W.patch(K, 'rPants', 'front', 1, 4, '#7a6a4a');
+    W.belt(K, '#a08a5a', { y: 8, part: 'jacket' });
+    W.cap(K, '#3a3634');
+    return K;
+  } },
+  // ===== Противник =====
+  { id: 'nozhov', group: 'other', name: 'Савелий Ножов', stage: 8, role: 'приказчик лесопилки, бывший казначей замка', draw: (s) => {
+    const K = person({ skin: SKIN.pale, hair: '#1a1818', hairStyle: 'slick', beard: 'goatee', beardColor: '#1a1818', eyes: '#3a3a2a', age: 1 }, s);
+    K.side('head', 'front', (x, y) => (y === 5 && x === 3 ? { c: SKIN.pale, t: 0.5 } : undefined));
+    W.shirt(K, '#e0e0d8'); W.trousers(K, '#1e1e22'); W.boots(K, '#141414', 6, { cuff: '#2a2a2a' });
+    W.kaftan(K, '#2a2024', { buttons: '#c8c8c8', len: 9, collar: '#1a1416' });
+    W.belt(K, '#141414', { y: 8, part: 'jacket', buckle: '#c8c8c8' }); W.keys(K, 1, 9); W.pouch(K, '#5a3a20', 5, 9);
+    W.furHat(K, '#1e1a18', '#2a2024');
     return K;
   } },
 ];
@@ -448,46 +776,49 @@ function render(outDir) {
   for (const n of NPC) fs.writeFileSync(path.join(outDir, n.id + '.png'), skinPng(n.id));
 }
 
-// ---------- Просмотр: каждый житель спереди и сзади ----------
+// ---------- Просмотр: каждый житель спереди, сбоку и сзади ----------
 function lineup(outDir) {
-  const cards = NPC.map((n) => {
-    const data = fs.readFileSync(path.join(outDir, n.id + '.png')).toString('base64');
-    return `{id:'${n.id}',name:${JSON.stringify(n.name)},role:${JSON.stringify(n.role)},stage:${n.stage},src:'data:image/png;base64,${data}'}`;
-  });
+  const GROUPS = { castle: 'Жители замка', gang: 'Шайка Рыжего', other: 'Противник' };
+  const cards = NPC.map((n) => `{g:'${n.group}',name:${JSON.stringify(n.name)},role:${JSON.stringify(n.role)},stage:${n.stage},src:'data:image/png;base64,${skinPng(n.id).toString('base64')}'}`);
   const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Жители замка</title>
 <style>
-:root{--bg:#f4efe4;--card:#fffaf0;--ink:#2a2420;--muted:#7a6e60;--line:#d8ccb4}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1c1a17;--card:#26231f;--ink:#eee6d8;--muted:#a89c8a;--line:#3a352e}}
-:root[data-theme="dark"]{--bg:#1c1a17;--card:#26231f;--ink:#eee6d8;--muted:#a89c8a;--line:#3a352e}
+:root{--bg:#f4efe4;--card:#fffaf0;--ink:#2a2420;--muted:#7a6e60;--line:#d8ccb4;--stage:#e9e0cc}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1c1a17;--card:#26231f;--ink:#eee6d8;--muted:#a89c8a;--line:#3a352e;--stage:#302c26}}
+:root[data-theme="dark"]{--bg:#1c1a17;--card:#26231f;--ink:#eee6d8;--muted:#a89c8a;--line:#3a352e;--stage:#302c26}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 Georgia,serif;padding:16px}
-h1{font-size:22px;margin:0 0 4px}p.sub{margin:0 0 16px;color:var(--muted)}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:18px;margin:22px 0 10px}p.sub{margin:0 0 8px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
 .c{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center}
-.c canvas{image-rendering:pixelated;width:100%;height:auto}
+.c canvas{image-rendering:pixelated;width:100%;height:auto;background:var(--stage);border-radius:6px}
 .n{font-weight:bold;margin-top:6px}.r{font-size:12px;color:var(--muted)}.s{font-size:11px;color:var(--muted);margin-top:2px}
 </style></head><body>
-<h1>Жители замка</h1><p class="sub">Скины на модель игрока, 64×64. Слева — вид спереди, справа — сзади. Этап — когда житель появляется.</p>
-<div class="grid" id="g"></div>
+<h1>Жители замка и шайка Рыжего</h1><p class="sub">Скины на модель игрока, 64×64: спереди, сбоку и сзади. Этап — когда житель появляется.</p>
+<div id="root"></div>
 <script>
 const NPC=[${cards.join(',\n')}];
-// Развёртки: [u,v,w,h,d]
+const GROUPS=${JSON.stringify(GROUPS)};
 const P={head:[0,0,8,8,8],hat:[32,0,8,8,8],body:[16,16,8,12,4],jacket:[16,32,8,12,4],rArm:[40,16,4,12,4],rSleeve:[40,32,4,12,4],lArm:[32,48,4,12,4],lSleeve:[48,48,4,12,4],rLeg:[0,16,4,12,4],rPants:[0,32,4,12,4],lLeg:[16,48,4,12,4],lPants:[0,48,4,12,4]};
-const face=(p,side)=>{const[u,v,w,h,d]=P[p];return side==='front'?[u+d,v+d,w,h]:[u+2*d+w,v+d,w,h]};
+function face(p,side){const[u,v,w,h,d]=P[p];return{front:[u+d,v+d,w,h],back:[u+2*d+w,v+d,w,h],left:[u+d+w,v+d,d,h]}[side]}
 function draw(img,cv){
-  const S=6,ctx=cv.getContext('2d');ctx.imageSmoothingEnabled=false;
+  const S=5,ctx=cv.getContext('2d');ctx.imageSmoothingEnabled=false;
   const put=(p,side,x,y,over)=>{const[sx,sy,w,h]=face(p,side);const g=over?0.5:0;ctx.drawImage(img,sx,sy,w,h,(x-g)*S,(y-g)*S,(w+2*g)*S,(h+2*g)*S)};
   const fig=(ox,side)=>{const F=side==='front';
-    // спереди слева от зрителя правая рука и нога, сзади — левые
     const L=F?['rArm','rSleeve','rLeg','rPants']:['lArm','lSleeve','lLeg','lPants'],R=F?['lArm','lSleeve','lLeg','lPants']:['rArm','rSleeve','rLeg','rPants'];
-    put('head',side,ox+4,1);put(L[2],side,ox+4,21);put(R[2],side,ox+8,21);put('body',side,ox+4,9);put(L[0],side,ox,9);put(R[0],side,ox+12,9);
+    put(L[2],side,ox+4,21);put(R[2],side,ox+8,21);put('body',side,ox+4,9);put(L[0],side,ox,9);put(R[0],side,ox+12,9);put('head',side,ox+4,1);
     put(L[3],side,ox+4,21,1);put(R[3],side,ox+8,21,1);put('jacket',side,ox+4,9,1);put(L[1],side,ox,9,1);put(R[1],side,ox+12,9,1);put('hat',side,ox+4,1,1)};
-  fig(1,'front');fig(19,'back');
+  // сбоку (левый бок): голова, тело, левая рука, левая нога
+  const prof=(ox)=>{put('lLeg','left',ox+2,21);put('body','left',ox+2,9);put('head','left',ox,1);put('lPants','left',ox+2,21,1);put('jacket','left',ox+2,9,1);put('lArm','left',ox+2,9);put('lSleeve','left',ox+2,9,1);put('hat','left',ox,1,1)};
+  fig(1,'front');prof(20);fig(31,'back');
 }
-const g=document.getElementById('g');
-for(const n of NPC){const d=document.createElement('div');d.className='c';const cv=document.createElement('canvas');cv.width=36*6;cv.height=34*6;d.append(cv);
-  d.insertAdjacentHTML('beforeend','<div class="n">'+n.name+'</div><div class="r">'+n.role+'</div><div class="s">этап '+n.stage+'</div>');g.append(d);
-  const img=new Image();img.onload=()=>draw(img,cv);img.src=n.src;}
+const root=document.getElementById('root');
+for(const[g,title]of Object.entries(GROUPS)){
+  const h=document.createElement('h2');h.textContent=title;root.append(h);
+  const grid=document.createElement('div');grid.className='grid';root.append(grid);
+  for(const n of NPC.filter((q)=>q.g===g)){const d=document.createElement('div');d.className='c';const cv=document.createElement('canvas');cv.width=48*5;cv.height=34*5;d.append(cv);
+    for(const[cls,t]of[['n',n.name],['r',n.role],['s','этап '+n.stage]]){const e=document.createElement('div');e.className=cls;e.textContent=t;d.append(e)}
+    grid.append(d);const img=new Image();img.onload=()=>draw(img,cv);img.src=n.src;}
+}
 </script></body></html>`;
   fs.writeFileSync(path.join(outDir, 'lineup.html'), html);
 }

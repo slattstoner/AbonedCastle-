@@ -24,7 +24,7 @@ const PACK = {
   // Ресурсный пакет: внешность жителей замка
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
-  version: [0, 6, 0],
+  version: [0, 6, 1],
   minEngine: [1, 21, 120],
 };
 // Частота: spacing — размер ячейки в чанках (одна попытка на ячейку), separation — минимальный зазор.
