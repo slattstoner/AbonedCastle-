@@ -1,0 +1,174 @@
+<title>Замок из замшелого камня</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya:wght@500;700&family=Alegreya+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Макет: слева сцена на всю высоту, справа «полевая карточка» постройки; на телефоне — друг под другом. */
+:root {
+  --bg: #e9ece4;
+  --panel: #f5f6f1;
+  --line: #cfd5c8;
+  --fg: #1c2620;
+  --muted: #5a6a5e;
+  --accent: #a8641a;
+  --scene: #c9d3c6;
+  --slot: #c07a1e;
+  --clue: #2f8c83;
+  --secret: #b8433a;
+  --font-display: 'Alegreya', Georgia, 'Times New Roman', serif;
+  --font-body: 'Alegreya Sans', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111713; --panel: #172019; --line: #2a362d; --fg: #e2e8de; --muted: #93a396;
+    --accent: #e0a14a; --scene: #1a231c; --slot: #e0a14a; --clue: #4fb3a9; --secret: #e0675a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111713; --panel: #172019; --line: #2a362d; --fg: #e2e8de; --muted: #93a396;
+  --accent: #e0a14a; --scene: #1a231c; --slot: #e0a14a; --clue: #4fb3a9; --secret: #e0675a; color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.5; }
+.app { display: grid; grid-template-columns: minmax(0, 1fr) 400px; height: 100%; }
+.stage-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.bar { display: flex; gap: 8px; align-items: center; padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: 16px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+.brand { font-family: var(--font-display); font-weight: 700; font-size: 18px; margin-right: auto; white-space: nowrap; }
+.brand small { font-family: var(--font-mono); font-weight: 400; font-size: 11px; color: var(--muted); margin-left: 8px; letter-spacing: .04em; }
+.picker { display: flex; gap: 6px; align-items: center; min-width: 0; flex: 1 1 280px; max-width: 460px; }
+select, button { font: inherit; color: var(--fg); }
+select { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); font-size: 15px; }
+.icon-btn { width: 38px; height: 38px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); cursor: pointer; font-size: 18px; line-height: 1; flex: none; }
+.icon-btn:hover { border-color: var(--accent); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#stage { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; }
+#scene { display: block; width: 100%; height: 100%; }
+#badges { position: absolute; inset: 0; pointer-events: none; }
+.badge { position: absolute; left: 0; top: 0; pointer-events: auto; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--panel); font: 700 12px/1 var(--font-mono); color: #fff; cursor: pointer; padding: 0; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.badge.slot { background: var(--slot); } .badge.clue { background: var(--clue); } .badge.secret { background: var(--secret); }
+#tip { position: absolute; z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 2px; font-size: 14px; max-width: 220px; box-shadow: 0 4px 16px rgba(0,0,0,.25); pointer-events: none; }
+#tip code, #tip span { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.tools { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: 16px; border-top: 1px solid var(--line); background: var(--panel); font-size: 14px; }
+.tools label { display: flex; gap: 8px; align-items: center; }
+.cut { flex: 1 1 220px; min-width: 0; }
+.cut input { flex: 1; min-width: 0; accent-color: var(--accent); }
+#cutval { font-family: var(--font-mono); font-size: 12px; color: var(--muted); min-width: 64px; }
+.toggle input { accent-color: var(--accent); width: 18px; height: 18px; }
+.ghost { border: 1px solid var(--line); background: transparent; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 14px; }
+.legend { display: flex; gap: 12px; font-size: 13px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+aside { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding-block: 20px 32px; padding-left: 24px; padding-right: max(24px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+h1 { font-family: var(--font-display); font-size: 28px; line-height: 1.15; margin: 4px 0 10px; text-wrap: balance; }
+h2 { font-family: var(--font-display); font-size: 19px; margin: 0 0 10px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-family: var(--font-mono); font-size: 11.5px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-variant-numeric: tabular-nums; }
+.rarity { color: var(--fg); border-color: var(--fg); }
+.r-необычная { color: var(--clue); border-color: var(--clue); }
+.r-редкая { color: var(--accent); border-color: var(--accent); }
+.biomes { font-size: 14px; color: var(--muted); margin-top: 8px; }
+.desc { margin: 0; max-width: 62ch; }
+#variants { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; width: fit-content; max-width: 100%; }
+#variants button { border: 0; background: transparent; padding: 8px 14px; cursor: pointer; font-size: 14px; }
+#variants button + button { border-left: 1px solid var(--line); }
+#variants button[aria-pressed="true"] { background: var(--accent); color: var(--panel); font-weight: 700; }
+.note { font-size: 13.5px; color: var(--muted); margin: -4px 0 10px; }
+.marks { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.marks button { display: grid; grid-template-columns: 26px 1fr; gap: 10px; text-align: left; width: 100%; background: transparent; border: 1px solid var(--line); border-radius: 10px; padding: 10px; cursor: pointer; }
+.marks li.on button { border-color: var(--accent); background: var(--bg); }
+.marks .num { width: 24px; height: 24px; border-radius: 50%; color: #fff; font: 700 12px/24px var(--font-mono); text-align: center; }
+.marks .room .num { background: #5b7fc4; } .badge.room { background: #5b7fc4; }
+.floors { display: flex; gap: 6px; flex-wrap: wrap; }
+.marks .slot .num { background: var(--slot); } .marks .clue .num { background: var(--clue); } .marks .secret .num { background: var(--secret); }
+.marks .txt { display: grid; gap: 2px; min-width: 0; font-size: 14px; }
+.marks em { font-style: normal; font-size: 12px; color: var(--muted); }
+.plain { margin: 0; padding-left: 18px; font-size: 14.5px; display: grid; gap: 4px; }
+.palette { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; font-size: 13.5px; }
+.palette li { display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; align-items: center; min-width: 0; }
+.palette i { width: 16px; height: 16px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
+.palette span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette small { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 860px) {
+  html, body { height: auto; }
+  .app { grid-template-columns: 1fr; height: auto; }
+  #stage { height: 62vh; flex: none; }
+  aside { border-left: 0; border-top: 1px solid var(--line); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .bar, .tools { padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .brand small { display: none; }
+  .palette { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="app">
+  <div class="stage-col">
+    <div class="bar">
+      <div class="brand">Замок из замшелого камня<small>эскиз архитектуры</small></div>
+      <div class="picker">
+        <button class="icon-btn" id="prev" aria-label="Предыдущая постройка">‹</button>
+        <select id="pick" aria-label="Постройка"></select>
+        <button class="icon-btn" id="next" aria-label="Следующая постройка">›</button>
+      </div>
+    </div>
+    <div id="stage">
+      <canvas id="scene" aria-label="3D-модель постройки: вращайте пальцем, сводите для масштаба"></canvas>
+      <div id="badges"></div>
+      <div id="tip" hidden></div>
+    </div>
+    <div class="tools">
+      <label class="cut" for="cut">Срез по высоте <input type="range" id="cut" step="1"><span id="cutval">всё</span></label>
+      <label class="toggle" for="env"><input type="checkbox" id="env" checked> Грунт и деревья</label>
+      <button class="ghost" id="reset">Вид целиком</button>
+      <div class="floors" id="floors"></div>
+    </div>
+  </div>
+  <aside>
+    <section>
+      <div class="eyebrow" id="group"></div>
+      <h1 id="name"></h1>
+      <div class="meta" id="meta"></div>
+      <div class="biomes">Биомы: <span id="biomes"></span></div>
+    </section>
+    <div id="variants" role="group" aria-label="Состояние" hidden></div>
+    <p class="desc" id="desc"></p>
+    <section>
+      <h2>Помещения</h2>
+      <p class="note">Нажми на пункт, и камера покажет место. Подземные помещения видны, если снять галочку «Грунт и деревья».</p>
+      <ol class="marks" id="marks"></ol>
+    </section>
+    <section>
+      <h2>Территория</h2>
+      <ul class="plain" id="territory"></ul>
+    </section>
+    <section>
+      <h2>Палитра</h2>
+      <ul class="palette" id="palette"></ul>
+    </section>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script src="blocks.js"></script>
+<script src="builder.js"></script>
+<script src="castle/castle.js"></script>
+<script src="viewer.js"></script>
+<script>
+// Кнопки этажей: выставляют срез по высоте и прячут грунт для подземелья.
+(function () {
+  const floors = [['Весь замок', null, true], ['Подземелье', -8, false], ['1 этаж', 6, true], ['2 этаж', 13, true], ['3 этаж', 20, true]];
+  const box = document.getElementById('floors'), cut = document.getElementById('cut'), env = document.getElementById('env');
+  for (const [label, y, e] of floors) {
+    const btn = document.createElement('button');
+    btn.className = 'ghost';
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+      if (env.checked !== e) { env.checked = e; env.dispatchEvent(new Event('change')); }
+      cut.value = y === null ? cut.max : y;
+      cut.dispatchEvent(new Event('input'));
+    });
+    box.appendChild(btn);
+  }
+})();
+</script>

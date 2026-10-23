@@ -96,7 +96,7 @@
   const unit = new THREE.BoxGeometry(1, 1, 1);
   const matOpaque = new THREE.MeshLambertMaterial();
   const matGlass = new THREE.MeshLambertMaterial({ transparent: true, opacity: 0.5, depthWrite: false });
-  const MARK_COLORS = { slot: 0xe0a14a, clue: 0x4fb3a9, secret: 0xd8574a };
+  const MARK_COLORS = { slot: 0xe0a14a, clue: 0x4fb3a9, secret: 0xd8574a, room: 0x5b7fc4 };
   let meshes = [], markObjs = [];
 
   const state = { i: 0, variant: null, cut: Infinity, env: true, built: null, focus: -1 };
@@ -228,7 +228,7 @@
   });
 
   // ---------- Панель ----------
-  const TYPE_LABEL = { slot: 'Слот тайника', clue: 'Место подсказки', secret: 'Секрет' };
+  const TYPE_LABEL = { slot: 'Слот тайника', clue: 'Место подсказки', secret: 'Секрет', room: 'Помещение' };
   const sel = $('#pick');
   const groups = {};
   STRUCTURES.forEach((s, i) => { (groups[s.group] = groups[s.group] || []).push([s, i]); });
