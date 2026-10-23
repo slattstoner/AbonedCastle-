@@ -26,15 +26,17 @@ const RENAME = {
   cobblestone_stairs: 'stone_stairs',
 };
 const AXIS = new Set(['spruce_log', 'stripped_spruce_log', 'dark_oak_log', 'iron_chain']);
-const SLABS = new Set(['spruce_slab', 'cobblestone_slab', 'stone_brick_slab', 'dark_oak_slab', 'mossy_cobblestone_slab']);
-const STAIRS = new Set(['spruce_stairs', 'stone_brick_stairs', 'mossy_cobblestone_stairs', 'cobblestone_stairs']);
-const WALLS = new Set(['cobblestone_wall', 'mossy_cobblestone_wall', 'stone_brick_wall']);
+// Плиты, ступени, стены, заборы, двери и люки узнаём по окончанию имени.
+const SLABS = { has: (id) => id.endsWith('_slab') };
+const STAIRS = { has: (id) => id.endsWith('_stairs') };
+const WALLS = { has: (id) => id.endsWith('_wall') };
+const FENCE = (id) => id.endsWith('_fence');
 const PANES = new Set(['glass_pane', 'iron_bars']);
 const CARDINAL = new Set(['furnace', 'smoker', 'anvil', 'pumpkin', 'carved_pumpkin', 'stonecutter']);
 const NOT_SOLID = /leaves|glass|slab|stairs|fence|wall|pane|bars|door|trapdoor|carpet|sign|banner|ladder|frame|lantern|candle|torch|chain|bed|chest|campfire|cauldron|lectern|pot|skull|plant|fern|grass$|bush|mushroom|poppy|roots|web|sapling|potatoes|carrots|beetroot|water|cake|vine/;
 
 function isSolid(b, BLOCKS) {
-  if (!b) return false;
+  if (!b || b.id === 'air') return false;
   const def = BLOCKS[b.id] || {};
   return (!def.s || def.s === 'shelf') && !def.t && !NOT_SOLID.test(b.id);
 }
@@ -93,20 +95,24 @@ function toBedrock(blk, get, BLOCKS, slot = {}) {
   else if (id === 'hay_block' || id === 'bone_block') st = { deprecated: 0, pillar_axis: blk.a || 'y' };
   else if (SLABS.has(id)) st['minecraft:vertical_half'] = blk.h === 'top' ? 'top' : 'bottom';
   else if (STAIRS.has(id)) st = { 'minecraft:corner': 'none', upside_down_bit: blk.h === 'top', weirdo_direction: WEIRDO[f || 'n'] };
-  else if (id === 'spruce_fence') {
-    const c = connections((n) => n === 'spruce_fence' || n === 'spruce_fence_gate');
+  else if (FENCE(id)) {
+    const c = connections((n) => FENCE(n) || n.endsWith('_fence_gate'));
     for (const d of 'nsew') st['minecraft:connection_' + CARD[d]] = c[d];
   } else if (PANES.has(id)) {
     const c = connections((n) => PANES.has(n) || WALLS.has(n));
     for (const d of 'nsew') st['minecraft:connection_' + CARD[d]] = c[d];
   } else if (WALLS.has(id)) {
-    const c = connections((n) => WALLS.has(n) || PANES.has(n) || n === 'spruce_fence_gate');
+    const c = connections((n) => WALLS.has(n) || PANES.has(n) || n.endsWith('_fence_gate'));
     for (const d of 'nsew') st['wall_connection_type_' + CARD[d]] = c[d] ? 'short' : 'none';
     st.wall_post_bit = true;
   } else if (id === 'spruce_fence_gate') st = { in_wall_bit: false, 'minecraft:cardinal_direction': CARD[f || 'n'], open_bit: !!blk.open };
-  else if (id === 'spruce_trapdoor') st = { direction: WEIRDO[f || 'n'], open_bit: !!blk.open, upside_down_bit: blk.h === 'top' };
-  else if (id === 'spruce_door') st = { door_hinge_bit: false, 'minecraft:cardinal_direction': CARD[f || 's'], open_bit: !!blk.open, upper_block_bit: !!blk.top };
-  else if (id === 'spruce_leaves') st = { persistent_bit: true, update_bit: false };
+  else if (id.endsWith('_trapdoor')) st = { direction: WEIRDO[f || 'n'], open_bit: !!blk.open, upside_down_bit: blk.h === 'top' };
+  else if (id.endsWith('_door')) st = { door_hinge_bit: false, 'minecraft:cardinal_direction': CARD[f || 's'], open_bit: !!blk.open, upper_block_bit: !!blk.top };
+  else if (/leaves/.test(id)) st = { persistent_bit: true, update_bit: false };
+  else if (id === 'soul_lantern') st.hanging = !!blk.hang;
+  else if (id === 'bell') st = { attachment: 'standing', direction: LEGACY4[f || 's'], toggle_bit: false };
+  else if (id === 'brewing_stand') st = { brewing_stand_slot_a_bit: false, brewing_stand_slot_b_bit: false, brewing_stand_slot_c_bit: false };
+  else if (id === 'blast_furnace') st['minecraft:cardinal_direction'] = CARD[f || 's'];
   else if (id === 'spruce_sign') {
     if (blk.stand !== undefined) {
       name = 'spruce_standing_sign';

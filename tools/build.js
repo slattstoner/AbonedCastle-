@@ -16,10 +16,10 @@ const ROOT = path.resolve(__dirname, '..');
 const NS = 'acastle';
 const PACK = {
   name: 'Abandoned Castle: Тайга',
-  description: 'Постройки хвойного биома: хижины, лагеря, ориентиры, хутора, острог и скит. С тайниками и историями.',
+  description: 'Постройки хвойного биома: хижины, лагеря, ориентиры, хутора, острог и скит. С тайниками и историями. Пробный замок: /function castle',
   header: '6f3d2a8e-4c1b-4f7a-9e2d-5b8c1a7f3e90',
   module: 'a2c94e17-8b3f-4d6a-b1e5-0f7d9c3a2b48',
-  version: [0, 3, 1],
+  version: [0, 4, 0],
   minEngine: [1, 21, 120],
 };
 // Частота: spacing — размер ячейки в чанках (одна попытка на ячейку), separation — минимальный зазор.
@@ -131,7 +131,7 @@ function checkSupport(sid, blocks, get) {
     const at = `${sid} (${v.x},${v.y},${v.z}) ${v.id}`;
     if (v.y === -1) continue;
     const below = get(v.x, v.y - 1, v.z);
-    if (v.id === 'lantern' && v.hang) { if (!get(v.x, v.y + 1, v.z)) warn(`${at}: висит в воздухе`); continue; }
+    if ((v.id === 'lantern' || v.id === 'soul_lantern') && v.hang) { if (!get(v.x, v.y + 1, v.z)) warn(`${at}: висит в воздухе`); continue; }
     if (ATTACHED.has(v.id) && v.stand === undefined) {
       const [dx, dz] = STEP[v.f || 'n'];
       if (!get(v.x + dx, v.y, v.z + dz)) warn(`${at}: не к чему крепиться`);
@@ -242,6 +242,47 @@ for (const s of STRUCTURES) {
     },
   });
   docs.push(docEntry);
+}
+
+// ---------- Замок для проверки командой ----------
+// Пока без генерации в мире: замок режется на куски 64×64 (больше одного куска
+// игра не загружает), а функция castle ставит их все вокруг игрока.
+{
+  const n = STRUCTURES.length;
+  load('design/preview/castle/castle.js');
+  const castle = STRUCTURES.splice(n)[0];
+  const b = castle.build();
+  const tmpl = [...b.blocks.values()].filter((v) => !v.env);
+  const map = new Map(tmpl.map((v) => [v.x + ',' + v.y + ',' + v.z, v]));
+  const get = (x, y, z) => { const v = map.get(x + ',' + y + ',' + z); return v && v.id !== 'air' ? v : undefined; };
+  checkSupport('castle', tmpl.filter((v) => v.id !== 'air'), get);
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const v of tmpl) [v.x, v.y, v.z].forEach((c, k) => { lo[k] = Math.min(lo[k], c); hi[k] = Math.max(hi[k], c); });
+  const PART = 64, ORIGIN = [63, 0, 98]; // игрок стоит на площади у ворот, замок к северу
+  const lines = [
+    '# Замок из замшелого камня: ставит все куски вокруг игрока.',
+    '# Встаньте на ровное место в обычном мире (не в плоском: подземелье уходит на 22 блока вниз).',
+  ];
+  let parts = 0;
+  for (let x0 = lo[0]; x0 <= hi[0]; x0 += PART) for (let z0 = lo[2]; z0 <= hi[2]; z0 += PART) {
+    const size = [Math.min(PART, hi[0] - x0 + 1), hi[1] - lo[1] + 1, Math.min(PART, hi[2] - z0 + 1)];
+    const cells = [];
+    for (let x = 0; x < size[0]; x++) for (let y = 0; y < size[1]; y++) for (let z = 0; z < size[2]; z++) {
+      const wx = x0 + x, wy = lo[1] + y, wz = z0 + z;
+      const blk = map.get(wx + ',' + wy + ',' + wz);
+      if (!blk || blk.env) { if (wy >= 0) cells.push({ x, y, z, block: { name: 'minecraft:air', states: {} } }); continue; }
+      if (blk.id === 'air') { cells.push({ x, y, z, block: { name: 'minecraft:air', states: {} } }); continue; }
+      const slotData = CONTAINERS.has(blk.id) && blk.theme ? { lootTable: themeTable(blk.theme) } : {};
+      cells.push({ x, y, z, block: toBedrock(blk, get, BLOCKS, slotData) });
+    }
+    const name = `castle_${parts}`;
+    write(`structures/${NS}/${name}.mcstructure`, mcstructure(size, cells));
+    lines.push(`structure load ${NS}:${name} ~${x0 - ORIGIN[0]} ~${lo[1] - ORIGIN[1]} ~${z0 - ORIGIN[2]}`);
+    parts++;
+  }
+  lines.push(`tellraw @s {"rawtext":[{"text":"Замок поставлен: ${parts} кусков. Ворота у вас за спиной, донжон впереди к северу."}]}`);
+  write('functions/castle.mcfunction', lines.join('\n') + '\n');
+  console.log(`Замок: ${tmpl.length} блоков, ${parts} кусков, размер ${hi[0] - lo[0] + 1}×${hi[2] - lo[2] + 1}, высота ${hi[1] - lo[1] + 1}`);
 }
 
 for (const [file, p] of Object.entries(pools)) {

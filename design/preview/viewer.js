@@ -277,6 +277,7 @@
     const s = STRUCTURES[i];
     state.variant = variant || (s.states ? s.states[0].id : null);
     state.built = s.build(state.variant);
+    for (const [k, v] of state.built.blocks) if (v.id === 'air') state.built.blocks.delete(k);
     state.focus = -1;
     sel.value = String(i);
     try { localStorage.setItem('taiga-preview', String(i)); } catch (e) { /* хранилище недоступно */ }

@@ -178,6 +178,7 @@
   function stamp(b, dx, dz, fn) {
     const t = new Builder(17);
     t.r = b.r;
+    t.carve = true;
     fn(t);
     for (const v of t.blocks.values()) { const { x, y, z, id, ...p } = v; b.set(x + dx, y, z + dz, id, p); }
     for (const m of t.marks) b.mark(m.type, m.x + dx, m.y, m.z + dz, m.title, m.desc);
@@ -255,7 +256,7 @@
     air(w, 18, 6, 31, 20, 8, 31);
     air(w, 18, 6, 36, 20, 9, 38); for (let j = 36; j <= 38; j++) { w.set(18, 9, j, 'stone_brick_stairs', { h: 'top', f: 'w' }); w.set(20, 9, j, 'stone_brick_stairs', { h: 'top', f: 'e' }); }
     air(w, 36, 6, 18, 38, 8, 20); // проход в библиотеку
-    air(w, 16, 6, 0, 22, 14, 2); for (let j = 0; j <= 2; j++) { w.set(16, 14, j, 'stone_brick_stairs', { h: 'top', f: 'w' }); w.set(22, 14, j, 'stone_brick_stairs', { h: 'top', f: 'e' }); }
+    air(w, 16, 7, 0, 22, 14, 2); solid(w, 16, 6, 0, 22, 6, 2, PAVE); for (let j = 0; j <= 2; j++) { w.set(16, 14, j, 'stone_brick_stairs', { h: 'top', f: 'w' }); w.set(22, 14, j, 'stone_brick_stairs', { h: 'top', f: 'e' }); }
 
     // Галерейный этаж (2): над залом пустота, по бокам часовня, солар, кабинет
     air(w, 11, 11, 3, 27, 11, 26);
@@ -397,7 +398,7 @@
     hearth(11, 6, 16, 'e', 16); hearth(27, 6, 16, 'w', 16);
     for (const j of [10, 16, 22]) chand(19, 16, j, 4);
     for (const j of [8, 12, 20, 24]) { banner(11, 12, j, 'w'); banner(27, 12, j, 'e'); }
-    banner(16, 12, 3, 'n'); banner(22, 12, 3, 'n');
+    banner(14, 12, 3, 'n'); banner(24, 12, 3, 'n');
     w.room(19, 6, 14, 'Большой зал', 'Сердце замка, высотой в два этажа. В северном конце возвышение с высоким столом и трон в нише средней башни. Вдоль зала столы с лавками, по бокам два камина, колонны и знамёна. Сверху на зал смотрят галереи.');
     w.mark('slot', 19, 6, 6, 'Под ступенью трона', 'Ступень возвышения перед троном можно поднять.');
     w.mark('slot', 11, 6, 16, 'Камень в очаге', 'Расшатанный камень в задней стенке западного камина.');
@@ -691,7 +692,7 @@
     w.mark('secret', 19, -10, -14, 'Потайной лаз', 'Узкий ход из подземелья под крепостной стеной. Выходит люком в лесу за северной стеной.');
     // Освещение и паутина
     for (let i = 10; i <= 50; i += 8) w.set(i, -7, 32, 'soul_lantern', { hang: 1 });
-    for (let j = -6; j <= 28; j += 8) w.set(19, -7, j, 'soul_lantern', { hang: 1 });
+    for (const j of [-6, 2, 18, 26]) w.set(19, -7, j, 'soul_lantern', { hang: 1 });
     for (let j = 38; j <= 56; j += 9) w.set(54, -7, j, 'soul_lantern', { hang: 1 });
     for (const [i, j] of [[6, 31], [54, 58], [18, -8], [20, 30], [19, -17], [23, -7]]) w.set(i, -10, j, 'cobweb');
     w.mark('room', 30, -10, 32, 'Южный ход', 'Главный коридор подземелья. На восточном конце поворачивает к склепу часовни.');
@@ -726,7 +727,7 @@
       pyramid(b, x1 - 2, z1 - 2, x2 + 2, z2 + 2, 19);
       b.fill(x1 + 4, 26, z1 + 4, x1 + 4, 27, z1 + 4, 'spruce_fence'); b.set(x1 + 4, 28, z1 + 4, 'red_banner', { stand: 0 });
       for (const y of [2, 10]) { win(b, x1 + 4, y, z1, 2, 'iron_bars'); win(b, x1 + 4, y, z2, 2, 'iron_bars'); win(b, x1, y, z1 + 4, 2, 'iron_bars'); win(b, x2, y, z1 + 4, 2, 'iron_bars'); }
-      b.fill(x1 + 1, 0, z1 + 4, x1 + 1, 15, z1 + 4, 'ladder', { f: 'w' });
+      b.fill(x1 + 1, 0, z1 + 2, x1 + 1, 15, z1 + 2, 'ladder', { f: 'w' });
       lamp(b, x1 + 4, 14, z1 - 2); lamp(b, x1 + 4, 14, z2 + 2);
     }
     for (const [x, z, f] of [[8, 6, 'e'], [X2 - 8, 6, 'w'], [8, Z2 - 6, 'e'], [X2 - 8, Z2 - 6, 'w']]) b.door(x, 0, z, f, 'spruce_door');
@@ -882,7 +883,7 @@
     overgrow(b, 58, 54, 78, 64, 7, 22);
     // Склеп под часовней
     solid(b, 59, -11, 54, 77, -5, 68, CRYPT); air(b, 60, -10, 55, 76, -6, 63); air(b, 67, -10, 64, 69, -7, 67);
-    air(b, 64, -10, 54, 66, -7, 54);
+    air(b, 64, -10, 54, 66, -7, 54); solid(b, 68, -4, 68, 68, -2, 68, CRYPT);
     b.fill(68, -10, 67, 68, -1, 67, 'ladder', { f: 's' });
     for (const x of [62, 66, 70, 74]) for (const z of [56, 62]) { b.fill(x, -10, z, x + 1, -10, z, 'polished_deepslate'); b.set(x, -9, z, 'candle', { lit: 1 }); }
     for (const x of [64, 72]) for (const z of [55, 63]) b.fill(x, -10, z, x, -6, z, 'deepslate_tiles');
@@ -919,6 +920,7 @@
     ],
     build() {
       const b = new Builder(2025);
+      b.carve = true;
       const X2 = 127, Z2 = 131, CX = 63;
       b.ground(-6, -6, X2 + 6, Z2 + 6);
       b.surface(-6, -6, X2 + 6, Z2 + 6, [['grass_block', 6], ['podzol', 2], ['coarse_dirt', 1], ['moss_block', 2]]);

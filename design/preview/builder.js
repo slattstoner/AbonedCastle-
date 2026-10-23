@@ -35,7 +35,10 @@
     }
     set(x, y, z, id, p) {
       const b = this.pick(id);
-      if (!b || b === 'air') this.blocks.delete(this.k(x, y, z));
+      // carve: под землёй вырезанная пустота запоминается как явный воздух,
+      // иначе в игре грунт останется внутри подземных залов.
+      if ((!b || b === 'air') && this.carve && y <= -1) this.blocks.set(this.k(x, y, z), { x, y, z, id: 'air' });
+      else if (!b || b === 'air') this.blocks.delete(this.k(x, y, z));
       else this.blocks.set(this.k(x, y, z), { x, y, z, id: b, ...p });
       return this;
     }
