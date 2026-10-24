@@ -70,7 +70,7 @@ export const LATE_CONTRACTS = {
 // ---------- Бои ----------
 // Бой по волнам: o.ready() — можно начинать, o.stay() — бой продолжается, o.waves — функции,
 // которые выводят волну (метят существ o.tag), o.win() / o.lose(). Счёт — над панелью предметов.
-function battle(api, key, o) {
+export function battle(api, key, o) {
   const S = api.S;
   const mobs = () => api.dim().getEntities({ tags: [o.tag] });
   let b = S.f[key];
@@ -96,7 +96,7 @@ function battle(api, key, o) {
   if (o.next) o.next(b.n);
 }
 // Люди Рыжего вокруг точки p (в мире): враждебные, в бою с игроком и стражей
-function raid(api, p, n, tag, rmin = 16, rmax = 24) {
+export function raid(api, p, n, tag, rmin = 16, rmax = 24) {
   for (let i = 0; i < n; i++) {
     const a = Math.random() * Math.PI * 2, r = rmin + Math.random() * (rmax - rmin);
     const x = Math.round(p.x + Math.cos(a) * r), z = Math.round(p.z + Math.sin(a) * r);
@@ -149,6 +149,7 @@ function evidence(api, pl) {
     amulet: api.hasNamed(pl, 'minecraft:iron_nugget', 'Оберег-башня'),
     letter: api.hasNamed(pl, 'minecraft:paper', 'Письмо королевы'),
     lullaby: !!api.flag('lullaby'),
+    horse: api.hasNamed(pl, 'minecraft:stick', 'Деревянный конёк'),
   };
 }
 
@@ -385,6 +386,7 @@ function checkStage(api, n) {
   if (!need || api.flag(`stage${n}_done`) || !need.every((q) => api.done(q))) return;
   api.flag(`stage${n}_done`, 1);
   if (RANKS[n]) api.rank(RANKS[n]);
+  api.renown(5, `этап ${n}`);
   const after = {
     2: 'Кузня горит. Агафья на кухне жалуется, что кладовые пусты.',
     3: 'Хозяйство налажено. Игнат хочет поговорить о старом кладбище.',
@@ -701,12 +703,13 @@ function talkLate(id, api, pl) {
     case 'ryzhy': {
       if (has('s9_heir') || f('heir_seen')) return { text: f('stage9_done') ? 'Ну что, хозяин? Лес тебя принял — значит, и я приму. Люди мои дороги стерегут. Заходи, если что.' : 'Отец… Странное слово. Я в бору вырос, там моё место. А замок пусть будет твой.', options: [bye] };
       if (has('s8_siege') && S.f.siege_talk !== 1) {
-        const e = evidence(api, pl), n = [e.amulet, e.letter, e.lullaby].filter(Boolean).length;
+        const e = evidence(api, pl), n = [e.amulet, e.letter, e.lullaby, e.horse].filter(Boolean).length;
         if (!n) return { text: 'Слова! Мне платят за то, чтобы этот замок горел. Принеси мне что-нибудь, кроме слов, — или уходи с дороги.', options: [bye] };
         const opts = [];
         if (e.amulet) opts.push({ text: 'Показать оберег-башню.', next: endSiege(n, 'Оберег… Башня. Я помню её — на шее, в темноте, в холодной воде. Откуда он у тебя?') });
         if (e.letter) opts.push({ text: 'Прочитать письмо королевы.', next: endSiege(n, '«Ефремушка, если ты читаешь это — значит, я не смогла тебя уберечь…» Перестань. Хватит.') });
         if (e.lullaby) opts.push({ text: 'Напеть колыбельную.', next: endSiege(n, 'Откуда ты её знаешь? Её никто не знает. Её… её мать пела.') });
+        if (e.horse) opts.push({ text: 'Показать деревянного конька.', next: endSiege(n, 'Конёк… Хвост отломан, я сам его отломал, когда… Я прятался. В стене. Там была решётка и свечи внизу. Откуда ты это взял?') });
         return { text: 'Ты? Опять ты. Пришёл умереть за старика?', options: opts };
       }
       if (has('s5_camp')) return {
@@ -805,7 +808,7 @@ export function lateEvent(name, api, ev) {
       if (api.has('s5_pigeon') && S.npcs.semka === 'home' && !S.f.pigeon) { S.f.pigeon = 1; api.save(); api.tell('§7На голубятню прилетел голубь с письмом. Сёмка зовёт вас.'); }
       if (S.f.siege_talk === 1 && !api.has('s8_siege')) { S.f.siege_talk = 2; disperse(api); api.save(); }
       if (typeof S.f.king_dies === 'number' && world.getDay() > S.f.king_dies && !S.f.king_dead) {
-        S.f.king_dead = 1; api.save();
+        S.f.king_dead = 1; S.f.king_dead_day = world.getDay(); api.save();
         api.live('vsevolod', null);
         for (const p of api.players()) { p.onScreenDisplay.setTitle('§7Король Всеволод умер', { subtitle: 'на рассвете, во сне', fadeInDuration: 30, stayDuration: 100, fadeOutDuration: 30 }); p.playSound('block.bell.hit'); }
         api.tell('§7Звонит колокол. Король Всеволод умер на рассвете. Замок теперь ваш. Рыжий ушёл в бор: его люди стерегут дороги — лагерь у Чёрной гари теперь дружеский.');
@@ -857,7 +860,7 @@ export function lateEvent(name, api, ev) {
     case 'repaired:garden': api.finish('s6_garden'); checkStage(api, 6); break;
     case 'repaired:catacombs': api.finish('s7_catacombs'); checkStage(api, 7); break;
     case 'repaired:heritage':
-      api.finish('s9_heritage'); api.flag('stage9_done', 1);
+      api.finish('s9_heritage'); api.flag('stage9_done', 1); api.renown(5, 'этап 9');
       for (const p of api.players()) p.onScreenDisplay.setTitle('§6Замок восстановлен', { subtitle: 'Студёный детинец снова жив', fadeInDuration: 20, stayDuration: 100, fadeOutDuration: 30 });
       api.tell('§6Трон позолочен, знамёна подняты, колокол звонит. Сюжет замка пройден. Спасибо!');
       break;
@@ -907,7 +910,7 @@ export function lateEvent(name, api, ev) {
       // Безымянные люди Рыжего не бьются до смерти: раненые убегают в лес
       if (!id && e.hasTag('acastle_raid')) {
         const h = e.getComponent('minecraft:health');
-        if (h && h.currentValue < h.effectiveMax * 0.4) { for (const t of ['acastle_farm', 'acastle_siege', 'acastle_raid']) e.removeTag(t); flee(e); }
+        if (h && h.currentValue < h.effectiveMax * 0.4) { for (const t of ['acastle_farm', 'acastle_siege', 'acastle_raid', 'acastle_road']) e.removeTag(t); flee(e); }
         break;
       }
       // Игрок напал на мирный лагерь: шайка враждебна, атаман уходит

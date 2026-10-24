@@ -1,12 +1,14 @@
 // Помощники для сюжета (story.js, stages.js): задания, флаги, предметы игрока, реплики,
 // ремонт, переезд жителей, места тайги. Сюжет получает этот объект в каждом вызове.
-import { world, ItemStack } from '@minecraft/server';
-import { S, save, W, DIM, dist, flat, blockAt, loaded, players, nearest, topAt } from './state.js';
+import { world, ItemStack, Potions, EnchantmentTypes } from '@minecraft/server';
+import { S, save, W, DIM, dist, flat, blockAt, loaded, players, nearest, topAt, runCmd } from './state.js';
+import { levelOf, PERKS } from './household.js';
 import { CASTLE } from './castle_data.js';
 import { NPCS, QUESTS, onEvent } from './story.js';
 import { tagOf, npcIdOf, findNpc, whereOf, npcSpot, relocate } from './people.js';
 
 const inventory = (pl) => pl.getComponent('minecraft:inventory').container;
+const mc = (id) => (id.includes(':') ? id : 'minecraft:' + id);
 
 export const api = {
   get S() { return S; },
@@ -31,6 +33,19 @@ export const api = {
   },
   // Закрыть задание без титров (когда оно потеряло смысл по сюжету)
   drop(q) { if (S.q[q] === 'active') { S.q[q] = 'done'; if (S.guide === q) S.guide = null; save(); } },
+  // Повторяемое задание (разбой на дороге, приметы Куницы): начать заново
+  restart(q) { delete S.q[q]; api.start(q); },
+  // Слава замка: растёт за этапы, тайны, личные истории и поручения (household.js)
+  renown(n, why) {
+    const was = levelOf(S.f.renown);
+    S.f.renown = (S.f.renown || 0) + n; save();
+    const now = levelOf(S.f.renown);
+    for (const pl of players()) {
+      pl.sendMessage(`§6Слава замка +${n}${why ? ` (${why})` : ''}: ${S.f.renown}`);
+      if (now !== was) { pl.onScreenDisplay.setTitle(`§6Замок «${now}»`, { subtitle: PERKS[now] || '', fadeInDuration: 10, stayDuration: 70, fadeOutDuration: 20 }); pl.sendMessage(`§6Слава замка: «${now}». ${PERKS[now] || ''}`); }
+    }
+  },
+  npcName: (id) => (NPCS[id] ? NPCS[id].name : id),
   flag: (k, v) => { if (v === undefined) return S.f[k]; S.f[k] = v; save(); return v; },
   rank(r) { S.rank = r; save(); for (const pl of players()) pl.sendMessage(`§6Ваше звание: §e${r}`); },
   // ---------- Предметы игрока ----------
@@ -71,6 +86,44 @@ export const api = {
     for (let i = 0; i < inv.size; i++) { const it = inv.getItem(i); if (it && it.typeId === id && it.nameTag === name) { inv.setItem(i); return true; } }
     return false;
   },
+  // Предмет с чарами (турнирный меч): чары, которые не встали, просто пропускаются
+  giveEnchanted(pl, id, name, lore, enchants) {
+    const it = new ItemStack(id, 1);
+    if (name) it.nameTag = name;
+    if (lore) it.setLore(lore);
+    try { const en = it.getComponent('minecraft:enchantable'); for (const [e, level] of enchants) en.addEnchantment({ type: EnchantmentTypes.get(mc(e)), level }); } catch (e) { /* без чар */ }
+    const rest = inventory(pl).addItem(it);
+    if (rest) DIM().spawnItem(rest, pl.location);
+  },
+  // Наточить предмет в руке (кузнец): +1 к остроте до max. Возвращает новую остроту,
+  // 0 — в руке не то, −1 — острее некуда
+  sharpen(pl, max) {
+    try {
+      const eq = pl.getComponent('minecraft:equippable'), it = eq.getEquipment('Mainhand');
+      if (!it || !/_sword$|_axe$/.test(it.typeId)) return 0;
+      const en = it.getComponent('minecraft:enchantable'), type = EnchantmentTypes.get('minecraft:sharpness');
+      if (!en || !type) return 0;
+      const cur = en.getEnchantment(type), level = (cur ? cur.level : 0) + 1;
+      if (level > max) return -1;
+      if (cur) en.removeEnchantment(type);
+      en.addEnchantment({ type, level });
+      eq.setEquipment('Mainhand', it);
+      return level;
+    } catch (e) { return 0; }
+  },
+  // Зелье от травницы; если игра не дала зелье — сразу действие отвара
+  potion(pl, effect, name) {
+    try {
+      const it = Potions.resolve(effect, 'Consume');
+      const rest = inventory(pl).addItem(it);
+      if (rest) DIM().spawnItem(rest, pl.location);
+    } catch (e) {
+      api.effect(pl, effect.replace('minecraft:', '').replace('nightvision', 'night_vision').replace('healing', 'instant_health'), 180, 0);
+      pl.sendMessage(`§7Марфа поит вас отваром: ${name}.`);
+    }
+  },
+  effect(pl, id, seconds, amplifier = 0) { try { pl.addEffect(mc(id), seconds * 20, { amplifier, showParticles: true }); } catch (e) { /* нет такого */ } },
+  cmd: (c) => runCmd(c),
   // Починить предмет в руке (кузнец)
   repairHeld(pl) {
     try {

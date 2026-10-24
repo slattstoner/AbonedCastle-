@@ -847,6 +847,41 @@ const NPC = [
     W.furHat(K, '#1e1a18', '#2a2024');
     return K;
   } },
+  // ===== Этап 10: суд Лесной управы =====
+  { id: 'gonets', group: 'act2', name: 'Гонец управы', stage: 10, role: 'привозит указ Лесной управы о «княжиче»', draw: (s) => {
+    const K = person({ skin: SKIN.light, hair: '#6a4a2a', hairStyle: 'short', beard: 'stubble', eyes: '#4a5a6a' }, s);
+    W.shirt(K, '#d8d0b8', { slit: false }); W.trousers(K, '#3a3a4a'); W.boots(K, '#2a1a12', 8, { cuff: '#5a3a22' });
+    W.kaftan(K, '#2a4a6a', { len: 8, trim: '#c8c8c8', buttons: '#c8c8c8' });
+    W.belt(K, '#2a1a10', { y: 8, part: 'jacket', buckle: '#c8c8c8' }); W.pouch(K, '#5a3a20', 5, 9);
+    W.cloak(K, '#4a4a3a', { clasp: '#a8a8a8', len: 9 });
+    W.cap(K, '#2a4a6a', { brim: '#c8c8c8' });
+    return K;
+  } },
+  { id: 'kruchina', group: 'act2', name: 'Дьяк Кирилл Кручина', stage: 10, role: 'дьяк Лесной управы, покровитель Ножова', draw: (s) => {
+    const K = person({ skin: SKIN.pale, hair: '#8a7a6a', hairStyle: 'slick', beard: 'long', beardColor: '#9a8a78', eyes: '#3a3a2a', age: 1 }, s);
+    W.shirt(K, '#e8e0d0'); W.trousers(K, '#2a2a22'); W.boots(K, '#6a2a1a', 7, { cuff: '#c8a040' });
+    W.kaftan(K, '#2e4a32', { trim: '#c8a040', len: 11, collar: '#5a4630', fur: 1, buttons: '#c8a040' });
+    W.belt(K, '#c8a040', { y: 7, part: 'jacket', buckle: '#2e4a32' }); W.pouch(K, '#3a2a1a', 5, 9); W.keys(K, 1, 9);
+    W.furHat(K, '#3a2a1e', '#2e4a32', { tall: 1 });
+    return K;
+  } },
+  { id: 'pretender', group: 'act2', name: 'Назвавшийся Ефремом', stage: 10, role: 'самозванец Гришка, пономарёв сын из Затонья', draw: (s) => {
+    const K = person({ skin: SKIN.fair, hair: '#b8602a', hairStyle: 'bowl', eyes: '#5a4a2a', blush: 1 }, s);
+    W.shirt(K, '#f0e8d0', { emb: '#c8a040' }); W.trousers(K, '#4a1a2e'); W.boots(K, '#9a2a20', 8, { cuff: '#d8b040' });
+    W.kaftan(K, '#a82a2a', { trim: '#e0c050', len: 9, buttons: '#e0c050', collar: '#e0c050' });
+    W.belt(K, '#e0c050', { y: 8, part: 'jacket', buckle: '#a82a2a' });
+    W.cross(K, '#c8c8c8', 3);
+    W.cap(K, '#a82a2a', { brim: '#eeeae0', feather: '#f0f0f0' });
+    return K;
+  } },
+  { id: 'pristav', group: 'act2', name: 'Пристав управы', stage: 10, role: 'охрана дьяка на суде', draw: (s) => {
+    const K = person({ skin: SKIN.tan, hair: '#2a2220', hairStyle: 'short', beard: 'full', beardColor: '#2a2220', eyes: '#3a3020' }, s);
+    W.trousers(K, '#2a2a2a'); W.mail(K, { arms: 6 }); W.boots(K, '#1e1a16', 7);
+    W.kaftan(K, '#2e4a32', { len: 7, open: 1, sleeves: false, trim: '#8a8a8a' });
+    W.belt(K, '#1e1a16', { y: 8, part: 'jacket', buckle: '#8a8a8a' }); W.knife(K, 1, 8);
+    W.helmet(K, '#8a8e92', { rim: '#6a6a6a' });
+    return K;
+  } },
 ];
 
 const skinPng = (id) => { const i = NPC.findIndex((n) => n.id === id); if (i < 0) throw new Error('нет скина ' + id); return NPC[i].draw(1000 + i * 7919).png(); };
@@ -857,7 +892,7 @@ function render(outDir) {
 
 // ---------- Просмотр: каждый житель спереди, сбоку и сзади ----------
 function lineup(outDir) {
-  const GROUPS = { castle: 'Жители замка', gang: 'Шайка Рыжего', taiga: 'Жители тайги', other: 'Противник' };
+  const GROUPS = { castle: 'Жители замка', gang: 'Шайка Рыжего', taiga: 'Жители тайги', other: 'Противник', act2: 'Суд Лесной управы (этап 10)' };
   const cards = NPC.map((n) => `{g:'${n.group}',name:${JSON.stringify(n.name)},role:${JSON.stringify(n.role)},stage:${n.stage},src:'data:image/png;base64,${skinPng(n.id).toString('base64')}'}`);
   const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Жители замка</title>

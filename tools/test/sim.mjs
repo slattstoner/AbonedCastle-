@@ -12,7 +12,7 @@ const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'acastle-sim-'));
 for (const f of fs.readdirSync(path.join(ROOT, 'build/AbandonedCastle_BP/scripts'))) fs.copyFileSync(path.join(ROOT, 'build/AbandonedCastle_BP/scripts', f), path.join(DIR, f));
 fs.writeFileSync(path.join(DIR, 'package.json'), '{"type":"module"}');
 const mod = (name, code) => { const d = path.join(DIR, 'node_modules', name); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'package.json'), '{"type":"module","main":"index.js"}'); fs.writeFileSync(path.join(d, 'index.js'), code); };
-mod('@minecraft/server', 'const M = globalThis.SIM.server; export const world = M.world, system = M.system, ItemStack = M.ItemStack;');
+mod('@minecraft/server', 'const M = globalThis.SIM.server; export const world = M.world, system = M.system, ItemStack = M.ItemStack, Potions = M.Potions, EnchantmentTypes = M.EnchantmentTypes;');
 mod('@minecraft/server-ui', 'export const ActionFormData = globalThis.SIM.ActionFormData;');
 
 // ---------- Макет мира ----------
@@ -56,7 +56,7 @@ function makeEntity(typeId, loc, opts = {}) {
     triggerEvent(ev) { this.events.push(ev); if (ev === 'acastle:despawn') this.remove(); const m = /^acastle:(hostile|flee|captive|peaceful)$/.exec(ev); if (m) this.state = m[1] === 'peaceful' ? null : m[1]; },
     teleport(l) { this.location = { ...l }; },
     remove() { if (!this.isValid) return; this.isValid = false; entities.splice(entities.indexOf(this), 1); },
-    getComponent(c) { if (c === 'minecraft:health') return { currentValue: this.hp ?? 60, effectiveMax: 60 }; return undefined; },
+    getComponent(c) { if (c === 'minecraft:health') return { currentValue: this.hp ?? 60, effectiveMax: 60 }; if (c === 'minecraft:tameable') return { tame: () => { this.tamed = true; return true; } }; return undefined; },
   };
   entities.push(e);
   return e;
@@ -109,13 +109,16 @@ const player = {
     if (c === 'minecraft:equippable') return { getEquipment: () => inv.getItem(0), setEquipment: (slot, it) => inv.setItem(0, it) };
   },
   onScreenDisplay: { setTitle: (t, o) => msgs.push(`[титр] ${t} ${o && o.subtitle || ''}`), setActionBar: (t) => { lastBar = t; } },
-  sendMessage: (m) => msgs.push(m), playSound() {}, getTags: () => [],
+  sendMessage: (m) => msgs.push(m), playSound(s) { sounds.push(s); }, getTags: () => [], addEffect(id, t) { effects.push(id); },
 };
 let lastBar = '';
+const sounds = [], effects = [];
 const ev = (arr) => ({ subscribe: (fn) => arr.push(fn) });
 globalThis.SIM = {
   server: {
     ItemStack,
+    Potions: { resolve: (eff) => Object.assign(new ItemStack('minecraft:potion'), { potion: eff }) },
+    EnchantmentTypes: { get: (id) => ({ id }) },
     world: {
       getDynamicProperty: (k) => props[k], setDynamicProperty: (k, v) => { props[k] = v; },
       getDay: () => day, getTimeOfDay: () => time, getDifficulty: () => difficulty, getAbsoluteTime: () => day * 24000 + time,
@@ -350,6 +353,35 @@ async function fight(tag, waves) {
   ticks(12);
 }
 
+// ===== Побочные дела острога: схрон Рыжего, письмо Лыкова, разбой на дороге =====
+// Открыть тайник в месте тайги: сундук на d блоков от середины места
+function openAt(id, d = 2, dz = 0) { const h = placeOf(id).host; const c = { x: h[0] + d, y: h[1], z: h[2] + dz }; blockAt(c).setType('minecraft:chest'); for (const f of handlers.block) f({ player, block: blockAt(c) }); ticks(2); }
+const atPlace = (id) => { const h = placeOf(id).host; player.location = { x: h[0] + 1, y: h[1], z: h[2] + 1 }; ticks(8); };
+const emeralds = () => inv.slots.filter((x) => x && x.typeId === 'minecraft:emerald').reduce((n, x) => n + x.amount, 0);
+atPlace('stockade_hunt');
+expect(npc('lykov'), 'служивый Лыков в остроге');
+await talk('yaroslav', 'работа');
+expect(q('x_stash') === 'active', 'задание «Схрон Рыжего»');
+await goPlace('camp_abandoned_raid', 'разграбленный стан');
+openAt('camp_abandoned_raid', 3);
+expect(!hasItem('Клеймо «Р»'), 'тайник у кострища — ещё не схрон');
+openAt('camp_abandoned_raid', 24);
+expect(hasItem('Клеймо «Р»'), 'схрон в конце тропы, клеймо шайки');
+atPlace('stockade_hunt');
+{ const e0 = emeralds(); await talk('yaroslav', 'клеймо'); expect(q('x_stash') === 'done' && emeralds() >= e0 + 6, 'награда сотника за схрон'); }
+await talk('lykov', 'невесел');
+await goPlace('mark_grave_soldier', 'могила солдата');
+openAt('mark_grave_soldier', 2);
+expect(hasItem('Письмо Петра Лыкова'), 'письмо Петра Лыкова');
+atPlace('stockade_hunt');
+await talk('lykov', 'письмо Петра');
+expect(q('x_letter') === 'done' && !hasItem('Письмо Петра Лыкова'), 'письмо отдано Лыкову');
+goTo([63, 0, 118]); ticks(6);
+await talk('demyan', 'дорогах');
+expect(q('x_road') === 'active' && state().places.road_raid, 'разбой на дороге');
+{ const r = state().places.road_raid; player.location = { x: r.x + 4, y: 64, z: r.z }; const e0 = emeralds(); await fight('acastle_road', 2); expect(q('x_road') === 'done' && emeralds() >= e0 + 4, 'дорога очищена, награда'); }
+expect((state().f.renown || 0) >= 10, 'слава замка растёт: ' + state().f.renown);
+
 // ===== Этап 2. Кузня =====
 await talk('demyan', 'Схожу');
 expect(q('s2_smith') === 'active', 'этап 2 начат');
@@ -551,6 +583,226 @@ expect(Object.values(state().rep).every((r) => r.st === 'done'), 'все еди�
 const missing = Object.keys(CASTLE.units).filter((u) => !state().rep[u]);
 expect(!missing.length, 'все единицы ремонта задействованы: не хватает ' + missing.join(', '));
 
+// ===== Второй круг: тайны замка =====
+// Сумка игрока: убрать накопленное за прогон, кроме именных вещей (улики) и книги заданий
+const tidyBag = () => { for (let i = 1; i < inv.size; i++) { const it = inv.getItem(i); if (it && !it.nameTag && it.typeId !== 'acastle:quest_book') inv.setItem(i); } };
+tidyBag();
+const openSlot = (k) => { for (const h of handlers.block) h({ player, block: blockAt(W(CASTLE.slots[k])) }); ticks(2); };
+// Крест на могиле: гравий смахнули кистью
+blockAt(W(CASTLE.slots.grave)).setType('minecraft:suspicious_gravel');
+goTo(CASTLE.homes.varlaam); ticks(4);
+await talk('varlaam', 'Могила отца Ионы');
+expect(q('t_cross') === 'active' && inv.slots.some((x) => x && x.typeId === 'minecraft:brush'), 'крест на могиле: кисть выдана');
+ticks(2); expect(!state().f.cross_found, 'пока гравий на месте, крестик не найден');
+blockAt(W(CASTLE.slots.grave)).setType('minecraft:gravel'); ticks(2);
+expect(state().f.cross_found, 'гравий смахнули — крестик найден');
+goTo(CASTLE.homes.varlaam); ticks(2);
+await talk('varlaam', 'Крестик');
+expect(q('t_cross') === 'done' && log.some((c) => /^setblock .* spruce_fence keep/.test(c)), 'крест поставлен');
+effects.length = 0; await talk('varlaam', 'Благослови'); expect(effects.includes('minecraft:regeneration'), 'благословение Варлаама');
+// Голос в стене
+goTo(CASTLE.homes.evsey); ticks(2);
+await talk('evsey', 'пометки');
+expect(q('t_ear') === 'active', 'голос в стене');
+openSlot('ear_book'); openSlot('ear');
+expect(q('t_ear') === 'done' && hasItem('Деревянный конёк'), 'ухо хозяина: журнал и конёк');
+// Вода помнит
+goTo(CASTLE.homes.lenz); ticks(2);
+await talk('lenz', 'звездочёта');
+openSlot('astronomer'); openSlot('well');
+expect(hasItem('Перстень королевы'), 'перстень королевы в колодце');
+goTo(CASTLE.homes.lenz); ticks(2);
+await talk('lenz', 'перстень');
+expect(q('t_well') === 'done' && hasItem('Подзорная труба Ленца'), 'вода помнит: подзорная труба');
+// Узник и весть для Агафьи
+goTo(CASTLE.homes.prokhor); ticks(2);
+await talk('prokhor', 'каменном мешке');
+expect(q('t_prisoner') === 'active', 'узник');
+goTo(CASTLE.slots.prisoner_marks); ticks(2); goTo(CASTLE.slots.prisoner_pot); ticks(2);
+expect(state().f.pr_marks && state().f.pr_pot, 'зарубки и горшок узника');
+goTo(CASTLE.slots.shrine); ticks(2);
+expect(q('t_prisoner') === 'done' && q('t_agasha') === 'active', 'святилище: кравчий Фома');
+goTo(CASTLE.homes.agafya); ticks(2);
+await talk('agafya', 'знаю, что стало', 'не бежал', 'Варлаам');
+expect(q('t_agasha') === 'done' && state().f.foma_known, 'Агафья узнала правду');
+await talk('agafya', 'Пирог');
+goTo(CASTLE.homes.varlaam); ticks(2);
+await talk('varlaam', 'Отпеть');
+expect(state().f.foma_buried, 'Фому отпели');
+
+// ===== Второй круг: личные истории =====
+goTo([65, 0, 127]); ticks(4);
+await talk('mitka', 'отец тут стоял');
+expect(q('p_mitka') === 'active', 'Митька: отец');
+openSlot('captain');
+goTo([61, 0, 127]); ticks(2);
+await talk('ostap', 'Прокопе');
+openSlot('under_stairs');
+expect(hasItem('Щит Прокопа'), 'щит и записка Прокопа');
+goTo([65, 0, 127]); ticks(2);
+await talk('mitka', 'не трус');
+expect(q('p_mitka') === 'done', 'Митька узнал правду об отце');
+goTo(CASTLE.homes.frol); ticks(2);
+give('minecraft:golden_carrot', 2);
+await talk('frol', 'Ласточка');
+await talk('frol', 'морковки');
+expect(q('p_frol') === 'done' && entities.some((e) => e.nameTag === 'Ветерок'), 'жеребёнок Ветерок');
+goTo(CASTLE.homes.vaska); ticks(2);
+await talk('vaska', 'хмурый');
+goTo(CASTLE.homes.demyan); ticks(2);
+await talk('demyan', 'турнир');
+expect(state().f.duel_ok, 'турнир назначен');
+time = 1000; goTo(CASTLE.rooms['Ристалище']);
+for (let r = 0; r < 3; r++) {
+  let foe = null;
+  for (let i = 0; i < 12 && !foe; i++) { ticks(2); foe = entities.find((e) => e.hasTag('acastle_duel_on')); }
+  expect(foe && foe.state === 'hostile', `схватка ${r + 1}: поединщик вышел`);
+  if (!foe) break;
+  foe.hp = 20; for (const h of handlers.hurt) h({ hurtEntity: foe, damageSource: { damagingEntity: player } });
+  ticks(2);
+}
+ticks(10);
+expect(q('p_vaska') === 'done' && hasItem('Турнирный меч') && state().f.squire_vaska, 'турнир выигран, Васька — оруженосец');
+goTo(CASTLE.homes.timosha); ticks(2);
+await talk('timosha', 'песню');
+goTo([61, 0, 127]); ticks(2); await talk('ostap', 'куплет');
+goTo(CASTLE.homes.agafya); ticks(2); await talk('agafya', 'куплет');
+goTo(CASTLE.homes.frol); ticks(2); await talk('frol', 'куплет');
+goTo(CASTLE.homes.prokhor); ticks(2); await talk('prokhor', 'куплет');
+goTo(CASTLE.homes.timosha); ticks(2);
+await talk('timosha', 'Спой');
+expect(q('p_timosha') === 'done' && state().f.song, 'песнь о княжиче собрана');
+effects.length = 0; await talk('timosha', 'Сыграй'); expect(effects.includes('minecraft:speed'), 'песня Тимоши бодрит');
+goTo(CASTLE.homes.dunya); ticks(2);
+await talk('dunya', 'грустишь');
+await goPlace('mark_deadtree_letters', 'сухое дерево');
+openAt('mark_deadtree_letters', 2);
+goTo(CASTLE.homes.dunya); ticks(2);
+await talk('dunya', 'письма Ули');
+expect(q('p_sister') === 'done' && state().f.finder, 'Дуня узнала о сестре');
+await talk('dunya', 'Поищи');
+
+// ===== Второй круг: походы в тайгу =====
+atPlace('hut_living_grach');
+await talk('grach', 'живёшь');
+await goPlace('mark_grave_dog', 'могила Бурана');
+openAt('mark_grave_dog', 2);
+atPlace('hut_living_grach');
+await talk('grach', 'Навестил');
+expect(q('x_buran') === 'done' && entities.some((e) => e.nameTag === 'Буранчик' && e.tamed), 'щенок Буранчик приручён');
+atPlace('hermitage_nikodim');
+await talk('nikodim', 'Хозяине бора');
+await goPlace('hut_abandoned_tikhon', 'изба Тихона');
+openAt('hut_abandoned_tikhon', 3);
+expect(hasItem('Белый рог'), 'белый рог');
+atPlace('mark_shrine_master'); ticks(2);
+expect(q('x_horn') === 'done' && state().f.horn_returned && !hasItem('Белый рог'), 'рог вернулся на капище');
+goTo(CASTLE.homes.marfa); ticks(2);
+await talk('marfa', 'Сомовых');
+await goPlace('hut_burned_fire', 'пепелище Сомовых');
+openAt('hut_burned_fire', 25);
+expect(hasItem('Пуговица с мундира'), 'пуговица с мундира');
+goTo(CASTLE.homes.marfa); ticks(2);
+await talk('marfa', 'Матвей');
+expect(q('x_somov') === 'done', 'великий пал');
+atPlace('camp_hunters_bear');
+await talk('kuzma', 'артель');
+await goPlace('camp_treestand_grisha', 'засидка');
+// тропы нет: третий открытый в месте тайник тоже засчитывается
+openAt('camp_treestand_grisha', 2); openAt('camp_treestand_grisha', 3); expect(!hasItem('Клок белой шерсти'), 'два тайника — ещё не след');
+openAt('camp_treestand_grisha', 4);
+expect(hasItem('Клок белой шерсти'), 'засидка: третий тайник — лёжка лося');
+atPlace('camp_hunters_bear');
+await talk('kuzma', 'лёжка');
+expect(q('x_grisha') === 'done', 'дозор на Хозяина');
+
+// ===== Хозяйство замка =====
+tidyBag();
+{
+  const { ORDERS } = await import(pathToFileURL(path.join(DIR, 'household.js')));
+  goTo([63, 0, 110]); morning(); ticks(4);
+  const ords = state().f.orders || [];
+  expect(ords.length === 2 && state().f.orders_day === day, 'поручения на день вывешены');
+  const o = ords[0], ord = ORDERS[o.i];
+  if (ord.kill) {
+    nightFall();
+    for (let i = 0; i < ord.kill; i++) { const z = makeEntity('minecraft:zombie', W([63, 0, 140])); for (const h of handlers.die) h({ deadEntity: z, damageSource: { damagingEntity: player } }); z.remove(); }
+    time = 1000;
+  } else for (const [id, n] of ord.items) give(id, n);
+  const home = ord.who === 'savva' || ord.who === 'demyan' ? CASTLE.homes.demyan : CASTLE.homes[ord.who];
+  if (ord.who === 'savva') { const pst = CASTLE.posts.find((x) => x.guard === 'savva'); goTo(pst.at); } else goTo(home); ticks(4);
+  const e0 = emeralds();
+  await talk(ord.who, 'Поручение');
+  expect(state().f.orders[0].done && emeralds() >= e0 + ord.pay, `поручение выполнено: ${ord.text}`);
+  expect(/Поручения на сегодня/.test((await import(pathToFileURL(path.join(DIR, 'household.js')))).houseBook({ S: state(), npcName: (x) => x })), 'поручения видны в книге');
+}
+// ярмарка каждый третий день
+for (let i = 0; i < 3 && day % 3 !== 0; i++) morning();
+if (day % 3 !== 0) morning();
+ticks(4);
+expect(state().f.market === day && entities.some((e) => e.typeId === 'minecraft:wandering_trader' && e.nameTag === 'Купец из Затонья'), 'ярмарка: купец на площади');
+morning(); ticks(2);
+expect(!entities.some((e) => e.hasTag('acastle_merchant')), 'наутро купец уехал');
+// колокол на рассвете
+sounds.length = 0; goTo([63, 0, 110]); morning(); expect(sounds.includes('block.bell.hit'), 'колокол звонит на рассвете');
+time = 1000;
+// зелья Марфы
+goTo(CASTLE.homes.marfa); ticks(2); give('minecraft:emerald', 2);
+await talk('marfa', 'зелья', 'исцеления');
+expect(inv.slots.some((x) => x && x.typeId === 'minecraft:potion' && x.potion === 'minecraft:healing'), 'зелье исцеления от Марфы');
+// заточка клинка у Гордея (слава «Славный»)
+expect((state().f.renown || 0) >= 45, 'слава замка «Славный»: ' + state().f.renown);
+{
+  const ench = {}; const sword = Object.assign(new ItemStack('minecraft:iron_sword'), { getComponent: (c) => (c === 'minecraft:enchantable' ? { getEnchantment: (t) => (ench[t.id] ? { level: ench[t.id] } : undefined), removeEnchantment: (t) => { delete ench[t.id]; }, addEnchantment: (e) => { ench[e.type.id] = e.level; } } : undefined) });
+  inv.setItem(0, sword); give('minecraft:emerald', 3); give('minecraft:iron_ingot', 1);
+  goTo(CASTLE.homes.gordey); ticks(2);
+  await talk('gordey', 'Наточить');
+  expect(ench['minecraft:sharpness'] === 1, 'Гордей наточил клинок');
+}
+// торговля после финала: Пахом и приметы Куницы
+atPlace('outlaw_camp');
+give('minecraft:emerald', 6);
+await talk('pakhom', 'Торговать', 'стрел');
+await talk('kunitsa', 'приметы');
+expect(q('x_clue') === 'active' && state().f.clue, 'примета Куницы');
+{ const k = state().f.clue; await goPlace(k, 'место по примете'); openAt(k, 2); expect(q('x_clue') === 'done' && (state().f.clues || []).includes(k), 'клад по примете найден'); }
+
+// ===== Этап 10. Самозванец =====
+tidyBag();
+goTo([63, 0, 118]); morning(); morning(); ticks(8);
+expect(q('s10_decree') === 'active' && npc('gonets'), 'гонец управы у ворот');
+await talk('gonets', 'княжич');
+expect(hasItem('Указ управы') && q('s10_council') === 'active', 'указ управы');
+goTo(CASTLE.homes.ignat); ticks(4);
+await talk('ignat', 'указ управы');
+expect(['s10_proofs', 's10_nozhov', 's10_heir', 's10_trial'].every((x) => q(x) === 'active'), 'совет в замке: улики, допрос, княжич, суд');
+{ answers.push('Открыть книгу'); for (const h of handlers.itemUse) h({ source: player, itemStack: new ItemStack('acastle:quest_book') }); await new Promise((r) => setTimeout(r, 5)); answers.length = 0;
+  expect(dialogLog.some((l) => /Слава замка/.test(l)), 'слава замка в книге заданий'); }
+goTo(CASTLE.homes.nozhov); ticks(6);
+await talk('nozhov', 'Допрос', 'милости');
+expect(hasItem('Признание Ножова') && state().f.nozhov_mercy, 'Ножов признался под обещание милости');
+// суд без свидетелей: улик мало — откладывается
+for (let i = 0; i < 3; i++) morning();
+time = 1000; goTo(CASTLE.feast[1]); ticks(8);
+expect(state().f.trial_on && npc('kruchina') && npc('pretender'), 'комиссия управы в Большом зале');
+await talk('kruchina', 'Грамота основателя', 'Дальше', 'Это всё', 'вернусь');
+expect(q('s10_trial') === 'active' && !state().f.trial_on, 'улик мало — суд отложен');
+ticks(8); expect(!npc('kruchina'), 'комиссия уехала');
+atPlace('outlaw_camp');
+await talk('ryzhy', 'Затонье', 'позорит');
+expect(state().f.ryzhy_witness, 'Рыжий придёт на суд');
+for (let i = 0; i < 3; i++) morning();
+time = 1000; goTo(CASTLE.feast[1]); ticks(8);
+expect(npc('ryzhy') && npc('kruchina'), 'Рыжий и комиссия в зале');
+await talk('kruchina', 'Признание Ножова', 'Дальше', 'Рыжий', 'Дальше', 'Повариха', 'Дальше', 'Это всё', 'конюшню');
+expect(q('s10_trial') === 'done' && state().rank === 'Хозяин Студёного бора' && state().f.stage10_done, 'суд выигран, самозванец разоблачён');
+expect(state().npcs.pretender && state().npcs.pretender.startsWith('at:') && !state().npcs.nozhov, 'Гришка в конюшне, Ножов в монастыре');
+ticks(8); expect(!npc('kruchina'), 'дьяка увезли');
+goTo(CASTLE.homes.ignat); ticks(4);
+{ const g0 = inv.slots.filter((x) => x && x.typeId === 'minecraft:gold_ingot').reduce((n, x) => n + x.amount, 0);
+  await talk('ignat', 'Доля рудника'); expect(inv.slots.filter((x) => x && x.typeId === 'minecraft:gold_ingot').reduce((n, x) => n + x.amount, 0) >= g0 + 3, 'доля рудника'); }
+console.log(`Слава замка к концу: ${state().f.renown} («${(await import(pathToFileURL(path.join(DIR, 'household.js')))).levelOf(state().f.renown)}»)`);
+
 // ===== Книга рядом с жителем: «Говорить» =====
 goTo(CASTLE.homes.agafya); ticks(4);
 ticks(1); answers.push('Говорить: Повариха', 'Прощай'); for (const h of handlers.itemUse) h({ source: player, itemStack: new ItemStack('acastle:quest_book') });
@@ -567,9 +819,15 @@ ticks(6);
 expect(q('s5_carto') === 'active' && q('s4_crypt') === 'done' && state().rank === 'Рыцарь', 'переход к этапу 5');
 morning(); ticks(4);
 expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после перехода починка прежних этапов встала');
+for (const h of handlers.script) h({ id: 'acastle:jump', message: '10', sourceEntity: player });
+ticks(8);
+expect(q('s10_decree') === 'active' && state().f.king_dead && npc('gonets'), 'переход к этапу 10: гонец у ворот');
+for (const h of handlers.script) h({ id: 'acastle:jump', message: '3', sourceEntity: player });
+ticks(8);
+expect(!q('s10_decree') && !npc('gonets'), 'переход назад: этапа 10 ещё нет');
 console.log(dialogLog.slice(0, 6).join('\n'));
 console.log('…');
 console.log(`Сообщений игроку: ${msgs.length}, команд: ${log.length}, жителей: ${entities.filter((e) => /acastle/.test(e.typeId)).length}`);
 fs.rmSync(DIR, { recursive: true, force: true });
 if (problems.length) { console.log('\nОшибки:'); for (const p of problems) console.log(' - ' + p); process.exit(1); }
-console.log('Проверочный прогон этапов 0–9 и перехода к этапу: всё сработало.');
+console.log('Проверочный прогон этапов 0–10, второго круга и перехода к этапу: всё сработало.');

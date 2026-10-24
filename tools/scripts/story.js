@@ -4,6 +4,9 @@
 // В разговорах не называем стороны света: по приметам («у ворот», «на башне с колоколом»).
 import { world } from '@minecraft/server';
 import { LATE_NPCS, LATE_CONTRACTS, LATE_QUESTS, STARTS, lateDialog, lateEvent, lateBark, jumpLate } from './stages.js';
+import { SIDE_QUESTS, sideOptions, sideEvent, sideBark } from './side.js';
+import { HOUSE_QUESTS, houseOptions, houseEvent, houseTick, houseBook } from './household.js';
+import { ACT2_NPCS, ACT2_QUESTS, act2Dialog, act2Options, act2Event, act2Bark, act2Jump, act2Reset } from './act2.js';
 
 // ---------- Жители ----------
 // start — где живёт с самого начала: 'post' (пост стражника), 'home' (комната в замке), null — ещё не пришёл.
@@ -19,6 +22,7 @@ export const NPCS = {
   demyan: { name: 'Капитан Демьян Беляк', start: null, gate: [63, 0, 118] },
   yaroslav: { name: 'Сотник Ярослав Беляк', start: null },
   ...LATE_NPCS,
+  ...ACT2_NPCS,
 };
 
 // ---------- Подряды: что положить в сундук ----------
@@ -123,6 +127,9 @@ export const QUESTS = {
   s1_seal: { title: 'Чужая печать', hint: 'Сравните печать на приказе с печатью на старой грамоте: она в сундуке у лебёдки решётки, в надвратной башне справа, если стоять во дворе лицом к воротам.',
     target: () => ({ at: [62, 0, 125], label: 'Надвратная башня' }) },
   ...LATE_QUESTS,
+  ...SIDE_QUESTS,
+  ...HOUSE_QUESTS,
+  ...ACT2_QUESTS,
 };
 
 // ---------- Разговоры ----------
@@ -132,7 +139,18 @@ function lostBook(api) {
   return { text: 'Я потерял книгу заданий.', run: (a, pl) => { a.give(pl, 'acastle:quest_book'); a.flag('book', 1); }, next: { text: 'Держи новую. Береги — в ней всё, что тебе поручено.' } };
 }
 
+// Разговор целиком: свой у жителей этапа 10, иначе по этапам; к нему добавляются кнопки
+// второго круга (тайны, личные истории, поручения, услуги) — перед «Прощай»
 export function dialog(id, api, pl) {
+  const node = act2Dialog(id, api, pl) || baseDialog(id, api, pl);
+  const extra = [...sideOptions(id, api, pl), ...act2Options(id, api, pl), ...houseOptions(id, api, pl)];
+  if (!extra.length) return node;
+  const opts = node.options && node.options.length ? [...node.options] : [bye];
+  const i = opts.findIndex((o) => o.text === 'Прощай');
+  opts.splice(i < 0 ? opts.length : i, 0, ...extra);
+  return { ...node, options: opts };
+}
+function baseDialog(id, api, pl) {
   const late = lateDialog(id, api, pl);
   if (late) return late;
   const has = api.has, done = api.done;
@@ -201,7 +219,7 @@ export function dialog(id, api, pl) {
         options: [{ text: 'Замок в разрухе. Нужна защита.', run: (a) => {
           a.finish('s1_captain'); a.start('s1_breaches'); a.start('s1_barracks'); a.start('s1_ostrog');
           for (const u of ['breach_1', 'breach_2', 'breach_3', 'barracks']) a.openContract(u);
-          a.setPlace('stockade_hunt', 300, 500); a.S.npcs.yaroslav = 'place:stockade_hunt'; a.save();
+          a.setPlace('stockade_hunt', 300, 500); a.S.npcs.yaroslav = 'place:stockade_hunt'; a.S.npcs.lykov = 'place:stockade_hunt'; a.save();
           a.arriveNextMorning('demyan', 'rooms_1');
         }, next: (a, p) => { a.give(p, 'minecraft:paper', 1, 'Донесение капитана', ['Сотнику Ярославу Беляку, в острог']); return {
           text: 'Вижу. Через три бреши в стене нежить ходит, как к себе домой — так нам ворота не удержать. У каждой бреши я поставил сундук: носи туда камень, ночью мои заделают. Казарма во дворе без крыши — людям спать негде. И вот ещё: отнеси это донесение брату в острог. Он должен знать, что мы здесь. Острог лесом далеко, держи компас.',
@@ -253,7 +271,7 @@ function spawnMare(a) {
 function stage1Check(a) {
   if (['s1_breaches', 's1_walls', 's1_barracks', 's1_ostrog', 's1_seal'].every((q) => a.done(q)) && a.flag('s1_talked') && !a.flag('stage1_done')) {
     a.flag('stage1_done', 1);
-    a.rank('Оруженосец');
+    a.rank('Оруженосец'); a.renown(5, 'этап 1');
     a.tell('§6Этап 1 «Стража» пройден. Капитан Демьян хочет поговорить о кузне.');
   }
 }
@@ -262,6 +280,9 @@ function stage1Check(a) {
 export function onEvent(name, api, ev) {
   const S = api.S;
   lateEvent(name, api, ev);
+  sideEvent(name, api, ev);
+  houseEvent(name, api, ev);
+  act2Event(name, api, ev);
   switch (name) {
     case 'castle': api.start('s0_halt'); break;
     case 'done:s0_night':
@@ -324,7 +345,7 @@ const BARKS = {
   sych: ['Я за тобой смотрю.'], pakhom: ['Каши хочешь?'], grinya: ['Чего уставился?'], ryzhy: ['Ну?'],
 };
 export function bark(id, api, pl) {
-  const late = lateBark(id, api, pl);
+  const late = lateBark(id, api, pl) || sideBark(id, api, pl) || act2Bark(id, api, pl);
   if (late) return late;
   if (id === 'ostap' && night() && api.has('s0_night')) return 'Стой у ворот! Сейчас пойдут!';
   const list = BARKS[id];
@@ -332,8 +353,13 @@ export function bark(id, api, pl) {
 }
 // Переход к этапу (команда /scriptevent acastle:jump <этап>), для проверки в игре
 export function jump(n, api) {
-  if (n < 1 || n > 9) { api.tell('§7Номер этапа — от 1 до 9.'); return; }
+  if (n < 1 || n > 10) { api.tell('§7Номер этапа — от 1 до 10.'); return; }
+  act2Reset(api);
   jumpLate(n, api, { QUESTS });
   if (n === 1) { api.S.npcs.demyan = 'gate'; api.stageGuards(1); api.start('s1_captain'); api.save(); }
+  if (n === 10) act2Jump(api);
 }
+// Раз в секунду, пока идёт сюжет (ярмарка, колокол), и строки для книги заданий
+export const worldTick = (api) => houseTick(api);
+export const bookExtra = (api) => houseBook(api);
 export { STARTS };

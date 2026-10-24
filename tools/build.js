@@ -25,7 +25,7 @@ const PACK = {
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 8, 3],
+  version: [0, 9, 0],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -46,6 +46,9 @@ global.defineStories = (id, list) => { STORIES[id] = list; };
 global.book = (title, author, pages) => ({ book: { title, author, pages } });
 global.sign = (text) => ({ sign: text });
 global.loot = (spec) => ({ loot: spec });
+// Тайники замка: содержимое слотов castle.js (design/stories/castle.js)
+let CASTLE_SLOTS = {};
+global.defineCastleSlots = (slots) => { CASTLE_SLOTS = slots; };
 
 const load = (rel) => vm.runInThisContext(fs.readFileSync(path.join(ROOT, rel), 'utf8'), { filename: rel });
 for (const f of ['blocks.js', 'builder.js']) load('design/preview/' + f);
@@ -317,6 +320,25 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
   load('design/preview/castle/castle.js');
   const castle = STRUCTURES.splice(n)[0];
   const b = castle.build();
+  // Содержимое тайника: история из design/stories/castle.js (книги, лут, текст таблички),
+  // иначе тематический лут слота
+  const castleSlot = (blk) => {
+    const v = blk.slot ? CASTLE_SLOTS[blk.slot] : undefined;
+    if (CONTAINERS.has(blk.id)) {
+      if (v) return { lootTable: storyTable(`castle/${blk.slot}`, v) };
+      return blk.theme ? { lootTable: themeTable(blk.theme) } : {};
+    }
+    if (v && v.book) { checkBook(v.book, 'замок/' + blk.slot); return { book: v.book }; }
+    if (v && v.sign !== undefined) return { sign: v.sign };
+    if (v) warn(`замок: тайник «${blk.slot}» (${blk.id}) не принимает такое содержимое`);
+    return {};
+  };
+  {
+    const here = new Set([...b.blocks.values()].filter((v) => v.slot).map((v) => v.slot));
+    for (const k of Object.keys(CASTLE_SLOTS)) if (!here.has(k)) warn(`замок: в историях есть тайник «${k}», а в замке его нет`);
+    const empty = [...here].filter((k) => !CASTLE_SLOTS[k]);
+    console.log(`Тайники замка с историей: ${here.size - empty.length} из ${here.size}${empty.length ? ', без истории: ' + empty.join(', ') : ''}`);
+  }
   // Проверки донжона: дойти до каждой комнаты, двери не упираются в стену, нет тёмных мест.
   {
     const { placed, light, walk, inside } = b.lighting;
@@ -395,8 +417,7 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
         continue;
       }
       if (blk.id === 'air') { cells.push({ x, y, z, block: { name: 'minecraft:air', states: {} } }); continue; }
-      const slotData = CONTAINERS.has(blk.id) && blk.theme ? { lootTable: themeTable(blk.theme) } : {};
-      cells.push({ x, y, z, block: toBedrock(blk, get, BLOCKS, slotData) });
+      cells.push({ x, y, z, block: toBedrock(blk, get, BLOCKS, castleSlot(blk)) });
     }
     const name = `castle_${parts}`;
     write(`structures/${NS}/${name}.mcstructure`, mcstructure(size, cells));
@@ -462,7 +483,7 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
         if (!blk && y <= -2) continue; // ниже земли пусто — это грунт, его не трогаем
         const at = { x: x - mn[0], y: y - mn[1], z: z - mn[2] };
         if (!blk || blk.env || blk.id === 'air') cells.push({ ...at, block: { name: 'minecraft:air', states: {} } });
-        else cells.push({ ...at, block: toBedrock(blk, getFull, BLOCKS, CONTAINERS.has(blk.id) && blk.theme ? { lootTable: themeTable(blk.theme) } : {}) });
+        else cells.push({ ...at, block: toBedrock(blk, getFull, BLOCKS, castleSlot(blk)) });
       }
       const name = `castle_s${st.n}_${k++}`;
       write(`structures/${NS}/${name}.mcstructure`, mcstructure([mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells));
@@ -523,7 +544,7 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
           if (!blk && y <= -2) continue;
           const at = { x: x - mn[0], y: y - mn[1], z: z - mn[2] };
           if (!blk || blk.env || blk.id === 'air') cells.push({ ...at, block: { name: 'minecraft:air', states: {} } });
-          else cells.push({ ...at, block: toBedrock(blk, getFull, BLOCKS, CONTAINERS.has(blk.id) && blk.theme ? { lootTable: themeTable(blk.theme) } : {}) });
+          else cells.push({ ...at, block: toBedrock(blk, getFull, BLOCKS, castleSlot(blk)) });
         }
         const name = `castle_u_${u.id}_${k++}`;
         write(`structures/${NS}/${name}.mcstructure`, mcstructure([mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells));
@@ -604,7 +625,9 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     paths.crypt = pathTo(lairs.crypt[0], 'склеп часовни');
     paths.catacombs = pathTo(lairs.catacombs[0], 'катакомбы');
     paths.throne = pathTo(homes.ryzhy, 'трон');
-    for (const k of ['ledger', 'steward_book', 'priest', 'vault', 'master_diary', 'sealed', 'grave']) if (slots[k]) paths['slot_' + k] = pathTo(slots[k], 'тайник ' + k);
+    for (const k of ['ledger', 'steward_book', 'priest', 'vault', 'master_diary', 'sealed', 'grave', 'ear_book', 'ear', 'captain', 'under_stairs', 'astronomer']) if (slots[k]) paths['slot_' + k] = pathTo(slots[k], 'тайник ' + k);
+    // помещения для заданий второго круга (side.js, act2.js)
+    for (const [k, title] of Object.entries({ tiltyard: 'Ристалище', dungeon: 'Темница', ossuary: 'Костница', well: 'Колодезная' })) paths['room_' + k] = pathTo(rooms[title], title);
     const data = { version: PACK.version.join('.'), build: bodyPieces, origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
     write('scripts/castle_data.js', '// Собрано tools/build.js — не править руками\nexport const CASTLE = ' + JSON.stringify(data) + ';\n');
     const contracts = Object.entries(units).filter(([, u]) => u.chest).map(([id]) => id);

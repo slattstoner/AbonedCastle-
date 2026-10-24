@@ -4,7 +4,7 @@
 import { system } from '@minecraft/server';
 import { ActionFormData } from '@minecraft/server-ui';
 import { S, save } from './state.js';
-import { NPCS, QUESTS, dialog } from './story.js';
+import { NPCS, QUESTS, dialog, bookExtra } from './story.js';
 import { residentsNear } from './people.js';
 import { api } from './api.js';
 
@@ -34,7 +34,7 @@ function guarded(fn) {
 
 async function talkInner(pl, id) {
   let node = dialog(id, api, pl);
-  for (let step = 0; node && step < 20; step++) {
+  for (let step = 0; node && step < 40; step++) {
     const opts = node.options && node.options.length ? node.options : [{ text: 'Прощай' }];
     const form = new ActionFormData().title(node.title || NPCS[id].name).body(node.text);
     for (const o of opts) form.button(o.text);
@@ -51,8 +51,10 @@ async function questBookInner(pl) {
   const doneN = Object.values(S.q).filter((v) => v === 'done').length;
   const hint = (q) => (typeof QUESTS[q].hint === 'function' ? QUESTS[q].hint(api) : QUESTS[q].hint);
   const lines = active.map((q) => `§l${QUESTS[q].title}§r${q === S.guide ? ' §a(путь показан)§r' : ''}\n${hint(q)}`);
+  let extra = '';
+  try { extra = bookExtra(api); } catch (e) { extra = ''; }
   const form = new ActionFormData().title('Книга заданий')
-    .body(`Звание: §6${S.rank}§r · выполнено заданий: ${doneN}\n\n${lines.length ? lines.join('\n\n') : 'Заданий нет. Поговорите с жителями замка.'}\n\nКнопка задания включает огоньки-путеводители к цели (в замке) или указатель с расстоянием (в лесу — держите в руке компас или эту книгу).`);
+    .body(`Звание: §6${S.rank}§r · выполнено заданий: ${doneN}\n${extra}\n\n${lines.length ? lines.join('\n\n') : 'Заданий нет. Поговорите с жителями замка.'}\n\nКнопка задания включает огоньки-путеводители к цели (в замке) или указатель с расстоянием (в лесу — держите в руке компас или эту книгу).`);
   const opts = active.filter((q) => QUESTS[q].target);
   for (const q of opts) form.button((q === S.guide ? '§a» ' : '') + QUESTS[q].title);
   form.button(S.guide ? 'Погасить огоньки' : 'Закрыть');

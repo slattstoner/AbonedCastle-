@@ -16,7 +16,7 @@
 // /scriptevent acastle:jump <этап> (сразу к началу этапа).
 import { world, system } from '@minecraft/server';
 import { S, load, flush, DIM, players } from './state.js';
-import { NPCS, QUESTS, onEvent, bark, jump } from './story.js';
+import { NPCS, QUESTS, onEvent, bark, jump, worldTick } from './story.js';
 import { npcIdOf, ensureNpcs } from './people.js';
 import { api } from './api.js';
 import { talk, openBook } from './talk.js';
@@ -107,7 +107,7 @@ system.runInterval(() => {
 // Общий цикл: путеводитель — дважды в секунду, остальное — раз в секунду, жители — раз в 3 секунды
 let tick = 0;
 const questsTick = () => { for (const q of Object.keys(S.q)) if (S.q[q] === 'active' && QUESTS[q] && QUESTS[q].tick) QUESTS[q].tick(api); };
-const SECOND = [morningTick, contractTick, placesTick, questsTick, () => { if (tick % 6 === 0) ensureNpcs(); }];
+const SECOND = [morningTick, contractTick, placesTick, questsTick, () => worldTick(api), () => { if (tick % 6 === 0) ensureNpcs(); }];
 system.runInterval(() => {
   if (!S) load();
   if (!S.origin) { if (!S.build) try { findHeart(); } catch (e) { /* позже */ } flush(); return; }
