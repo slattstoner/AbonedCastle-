@@ -25,7 +25,7 @@ const PACK = {
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 8, 1],
+  version: [0, 8, 2],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -377,13 +377,13 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
   const inTerritory = (x, z) => x >= fx1 && x <= fx2 && z >= fz1 && z <= fz2;
   const foundCount = {};
   const PART = 64, ORIGIN = [63, 0, 98]; // игрок стоит на площади у ворот, замок к северу
-  const lines = [
-    '# Замок из замшелого камня: ставит все куски вокруг игрока.',
-    '# Встаньте в обычном мире (не в плоском: подземелье и основание уходят на 25 блоков вниз).',
-  ];
+  // С 0.8.2 замок ставят скрипты: по одному куску 32×32 (≈70 тыс. блоков — без рывка у игры),
+  // от площади у ворот к краям, каждый — только когда его участок мира прогружен.
+  const BODY = 32;
+  const bodyPieces = [];
   let parts = 0;
-  for (let x0 = lo[0]; x0 <= hi[0]; x0 += PART) for (let z0 = lo[2]; z0 <= hi[2]; z0 += PART) {
-    const size = [Math.min(PART, hi[0] - x0 + 1), hi[1] - lo[1] + 1, Math.min(PART, hi[2] - z0 + 1)];
+  for (let x0 = lo[0]; x0 <= hi[0]; x0 += BODY) for (let z0 = lo[2]; z0 <= hi[2]; z0 += BODY) {
+    const size = [Math.min(BODY, hi[0] - x0 + 1), hi[1] - lo[1] + 1, Math.min(BODY, hi[2] - z0 + 1)];
     const cells = [];
     for (let x = 0; x < size[0]; x++) for (let y = 0; y < size[1]; y++) for (let z = 0; z < size[2]; z++) {
       const wx = x0 + x, wy = lo[1] + y, wz = z0 + z;
@@ -400,14 +400,17 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     }
     const name = `castle_${parts}`;
     write(`structures/${NS}/${name}.mcstructure`, mcstructure(size, cells));
-    lines.push(`structure load ${NS}:${name} ~${x0 - ORIGIN[0]} ~${lo[1] - ORIGIN[1]} ~${z0 - ORIGIN[2]}`);
+    bodyPieces.push([`${NS}:${name}`, x0, lo[1], z0, size[0], size[1], size[2]]);
     parts++;
   }
-  // «Сердце замка» — метка в каменной камере под площадью, от неё работают функции этапов
+  // Порядок стройки: сначала куски у площади, где стоит игрок, потом дальше
+  const pieceDist = (q) => Math.hypot(q[1] + q[4] / 2 - ORIGIN[0], q[3] + q[6] / 2 - ORIGIN[2]);
+  bodyPieces.sort((a, b) => pieceDist(a) - pieceDist(b));
+  // «Сердце замка» — метка в каменной камере под площадью, от неё работают функции этапов.
+  // Ставят его скрипты в конце стройки.
   const HEART = [ORIGIN[0], -20, ORIGIN[2]];
   const HEART_SEL = '@e[type=armor_stand,name=acastle_heart]';
-  lines.push(`kill ${HEART_SEL}`, `summon armor_stand acastle_heart ~ ~${HEART[1] - ORIGIN[1]} ~`);
-  // Стража: прежние стражники уходят, Остап и Митька встают в воротах
+  // Посты стражи должны быть свободны
   const rel = (from) => (x, y, z) => `~${x - from[0]} ~${y - from[1]} ~${z - from[2]}`;
   for (const p of npc.POSTS) {
     const [x, y, z] = p.at;
@@ -418,10 +421,17 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
       if (!free(at(0)) || !free(at(1)) || !at(-1) || free(at(-1))) warn(`замок (${what}): пост стражника ${p.guard} (${x},${y},${z}) не свободен или без пола`);
     }
   }
-  lines.push(`event entity ${npc.GUARD_SEL} acastle:despawn`, `event entity @e[type=acastle:npc] acastle:despawn`, ...npc.summonLines(0, rel(ORIGIN)), `tag ${npc.GUARD_SEL} add acastle_s0`);
-  // Скрипты заданий узнают, где встал замок, и начинают сюжет заново
-  lines.push('scriptevent acastle:castle_placed');
-  lines.push(`tellraw @s {"rawtext":[{"text":"Аддон ${PACK.version.join('.')}. Замок поставлен в упадке: ${parts} кусков. Ворота у вас за спиной, донжон впереди к северу. В воротах стоят стражники Остап и Митька. Восстановление по этапам: /function castle_stage_1 … castle_stage_9, всё сразу: /function castle_full"}]}`);
+  // /function castle только начинает стройку: прежние жители уходят, остальное делают скрипты
+  // (tools/scripts/main.js, «Стройка замка»): куски по одному, потом «сердце замка», потом жители.
+  const lines = [
+    '# Замок из замшелого камня. Встаньте в обычном мире (не в плоском: подземелье и основание',
+    '# уходят на 25 блоков вниз) — там, где должна быть площадь у ворот; донжон встанет к северу.',
+    '# Стройку ведут скрипты аддона: по одному куску, от площади к краям, около минуты.',
+    `event entity ${npc.GUARD_SEL} acastle:despawn`, `event entity @e[type=acastle:npc] acastle:despawn`, `event entity @e[type=acastle:bandit] acastle:despawn`,
+    `kill ${HEART_SEL}`,
+    `tellraw @s {"rawtext":[{"text":"Аддон ${PACK.version.join('.')}. Замок строится: ${parts} кусков, около минуты. Стойте на месте — ход стройки внизу экрана. Жители появятся, когда замок встанет целиком."}]}`,
+    'scriptevent acastle:castle_build',
+  ];
   write('functions/castle.mcfunction', lines.join('\n') + '\n');
 
   // ---------- Этапы восстановления ----------
@@ -595,7 +605,7 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     paths.catacombs = pathTo(lairs.catacombs[0], 'катакомбы');
     paths.throne = pathTo(homes.ryzhy, 'трон');
     for (const k of ['ledger', 'steward_book', 'priest', 'vault', 'master_diary', 'sealed', 'grave']) if (slots[k]) paths['slot_' + k] = pathTo(slots[k], 'тайник ' + k);
-    const data = { version: PACK.version.join('.'), origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
+    const data = { version: PACK.version.join('.'), build: bodyPieces, origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
     write('scripts/castle_data.js', '// Собрано tools/build.js — не править руками\nexport const CASTLE = ' + JSON.stringify(data) + ';\n');
     const contracts = Object.entries(units).filter(([, u]) => u.chest).map(([id]) => id);
     console.log(`Ремонт: ${Object.keys(units).length} единиц, подрядов ${contracts.length}, путей ${Object.values(paths).filter(Boolean).length}, дома: ${Object.entries(homes).map(([k, v]) => k + (v ? '' : '?')).join(', ')}`);

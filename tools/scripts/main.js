@@ -15,7 +15,11 @@
 //  • заговорить с жителем можно кнопкой «Говорить» или просто коснуться его (стражник и житель
 //    урона от игрока не получают); с людьми Рыжего — коснуться, пригнувшись. Книга заданий рядом
 //    с жителями тоже предлагает поговорить;
-//  • если сигнал от /function castle не дошёл, скрипты сами находят замок по «сердцу замка».
+//  • если сигнал от /function castle не дошёл, скрипты сами находят замок по «сердцу замка»;
+//  • стройку замка ведут скрипты (/function castle шлёт acastle:castle_build): по одному куску
+//    32×32 от площади к краям, каждый — когда его участок прогружен (на время стройки участок
+//    держится «тикающим»), с паузой, если игра не успевает. Жители появляются после стройки
+//    и только на твёрдый пол.
 import { world, system, ItemStack } from '@minecraft/server';
 import { ActionFormData } from '@minecraft/server-ui';
 import { CASTLE } from './castle_data.js';
@@ -217,6 +221,7 @@ function ensureNpcs() {
     // Стражник мог встать по функции castle без метки — узнаём его по имени
     const named = DIM().getEntities({ type: typeOf(id), name: NPCS[id].name, location: at, maxDistance: 40 }).find((x) => !npcIdOf(x));
     if (named) { named.addTag(tagOf(id)); continue; }
+    if (!standable(at)) continue; // пола ещё нет (кусок замка не встал) — не ставим жителя в воздух
     try { spawnNpc(id, at); delete spawnErr[id]; } catch (err) {
       // участок может быть ещё не готов — пробуем снова; если не выходит долго, говорим об этом в чат
       const e = spawnErr[id] = spawnErr[id] || { n: 0 };
@@ -226,6 +231,14 @@ function ensureNpcs() {
   }
 }
 const spawnErr = {};
+// Можно ли стоять: под ногами не воздух и не вода, на уровне ног и головы — не сплошной блок
+function standable(at) {
+  const below = blockAt({ x: at.x, y: at.y - 1, z: at.z }), feet = blockAt(at), head = blockAt({ x: at.x, y: at.y + 1, z: at.z });
+  if (!below || !feet || !head) return false;
+  if (below.isAir || below.isLiquid) return false;
+  const open = (b) => b.isAir || !/stone|brick|planks|log|dirt|cobble|deepslate|andesite|tuff|_ore|gravel|sand/.test(b.typeId);
+  return open(feet) && open(head);
+}
 
 // ---------- Разговоры ----------
 function npcIdOf(e) { for (const t of e.getTags()) if (t.startsWith('acastle_npc_')) return t.slice(12); return null; }
@@ -322,6 +335,14 @@ world.afterEvents.playerInteractWithBlock.subscribe(({ player, itemStack }) => {
 system.afterEvents.scriptEventReceive.subscribe((ev) => {
   if (ev.id === 'acastle:jump' && S && S.origin) { jump(parseInt(ev.message, 10) || 0, api); flush(); return; }
   if (ev.id === 'acastle:status') { status(); return; }
+  if (ev.id === 'acastle:castle_build' && ev.sourceEntity) {
+    const p0 = ev.sourceEntity.location;
+    const o = [Math.floor(p0.x) - CASTLE.origin[0], Math.floor(p0.y) - CASTLE.origin[1], Math.floor(p0.z) - CASTLE.origin[2]];
+    S = fresh();
+    S.build = { o, i: 0, wait: 20, area: -1, since: 0 };
+    save(); flush();
+    return;
+  }
   if (ev.id !== 'acastle:castle_placed' || !ev.sourceEntity) return;
   const p = ev.sourceEntity.location;
   // Игрок стоит на площади у ворот — это точка CASTLE.origin в координатах замка
@@ -549,11 +570,67 @@ function guideTick() {
   }
 }
 
+// ---------- Стройка замка ----------
+// Кусок ставится, только когда все его участки мира прогружены, — иначе игра отложит его и
+// поставит, когда игрок подойдёт (так было до 0.8.2: куски вставали в разное время).
+// Чтобы не ждать игрока, на время стройки кусок держится «тикающим участком» (tickingarea).
+// Если игра не успевает (тик дольше 75 мс), следующий кусок ждёт.
+let tickMs = 50, lastNow = Date.now();
+const runCmd = (c) => { try { return DIM().runCommand(c).successCount; } catch (e) { return 0; } };
+function pieceBox(o, q) {
+  const [, x, y, z, sx, , sz] = q;
+  return { a: { x: o[0] + x, y: o[1] + y, z: o[2] + z }, b: { x: o[0] + x + sx - 1, y: o[1] + y, z: o[2] + z + sz - 1 } };
+}
+function chunksLoaded(a, b) {
+  for (let x = a.x; x <= b.x + 15; x += 16) for (let z = a.z; z <= b.z + 15; z += 16) {
+    const p = { x: Math.min(x, b.x), y: a.y, z: Math.min(z, b.z) };
+    try { if (!DIM().isChunkLoaded(p)) return false; } catch (e) { return false; }
+  }
+  return true;
+}
+function buildTick() {
+  const B = S.build, P = CASTLE.build;
+  if (B.wait > 0) { B.wait--; return; }
+  if (B.i >= P.length) { finishBuild(); return; }
+  if (tickMs > 75) return; // игра не успевает — пусть отдышится
+  const { a, b } = pieceBox(B.o, P[B.i]);
+  if (B.area !== B.i) {
+    // участок куска держим загруженным; имена чередуются, прежний убираем после установки
+    runCmd(`tickingarea add ${a.x} ${a.y} ${a.z} ${b.x} ${a.y} ${b.z} acastle_build_${B.i % 2} true`);
+    B.area = B.i; B.since = 0; save();
+    return;
+  }
+  if (!chunksLoaded(a, b)) {
+    if (++B.since === 400) world.sendMessage('§7[Замок] Край замка далеко и не прогружается. Подойдите к нему — стройка продолжится.');
+    return;
+  }
+  try { world.structureManager.place(P[B.i][0], DIM(), a); } catch (e) { console.warn('acastle build: ' + e); }
+  runCmd(`tickingarea remove acastle_build_${(B.i + 1) % 2}`);
+  B.i++; B.wait = 8; save();
+  for (const pl of players()) pl.onScreenDisplay.setActionBar(`§6Строится замок: ${B.i} из ${P.length}`);
+}
+function finishBuild() {
+  const B = S.build;
+  runCmd('tickingarea remove acastle_build_0'); runCmd('tickingarea remove acastle_build_1');
+  const h = { x: B.o[0] + CASTLE.heart[0], y: B.o[1] + CASTLE.heart[1], z: B.o[2] + CASTLE.heart[2] };
+  runCmd('kill @e[type=armor_stand,name=acastle_heart]');
+  runCmd(`summon armor_stand acastle_heart ${h.x + 0.5} ${h.y} ${h.z + 0.5}`);
+  for (const pl of players()) pl.onScreenDisplay.setTitle('§6Замок встал', { subtitle: 'Жители выходят на свои места', fadeInDuration: 10, stayDuration: 50, fadeOutDuration: 20 });
+  startCastle(B.o); // S.build пропадает: начинается сюжет
+}
+system.runInterval(() => {
+  const now = Date.now(); tickMs = tickMs * 0.8 + (now - lastNow) * 0.2; lastNow = now;
+  if (!S) load();
+  if (!S.build) return;
+  try { buildTick(); } catch (e) { console.warn('acastle build: ' + e); }
+  if (S.build && S.build.i % 4 === 0) flush();
+}, 1);
+
 // ---------- Общий цикл ----------
 let tick = 0;
 system.runInterval(() => {
   if (!S) load();
-  if (!S.origin) { try { findHeart(); } catch (e) { /* позже */ } return; }
+  if (!S.origin) { if (!S.build) try { findHeart(); } catch (e) { /* позже */ } flush(); return; }
   tick++;
   try { guideTick(); } catch (e) { console.warn('acastle guide: ' + e); }
   if (tick % 2) { flush(); return; }

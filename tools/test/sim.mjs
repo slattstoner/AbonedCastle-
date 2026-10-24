@@ -38,6 +38,7 @@ function blockAt(p) {
   return {
     get typeId() { return b.typeId; }, location: { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) },
     get isLiquid() { return /water|lava/.test(b.typeId); },
+    get isAir() { return b.typeId === 'minecraft:air'; },
     permutation: { getState: (s) => b.states[s] },
     setType(t) { b.typeId = t; b.states = {}; if (t === 'minecraft:chest') b.inv = container(27); },
     getComponent(c) {
@@ -60,7 +61,23 @@ function makeEntity(typeId, loc, opts = {}) {
   entities.push(e);
   return e;
 }
+// Стройка: куски замка ставятся скриптом. В макете кусок «встаёт» так: на местах жителей внутри
+// него появляется пол, а на уровне ног и головы — воздух. До этого жителям стоять негде.
+const placed = [];
+let CASTLE_SPOTS = [];
+function placeStructure(name, d, loc) {
+  placed.push(name);
+  const q = CASTLE_SPOTS.length && CASTLE.build.find((p) => p[0] === name);
+  if (!q) return;
+  for (const c of CASTLE_SPOTS) {
+    const w = W(c);
+    if (w.x < loc.x || w.x >= loc.x + q[4] || w.z < loc.z || w.z >= loc.z + q[6]) continue;
+    blockAt({ ...w, y: w.y - 1 }).setType('minecraft:stone');
+    blockAt(w).setType('minecraft:air'); blockAt({ ...w, y: w.y + 1 }).setType('minecraft:air');
+  }
+}
 const dim = {
+  isChunkLoaded: () => true,
   getBlock: (p) => blockAt(p),
   getTopmostBlock: ({ x, z }) => { const b = blockAt({ x, y: 63, z }); if (b.typeId === 'minecraft:stone') b.setType('minecraft:grass_block'); return b; },
   getEntities(o = {}) {
@@ -95,6 +112,7 @@ globalThis.SIM = {
       getDynamicProperty: (k) => props[k], setDynamicProperty: (k, v) => { props[k] = v; },
       getDay: () => day, getTimeOfDay: () => time, getDifficulty: () => difficulty, getAbsoluteTime: () => day * 24000 + time,
       getPlayers: () => [player], getDimension: () => dim, sendMessage: (m) => msgs.push(m),
+      structureManager: { place: (n, d, l) => placeStructure(n, d, l) },
       afterEvents: { playerInteractWithEntity: ev(handlers.interact), itemUse: ev(handlers.itemUse), entityDie: ev(handlers.die), playerInteractWithBlock: ev(handlers.block), entityHurt: ev(handlers.hurt), dataDrivenEntityTrigger: ev(handlers.trigger), entityHitEntity: ev(handlers.hit), playerSpawn: ev(handlers.spawn) },
     },
     system: {
@@ -125,6 +143,13 @@ process.on('unhandledRejection', (e) => { console.log('Ошибка прогон
 await import(pathToFileURL(path.join(DIR, 'main.js')));
 const { CASTLE } = await import(pathToFileURL(path.join(DIR, 'castle_data.js')));
 const state = () => JSON.parse(props['acastle:state']);
+CASTLE_SPOTS = [...Object.values(CASTLE.homes).filter(Boolean), ...CASTLE.posts.map((p) => p.at), ...CASTLE.feast, ...CASTLE.lairs.crypt, ...CASTLE.lairs.catacombs, [63, 0, 121], [63, 0, 118]];
+// /function castle: стройка скриптом до конца
+async function buildCastle() {
+  placed.length = 0;
+  for (const h of handlers.script) h({ id: 'acastle:castle_build', sourceEntity: player });
+  for (let i = 0; i < 2000 && !(props['acastle:state'] && state().origin); i++) ticks(1);
+}
 // Один «тик» прогона — полсекунды игры (10 игровых тиков): общий цикл каждый раз, реплики реже
 const ticks = (n) => { for (let i = 0; i < n; i++) { tickNo++; for (const it of intervals) if ((tickNo * 10) % it.every === 0) it.fn(); } };
 const O = { x: 5000, y: 64, z: 5000 }; // где игрок ставит замок (площадь у ворот)
@@ -161,7 +186,14 @@ ticks(24);
 { const st = props['acastle:state'] && state(); expect(st && st.origin && st.origin.join() === [O.x - CASTLE.origin[0], O.y - CASTLE.origin[1], O.z - CASTLE.origin[2]].join(), 'замок найден по «сердцу замка»: ' + (st && st.origin)); }
 // 0. Замок поставлен
 player.location = { ...O };
-for (const h of handlers.script) h({ id: 'acastle:castle_placed', sourceEntity: player });
+for (const h of handlers.script) h({ id: 'acastle:castle_build', sourceEntity: player });
+ticks(30);
+expect(!npc('vsevolod') && state().build && !state().origin, 'пока замок строится, жителей нет и сюжет не начат');
+expect(placed.length >= 1 && placed.length < CASTLE.build.length, 'куски ставятся по одному: ' + placed.length);
+for (let i = 0; i < 2000 && !state().origin; i++) ticks(1);
+expect(placed.length === CASTLE.build.length && new Set(placed).size === placed.length, `все куски замка поставлены по разу (${placed.length} из ${CASTLE.build.length})`);
+expect(placed[0] === CASTLE.build[0][0] && log.some((c) => c.startsWith('tickingarea add')) && log.some((c) => c.startsWith('summon armor_stand acastle_heart')), 'стройка от площади, участки держатся, «сердце замка» поставлено');
+expect(log.filter((c) => c.startsWith('tickingarea add')).length === CASTLE.build.length, 'на каждый кусок — свой участок');
 ticks(8);
 expect(q('s0_halt') === 'active', 'задание «Стой, кто идёт?»');
 expect(npc('ostap') && npc('mitka'), 'стражники у ворот');
@@ -500,7 +532,7 @@ msgs.length = 0; for (const h of handlers.script) h({ id: 'acastle:status', mess
 expect(msgs.some((m) => /аддон \d+\.\d+\.\d+, скрипты работают/.test(m)), 'acastle:status отвечает');
 // ===== Переход к этапу командой =====
 player.location = { ...O };
-for (const h of handlers.script) h({ id: 'acastle:castle_placed', sourceEntity: player });
+await buildCastle();
 ticks(4);
 for (const h of handlers.script) h({ id: 'acastle:jump', message: '5', sourceEntity: player });
 ticks(6);
