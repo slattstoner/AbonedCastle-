@@ -82,15 +82,23 @@ const dim = {
   getTopmostBlock: ({ x, z }) => { const b = blockAt({ x, y: 63, z }); if (b.typeId === 'minecraft:stone') b.setType('minecraft:grass_block'); return b; },
   getEntities(o = {}) {
     return entities.filter((e) => (!o.tags || o.tags.every((t) => e.hasTag(t))) && (!o.type || e.typeId === o.type) && (!o.name || e.nameTag === o.name)
-      && (!o.families || e.typeId.startsWith('acastle:'))
+      && (!o.families || o.families.every((f) => famOf(e).includes(f)))
       && (!o.location || Math.hypot(e.location.x - o.location.x, e.location.y - o.location.y, e.location.z - o.location.z) <= (o.maxDistance || Infinity)));
   },
   spawnEntity: (t, loc, o) => makeEntity(t, loc, o),
   spawnItem: (it, loc) => makeEntity('minecraft:item', loc),
   spawnParticle: () => { particles++; },
-  runCommand: (c) => { log.push(c); return { successCount: 1 }; },
+  runCommand: (c) => {
+    log.push(c);
+    // место тайги встало: в нём лежит метка хозяина (невидимый блок света) рядом с точкой
+    const m = /^place structure \S+ (-?\d+) (-?\d+) (-?\d+)/.exec(c);
+    if (m) blockAt({ x: +m[1] + 2, y: +m[2], z: +m[3] + 2 }).setType('minecraft:light_block_0');
+    return { successCount: 1 };
+  },
 };
 let particles = 0;
+// Семейства существ: жители аддона — acastle_person, нежить и враждебные разбойники — monster
+const famOf = (e) => [...(e.typeId.startsWith('acastle:') ? ['acastle_person'] : []), ...(/zombie|skeleton|spider|husk/.test(e.typeId) || e.state === 'hostile' ? ['monster'] : [])];
 const inv = container(36);
 const msgs = [];
 const player = {
@@ -159,6 +167,7 @@ const npc = (id) => entities.find((e) => e.hasTag('acastle_npc_' + id));
 async function talk(id, ...say) {
   const e = npc(id);
   if (!e) { problems.push(`нет жителя ${id}`); return; }
+  ticks(1); // живой игрок не открывает окна в один и тот же тик
   answers.push(...say);
   for (const h of handlers.interact) h({ player, target: e });
   await new Promise((r) => setTimeout(r, 5));
@@ -200,6 +209,10 @@ expect(npc('ostap') && npc('mitka'), 'стражники у ворот');
 expect(npc('vsevolod') && npc('agafya') && npc('frol'), 'король, Агафья, Фрол на местах');
 // 1. Остап
 goTo([63, 0, 122]); ticks(4);
+// в бою касание стражника — удар мимо, окно не открывается
+{ const z = makeEntity('minecraft:zombie', { ...player.location, x: player.location.x + 2 }); answers.push('Путник');
+  for (const h of handlers.hit) h({ damagingEntity: player, hitEntity: npc('ostap') });
+  await new Promise((r) => setTimeout(r, 5)); expect(answers.length === 1, 'посреди боя касание стражника не открывает окно'); answers.length = 0; z.remove(); ticks(2); }
 // с Остапом — касанием (на iPhone касание — удар, стражник от него не ранен, а заговорит)
 answers.push('Путник', 'доказать', 'Договорились');
 for (const h of handlers.hit) h({ damagingEntity: player, hitEntity: npc('ostap') });
@@ -308,6 +321,16 @@ async function goPlace(id, label) {
 }
 const morningAt = (c) => { if (c) goTo(c); morning(); ticks(8); };
 const hasItem = (name) => inv.slots.some((s) => s && s.nameTag === name);
+// У каждого жителя в описании существа есть событие появления со своим обликом
+{
+  const { NPCS } = await import(pathToFileURL(path.join(DIR, 'story.js')));
+  const ev = (t) => JSON.parse(fs.readFileSync(path.join(ROOT, 'build/AbandonedCastle_BP/entities', t + '.json'), 'utf8'))['minecraft:entity'].events;
+  const EV = { 'acastle:guard': ev('guard'), 'acastle:npc': ev('npc'), 'acastle:bandit': ev('bandit') };
+  for (const [id, n] of Object.entries(NPCS)) {
+    const type = n.bandit ? 'acastle:bandit' : n.guard ? 'acastle:guard' : 'acastle:npc';
+    expect(EV[type]['acastle:as_' + (n.skin || id)], `у жителя ${id} есть событие acastle:as_${n.skin || id} (${type})`);
+  }
+}
 const ITEMS = new Set(JSON.parse(fs.readFileSync(path.join(ROOT, 'tools/data/items-1.26.50.json'), 'utf8')));
 const { CONTRACTS, QUESTS } = await import(pathToFileURL(path.join(DIR, 'story.js')));
 for (const [u, c] of Object.entries(CONTRACTS)) {
@@ -348,6 +371,9 @@ morningAt([63, 0, 110]);
 expect(state().npcs.gordey === 'home' && q('s2_forge') === 'active' && q('s2_hammer') === 'active', 'Гордей в замке, подряды кузни');
 ticks(8);
 expect(entities.filter((e) => e.hasTag('acastle_npc_gordey')).length === 1, 'Гордей один (без двойника)');
+// старая копия Гордея осталась в стане (переезд случился, пока стан был далеко) — исчезает
+{ const h = placeOf('camp_hunters_bear').host; const old = makeEntity('acastle:npc', { x: h[0], y: h[1], z: h[2] }); old.addTag('acastle_npc_gordey'); ticks(8);
+  expect(!old.isValid && entities.filter((e) => e.hasTag('acastle_npc_gordey')).length === 1, 'старая копия Гордея в стане убрана'); }
 for (const h of handlers.block) h({ player, block: blockAt(W(CASTLE.rooms['Арсенал'])) }); ticks(2);
 // в макете любой блок в арсенале — камень; сундук ставим
 { const c = W(CASTLE.rooms['Арсенал']); blockAt(c).setType('minecraft:chest'); for (const h of handlers.block) h({ player, block: blockAt(c) }); ticks(2); }
@@ -455,6 +481,8 @@ await talk('marfa', 'лечить');
 give('minecraft:sweet_berries', 8); give('minecraft:honey_bottle', 1); give('minecraft:glistering_melon_slice', 1);
 await talk('marfa', 'Вот всё');
 expect(q('s6_cure') === 'done' && state().npcs.vsevolod === 'feast:0', 'король встал и спустился в зал');
+goTo(CASTLE.feast[0]); ticks(8);
+{ const k = npc('vsevolod'), c = W(CASTLE.feast[0]); expect(k && Math.hypot(k.location.x - c.x - 0.5, k.location.z - c.z - 0.5) < 2 && Math.abs(k.location.y - c.y) < 1, 'король правда перешёл в Большой зал'); }
 await talk('marfa', 'Помогу');
 fill('garden'); ticks(4); morningAt(); ticks(4);
 expect(stage(6) && state().rank === 'Кастелян', 'этап 6 пройден, звание Кастелян');
@@ -525,7 +553,7 @@ expect(!missing.length, 'все единицы ремонта задейство
 
 // ===== Книга рядом с жителем: «Говорить» =====
 goTo(CASTLE.homes.agafya); ticks(4);
-answers.push('Говорить: Повариха', 'Прощай'); for (const h of handlers.itemUse) h({ source: player, itemStack: new ItemStack('acastle:quest_book') });
+ticks(1); answers.push('Говорить: Повариха', 'Прощай'); for (const h of handlers.itemUse) h({ source: player, itemStack: new ItemStack('acastle:quest_book') });
 await new Promise((r) => setTimeout(r, 5)); expect(!answers.length, 'книга рядом с Агафьей предлагает поговорить'); answers.length = 0;
 // ===== Команда status =====
 msgs.length = 0; for (const h of handlers.script) h({ id: 'acastle:status', message: '' });

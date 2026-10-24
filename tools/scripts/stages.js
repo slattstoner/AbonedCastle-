@@ -42,7 +42,7 @@ export const LATE_NPCS = {
   pakhom: { name: 'Пахом', bandit: true, start: null, off: [1, 2] },
   shilo: { name: 'Шило', bandit: true, start: null, off: [-4, 3] },
   kunitsa: { name: 'Куница', bandit: true, start: null, off: [-2, -1] },
-  trader: { name: 'Торговка', bandit: true, skin: 'kunitsa', start: null },
+  trader: { name: 'Торговка', bandit: true, start: null }, // облик Куницы без оружия: событие acastle:as_trader
   nozhov: { name: 'Савелий Ножов', bandit: true, start: null },
 };
 
@@ -84,12 +84,14 @@ function battle(api, key, o) {
     if (o.lose) o.lose();
     return;
   }
-  const left = mobs().length;
+  let left = mobs().length;
+  // Застрявшие (не дойти, не добить) через две минуты разбегаются — бой не висит вечно
+  if (left > 0 && ++b.t > 120) { for (const m of mobs()) m.remove(); left = 0; api.tell('§7Остальные разбежались.'); }
   for (const p of api.players()) if (!o.near || o.near(p)) p.onScreenDisplay.setActionBar(`${o.label}: волна ${Math.max(1, b.n)} из ${o.waves.length}, осталось ${left}`);
   if (left > 0) return;
   if (b.n >= o.waves.length) { S.f[key] = null; api.save(); o.win(); return; }
   if (++b.wait < 4) { api.save(); return; }
-  b.n++; b.wait = 0; api.save();
+  b.n++; b.wait = 0; b.t = 0; api.save();
   o.waves[b.n - 1](api);
   if (o.next) o.next(b.n);
 }
@@ -101,7 +103,7 @@ function raid(api, p, n, tag, rmin = 16, rmax = 24) {
     const top = api.topAt(x, z);
     if (!top) continue;
     try {
-      const e = api.dim().spawnEntity('acastle:bandit', { x: x + 0.5, y: top.location.y + 1, z: z + 0.5 }, { spawnEvent: 'acastle:as_' + pick(['sych', 'voron', 'grinya', 'shilo']) });
+      const e = api.dim().spawnEntity('acastle:bandit', { x: x + 0.5, y: top.location.y + 1, z: z + 0.5 }, { spawnEvent: 'acastle:as_' + pick(['sych', 'voron', 'grinya']) });
       e.nameTag = 'Человек Рыжего'; e.addTag(tag); e.addTag('acastle_raid'); e.triggerEvent('acastle:hostile');
     } catch (err) { /* участок не загружен */ }
   }
@@ -396,8 +398,15 @@ function checkStage(api, n) {
   if (n === 5) api.flag('king_ill_day', world.getDay());
   if (n === 7) {
     for (const p of api.players()) p.onScreenDisplay.setTitle('§6Рыжий — княжич Ефрем', { subtitle: 'Оберег рода, письмо королевы, колыбельная', fadeInDuration: 20, stayDuration: 80, fadeOutDuration: 20 });
-    for (const id of GANG) api.live(id, null); // лагерь опустел: шайка ушла к замку по зову Ножова
+    for (const id of GANG) { api.live(id, null); api.setState(id, null); } // лагерь опустел: шайка ушла к замку по зову Ножова
     api.flag('camp_empty', 1);
+    // побочные задания лагеря теряют смысл: мириться не с кем, Шило подбросил пропажу
+    api.drop('x_peace');
+    if (api.has('x_shilo')) {
+      const it = api.S.f.stolen;
+      if (it) for (const p of api.players()) { api.give(p, it.id, it.n); p.sendMessage('§7В сумке нашлась пропажа: Шило, уходя с шайкой, подбросил её обратно.'); break; }
+      api.S.f.stolen = null; api.drop('x_shilo');
+    }
   }
   if (n === 8) api.arriveNextMorning('ryzhy');
 }
@@ -471,7 +480,7 @@ function talkLate(id, api, pl) {
         text: 'Ты видел его? Белого лося? Значит, лес принял тебя. Слушайте все! Отныне хозяин Студёного детинца — вот он. Служите ему, как служили мне.',
         options: [{ text: 'Я не подведу.', run: (a) => { a.finish('s9_return'); a.rank('Хозяин замка'); a.start('s9_heritage'); a.openContract('heritage'); a.flag('king_dies', world.getDay()); }, next: { text: 'Знаю. Теперь можно и отдохнуть… Позови Игната: пусть трон позолотят, знамёна поднимут, колокол повесят. Пусть все видят: замок жив.' } }],
       };
-      if (f('king_ill_day') && world.getDay() > f('king_ill_day') && !S.q.s6_ask) return {
+      if (typeof f('king_ill_day') === 'number' && world.getDay() > f('king_ill_day') && !S.q.s6_ask) return {
         text: '…Подойди… Сил нет подняться. С утра всё хуже. Варлаам молится, да молитвой одной не вылечишь.',
         options: [{ text: 'Я найду лекаря.', run: (a) => STARTS[6](a), next: { text: 'Говорили, была в бору травница, Марфа. Да сожгли её… Спроси отшельника Никодима: он всех в лесу знает.' } }],
       };
@@ -795,7 +804,7 @@ export function lateEvent(name, api, ev) {
     case 'morning':
       if (api.has('s5_pigeon') && S.npcs.semka === 'home' && !S.f.pigeon) { S.f.pigeon = 1; api.save(); api.tell('§7На голубятню прилетел голубь с письмом. Сёмка зовёт вас.'); }
       if (S.f.siege_talk === 1 && !api.has('s8_siege')) { S.f.siege_talk = 2; disperse(api); api.save(); }
-      if (S.f.king_dies && world.getDay() > S.f.king_dies && !S.f.king_dead) {
+      if (typeof S.f.king_dies === 'number' && world.getDay() > S.f.king_dies && !S.f.king_dead) {
         S.f.king_dead = 1; api.save();
         api.live('vsevolod', null);
         for (const p of api.players()) { p.onScreenDisplay.setTitle('§7Король Всеволод умер', { subtitle: 'на рассвете, во сне', fadeInDuration: 30, stayDuration: 100, fadeOutDuration: 30 }); p.playSound('block.bell.hit'); }
@@ -943,7 +952,10 @@ export function jumpLate(n, api, base) {
     if (+m[1] < n) S.q[q] = 'done'; else delete S.q[q];
   }
   for (const [u, info] of Object.entries(api.castle.units)) if (info.stage < n && !(S.rep[u] && S.rep[u].st === 'done')) S.rep[u] = { st: 'due' };
-  for (const [k, ids] of Object.entries(ARRIVALS)) if (+k < n) for (const id of ids) S.npcs[id] = 'home';
+  // жители прежних этапов — дома, поздних — ещё не пришли (и при переходе назад уходят)
+  for (const [k, ids] of Object.entries(ARRIVALS)) for (const id of ids) { if (+k < n) S.npcs[id] = 'home'; else delete S.npcs[id]; }
+  S.arrive = [];
+  for (let k = n; k <= 9; k++) delete S.f[`stage${k}_done`];
   if (n >= 2) { for (const p of api.castle.posts) S.npcs[p.guard] = 'post'; }
   for (let k = 1; k < n; k++) S.f[`stage${k}_done`] = 1;
   Object.assign(S.f, { s1_talked: n > 1 ? 1 : S.f.s1_talked, seal: n > 1 ? 1 : S.f.seal, copy: n > 1 ? 1 : S.f.copy, farm_supply: n > 3 ? 1 : 0, lullaby: n > 5 ? 1 : 0, heard_song: n > 5 ? 1 : 0, king_up: n > 6 ? 1 : 0, camp_empty: n > 7 ? 1 : 0, vault_read: n > 5 ? 1 : 0 });

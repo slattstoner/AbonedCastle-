@@ -58,12 +58,14 @@ function waveTick(api) {
     api.say('ostap', 'Ушли… Не беда. Приходи следующей ночью — постоим ещё.', 200);
     return;
   }
-  const left = mobs().length;
+  let left = mobs().length;
+  // Застрявшие (не дойти, не добить) через две минуты разбегаются — волна не висит вечно
+  if (left > 0 && ++w.t > 120) { for (const m of mobs()) m.remove(); left = 0; api.say('ostap', 'Остальные разбежались по лесу.', 120); }
   for (const p of api.players()) if (api.flat(p.location, gate) < 90) p.onScreenDisplay.setActionBar(`Ночь у ворот: волна ${Math.max(1, w.n)} из 3, нежити осталось ${left}`);
   if (left > 0) return;
   if (w.n >= WAVES.length) { S.f.wave = null; api.finish('s0_night'); return; }
   if (++w.wait < 4) { api.save(); return; }
-  w.n++; w.wait = 0; api.save();
+  w.n++; w.wait = 0; w.t = 0; api.save();
   for (const [type, count] of WAVES[w.n - 1]) for (let i = 0; i < count; i++) {
     const c = api.W([55 + Math.floor(Math.random() * 17), 0, 146 + Math.floor(Math.random() * 6)]);
     let top; try { top = api.dim().getTopmostBlock({ x: c.x, z: c.z }); } catch (e) { top = undefined; }

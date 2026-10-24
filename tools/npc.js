@@ -49,6 +49,8 @@ const HOMES = {
 const GUARD_SEL = `@e[type=${NS}:guard]`;
 // Скины шайки: из них же набираются безымянные «люди Рыжего» в набегах и осаде
 const GANG = ['sych', 'voron', 'grinya', 'kunitsa', 'pakhom', 'shilo', 'ryzhy'];
+// Оружие людей Рыжего по роли (кроме каменного топора по умолчанию)
+const BANDIT_GEAR = { ryzhy: 'sword', voron: 'bow', kunitsa: 'light', sych: 'light', pakhom: 'none', shilo: 'none', nozhov: 'none' };
 
 const SKIN_IDS = NPC.map((n) => n.id);
 const variantOf = (id) => { const i = SKIN_IDS.indexOf(id); if (i < 0) throw new Error('нет скина ' + id); return i; };
@@ -235,6 +237,17 @@ function banditEntity() {
   skinGroups(SKIN_IDS, groups, events);
   events[g('as_ryzhy')].add.component_groups.push(g('unbeaten'));
   events[g('as_nozhov')].add.component_groups.push(g('coward'));
+  // Оружие по роли (по умолчанию — каменный топор): атаман с мечом, Ворон с луком и стреляет,
+  // если лагерь враждебен; у кашевара, мальчишки, «торговки» и Ножова оружия нет
+  const gear = (table) => ({ 'minecraft:equipment': { table: `loot_tables/${NS}/npc/${table}.json`, slot_drop_chance: [{ slot: 'slot.weapon.mainhand', drop_chance: 0 }] } });
+  groups[g('gear_sword')] = gear('bandit_sword');
+  groups[g('gear_light')] = gear('bandit_light');
+  groups[g('gear_none')] = gear('empty');
+  groups[g('gear_bow')] = { ...gear('archer_gear'), 'minecraft:shooter': { def: 'minecraft:arrow' },
+    'minecraft:behavior.ranged_attack': { priority: 2, attack_interval_min: 1.5, attack_interval_max: 3, attack_radius: 16 } };
+  for (const [id, kind] of Object.entries(BANDIT_GEAR)) events[g('as_' + id)].add.component_groups.push(g('gear_' + kind));
+  // Куница под видом торговки на площади: тот же облик, но без оружия
+  events[g('as_trader')] = { remove: events[g('as_kunitsa')].remove, add: { component_groups: [g('skin_kunitsa'), g('gear_none')] } };
   return {
     format_version: '1.21.0',
     'minecraft:entity': {
@@ -328,8 +341,9 @@ function writePacks(writeBP, writeRP, skinPng, checkTable) {
   writeBP('entities/guard.json', guardEntity());
   writeBP('entities/npc.json', npcEntity());
   writeBP('entities/bandit.json', banditEntity());
-  for (const [name, item, what] of [['guard_gear', 'iron_sword', 'стражника'], ['archer_gear', 'bow', 'лучника'], ['bandit_gear', 'stone_axe', 'разбойника']]) {
-    const gear = { pools: [{ rolls: 1, entries: [{ type: 'item', name: 'minecraft:' + item, weight: 1 }] }] };
+  for (const [name, item, what] of [['guard_gear', 'iron_sword', 'стражника'], ['archer_gear', 'bow', 'лучника'], ['bandit_gear', 'stone_axe', 'разбойника'],
+    ['bandit_sword', 'iron_sword', 'атамана'], ['bandit_light', 'stone_sword', 'разведчика'], ['empty', null, 'мирного']]) {
+    const gear = { pools: item ? [{ rolls: 1, entries: [{ type: 'item', name: 'minecraft:' + item, weight: 1 }] }] : [] };
     checkTable(gear, 'снаряжение ' + what);
     writeBP(`loot_tables/${NS}/npc/${name}.json`, gear);
   }
