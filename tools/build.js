@@ -25,7 +25,7 @@ const PACK = {
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 9, 0],
+  version: [0, 9, 1],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -262,7 +262,11 @@ for (const s of STRUCTURES) {
         if (i >= 0) cells[i] = cell; else cells.push(cell);
       }
     }
-    write(`structures/${NS}/taiga/${s.id}_${story.id}.mcstructure`, mcstructure(size, cells));
+    const tmplBuf = mcstructure(size, cells);
+    write(`structures/${NS}/taiga/${s.id}_${story.id}.mcstructure`, tmplBuf);
+    // Запасной путь для мест сюжета: тот же шаблон без jigsaw, его скрипт ставит командой
+    // /structure load, если /place structure не сработал (место не встало)
+    write(`structures/${NS}/qp_${s.id}_${story.id}.mcstructure`, tmplBuf);
     // Место для задания: та же постройка с одной историей, ставится скриптом командой /place,
     // в обычной генерации мира не участвует
     pools[`q_${s.id}_${story.id}`] = {
@@ -282,7 +286,7 @@ for (const s of STRUCTURES) {
         heightmap_projection: 'world_surface',
       },
     });
-    QUEST_PLACES[`${s.id}_${story.id}`] = { structure: `${NS}:q_${s.id}_${story.id}`, size: [size[0], size[2]] };
+    QUEST_PLACES[`${s.id}_${story.id}`] = { structure: `${NS}:q_${s.id}_${story.id}`, template: `${NS}:qp_${s.id}_${story.id}`, size: [size[0], size[2]], height: size[1] };
     if (story.trail) {
       write(`structures/${NS}/taiga/trail/${s.id}_${story.id}.mcstructure`, trailCells(s.id, story));
       pools[`${s.id}_${story.id}_trail`] = {

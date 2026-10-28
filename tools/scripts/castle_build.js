@@ -110,6 +110,8 @@ export function status() {
     }
     lines.push('На месте: ' + (here.join(', ') || 'никого'));
     if (away.length) lines.push('Нет на месте: ' + away.join(', '));
+    const pl = Object.entries(S.places).map(([id, p]) => `${id} ${p.x} ${p.z}: ${p.placed ? (p.how === 'load' ? 'стоит (шаблон)' : 'стоит') : p.fail ? `не встаёт (${p.fail})` : 'ждёт игрока'}`);
+    if (pl.length) lines.push('Места: ' + pl.join('; '));
   }
   world.sendMessage(lines.join('\n'));
 }

@@ -92,11 +92,16 @@ const dim = {
     log.push(c);
     // место тайги встало: в нём лежит метка хозяина (невидимый блок света) рядом с точкой
     const m = /^place structure \S+ (-?\d+) (-?\d+) (-?\d+)/.exec(c);
+    // игра молча не выполнила /place (так было с острогом в 0.9.0): скрипт должен поставить шаблон
+    if (m && failPlace) return { successCount: 0 };
     if (m) blockAt({ x: +m[1] + 2, y: +m[2], z: +m[3] + 2 }).setType('minecraft:light_block_0');
+    const t = /^structure load acastle:qp_\S+ (-?\d+) (-?\d+) (-?\d+)/.exec(c);
+    if (t) blockAt({ x: +t[1] + 4, y: +t[2] + 1, z: +t[3] + 4 }).setType('minecraft:light_block_0');
     return { successCount: 1 };
   },
 };
 let particles = 0;
+let failPlace = false;
 // Семейства существ: жители аддона — acastle_person, нежить и враждебные разбойники — monster
 const famOf = (e) => [...(e.typeId.startsWith('acastle:') ? ['acastle_person'] : []), ...(/zombie|skeleton|spider|husk/.test(e.typeId) || e.state === 'hostile' ? ['monster'] : [])];
 const inv = container(36);
@@ -293,8 +298,10 @@ expect(place && !place.placed, 'место острога выбрано');
 inv.setItem(0, new ItemStack('minecraft:compass'));
 lastBar = ''; ticks(2);
 expect(/Острог — \d+ бл\./.test(lastBar), 'компас показывает путь к острогу: ' + lastBar);
+failPlace = true;
 player.location = { x: place.x + 30, y: 64, z: place.z + 10 }; ticks(10);
-expect(state().places.stockade_hunt.placed && log.some((c) => c.startsWith('place structure acastle:q_stockade_hunt')), 'острог встал');
+expect(state().places.stockade_hunt.placed && state().places.stockade_hunt.how === 'load' && log.some((c) => c.startsWith('structure load acastle:qp_stockade_hunt')), '/place не сработал — острог встал из шаблона');
+failPlace = false;
 ticks(8);
 expect(npc('yaroslav'), 'сотник Ярослав в остроге');
 await talk('yaroslav', 'Донесение');
