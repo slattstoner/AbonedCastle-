@@ -11,4 +11,3 @@
 | [`taiga-stories.md`](taiga-stories.md) | истории тайги и тайники (спойлеры) | собирает сборщик, руками не править |
 | [`story-map.html`](story-map.html) | карта сюжета | не обновлялась с 0.8.x |
 
-Есть ещё работа по сюжету в отдельной ветке `claude/minecraft-mod-story-gameplay-7y5cro` (второй круг сюжета, этап 10, `docs/story-expansion.md`); в основную работу она не влита — см. `CLAUDE.md`, раздел «Git».
