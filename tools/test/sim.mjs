@@ -792,7 +792,7 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
     // капитан набирает новобранца, кузнец куёт ему меч — новобранец на посту
     fc.addItem(new ItemStack('minecraft:iron_ingot', 4));
     await talk('demyan', 'Гарнизон', 'Набрать: Стражник Богдан');
-    expect(g0().want && g0().want.bogdan, 'капитан ждёт меч для Богдана');
+    expect((g0().want && g0().want.bogdan) || state().npcs.bogdan === 'post', 'капитан ждёт меч для Богдана (или кузнец уже сковал)');
     runUntil(() => state().npcs.bogdan === 'post', 8000, 'Богдан получил меч и заступил');
     expect((g0().gear.bogdan || {}).hand === 'minecraft:iron_sword', 'у Богдана меч от кузнеца');
   }
