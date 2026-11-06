@@ -25,7 +25,7 @@ const PACK = {
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 8, 3],
+  version: [0, 8, 4],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -412,13 +412,23 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
   const HEART_SEL = '@e[type=armor_stand,name=acastle_heart]';
   // Посты стражи должны быть свободны
   const rel = (from) => (x, y, z) => `~${x - from[0]} ~${y - from[1]} ~${z - from[2]}`;
+  // трава, папоротник, цветы и ковры не мешают стоять
+  const freeCell = (v) => !v || v.id === 'air' || (/fern|grass|flower|poppy|dandelion|bush|carpet/.test(v.id) && v.id !== 'grass_block');
   for (const p of npc.POSTS) {
-    const [x, y, z] = p.at;
-    for (const [m, what] of [[map, 'в упадке'], [mapFull, 'восстановленный']]) {
-      const at = (dy) => m.get(x + ',' + (y + dy) + ',' + z);
-      // трава, папоротник, цветы и ковры не мешают стоять
-      const free = (v) => !v || v.id === 'air' || (/fern|grass|flower|poppy|dandelion|bush|carpet/.test(v.id) && v.id !== 'grass_block');
-      if (!free(at(0)) || !free(at(1)) || !at(-1) || free(at(-1))) warn(`замок (${what}): пост стражника ${p.guard} (${x},${y},${z}) не свободен или без пола`);
+    for (const [[x, y, z], kind] of [[p.at, 'пост'], ...(p.rest ? [[p.rest, 'караулка']] : [])]) {
+      for (const [m, what] of [[map, 'в упадке'], [mapFull, 'восстановленный']]) {
+        const at = (dy) => m.get(x + ',' + (y + dy) + ',' + z);
+        if (!freeCell(at(0)) || !freeCell(at(1)) || !at(-1) || freeCell(at(-1))) warn(`замок (${what}): ${kind} стражника ${p.guard} (${x},${y},${z}) не свободен или без пола`);
+      }
+    }
+  }
+  // Решётка ворот (tools/scripts/duty.js опускает её на ночь): клетки x 61–65, y 0–3, z 129
+  // должны быть пусты, а над ними — поднятая решётка
+  for (const [m, what] of [[map, 'в упадке'], [mapFull, 'восстановленный']]) {
+    for (let x = 61; x <= 65; x++) {
+      for (let y = 0; y <= 3; y++) { const v = m.get(x + ',' + y + ',129'); if (v && v.id !== 'air') warn(`замок (${what}): под решёткой ворот (${x},${y},129) стоит ${v.id}`); }
+      const top = m.get(x + ',4,129');
+      if (!top || top.id !== 'iron_bars') warn(`замок (${what}): нет поднятой решётки над воротами (${x},4,129)`);
     }
   }
   // /function castle только начинает стройку: прежние жители уходят, остальное делают скрипты

@@ -13,6 +13,7 @@ import { CASTLE } from './castle_data.js';
 import { NPCS, QUESTS, onEvent } from './story.js';
 import { npcSpot, findNpc, spawnErr } from './people.js';
 import { api } from './api.js';
+import { dutyStatus } from './duty.js';
 
 const fromPlayer = (p) => [Math.floor(p.x) - CASTLE.origin[0], Math.floor(p.y) - CASTLE.origin[1], Math.floor(p.z) - CASTLE.origin[2]];
 
@@ -109,6 +110,7 @@ export function status() {
       (e ? here : away).push(NPCS[id].name + (e ? '' : loaded(at) ? (spawnErr[id] ? ' (ошибка: ' + spawnErr[id].msg + ')' : ' (сейчас появится)') : ' (далеко)'));
     }
     lines.push('На месте: ' + (here.join(', ') || 'никого'));
+    lines.push(dutyStatus());
     if (away.length) lines.push('Нет на месте: ' + away.join(', '));
   }
   world.sendMessage(lines.join('\n'));

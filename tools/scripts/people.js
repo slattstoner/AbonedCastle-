@@ -1,5 +1,6 @@
 // Жители: где каждый должен быть, появление на месте, переезд, двойники.
-//  • место жителя (S.npcs[id], по умолчанию NPCS[id].start): 'post' — пост стражника, 'home' — его
+//  • место жителя (S.npcs[id], по умолчанию NPCS[id].start): 'post' — пост стражника, 'rest' — его
+//    караулка в надвратной башне (ночью, duty.js), 'home' — его
 //    комната в замке, 'gate' — у ворот, 'place:<id>' — место тайги, 'feast:<n>' — Большой зал на
 //    пиру, 'at:x,y,z' — точка замка, 'field:x,z' — поверхность перед воротами; null — ушёл;
 //  • житель появляется, когда его место прогружено и там твёрдый пол (не в воздухе);
@@ -25,6 +26,7 @@ export function npcSpot(id) {
   const where = whereOf(id);
   if (!where) return null;
   if (where === 'post') { const p = CASTLE.posts.find((q) => q.guard === id); return p ? W(p.at) : null; }
+  if (where === 'rest') { const p = CASTLE.posts.find((q) => q.guard === id); return p && p.rest ? W(p.rest) : null; }
   if (where === 'home') return CASTLE.homes[id] ? W(CASTLE.homes[id]) : null;
   if (where === 'gate') return W(NPCS[id].gate || [63, 0, 121]);
   if (where.startsWith('place:')) {
@@ -49,7 +51,7 @@ function strayed(id, e, at) {
   const [r, dy] = NPCS[id].guard ? [40, 24] : NPCS[id].bandit ? [24, 8] : [10, 4];
   return flat(e.location, at) > r || Math.abs(e.location.y - at.y) > dy;
 }
-const despawn = (id, e) => { try { e.triggerEvent('acastle:despawn'); e.removeTag(tagOf(id)); } catch (err) { /* уже нет */ } };
+export const despawn = (id, e) => { try { e.triggerEvent('acastle:despawn'); e.removeTag(tagOf(id)); } catch (err) { /* уже нет */ } };
 
 function spawnNpc(id, at) {
   const n = NPCS[id];

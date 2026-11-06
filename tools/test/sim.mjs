@@ -151,7 +151,7 @@ process.on('unhandledRejection', (e) => { console.log('Ошибка прогон
 await import(pathToFileURL(path.join(DIR, 'main.js')));
 const { CASTLE } = await import(pathToFileURL(path.join(DIR, 'castle_data.js')));
 const state = () => JSON.parse(props['acastle:state']);
-CASTLE_SPOTS = [...Object.values(CASTLE.homes).filter(Boolean), ...CASTLE.posts.map((p) => p.at), ...CASTLE.feast, ...CASTLE.lairs.crypt, ...CASTLE.lairs.catacombs, [63, 0, 121], [63, 0, 118]];
+CASTLE_SPOTS = [...Object.values(CASTLE.homes).filter(Boolean), ...CASTLE.posts.map((p) => p.at), ...CASTLE.posts.filter((p) => p.rest).map((p) => p.rest), ...CASTLE.feast, ...CASTLE.lairs.crypt, ...CASTLE.lairs.catacombs, [63, 0, 121], [63, 0, 118]];
 // /function castle: стройка скриптом до конца
 async function buildCastle() {
   placed.length = 0;
@@ -226,11 +226,48 @@ for (let w = 0; w < 3; w++) {
   ticks(12);
   const mobs = entities.filter((e) => e.hasTag('acastle_wave'));
   expect(mobs.length > 0, `волна ${w + 1} пришла`);
+  if (w === 0) {
+    ticks(2);
+    expect(mobs.every((m) => m.hasTag('acastle_intruder')), 'нежить перед воротами помечена нарушителем');
+    expect(npc('ostap').events.at(-1) === 'acastle:alert', 'Остап по тревоге выходит бить нежить');
+    expect(state().f.gate !== 'closed' && state().npcs.ostap !== 'rest', 'в ночь у ворот решётка поднята, стража на постах');
+  }
   for (const m of mobs) m.remove();
 }
 ticks(12);
 expect(q('s0_night') === 'done', 'ночь у ворот пройдена');
 expect(q('s0_king') === 'active', 'идти к королю');
+// Служба стражи: после ночи у ворот — распорядок. Ночью решётка опущена, Остап и Митька в караулках
+{
+  const bars = () => [61, 62, 63, 64, 65].every((x) => blockAt(W([x, 1, 129])).typeId === 'minecraft:iron_bars');
+  goTo(CASTLE.homes.vsevolod); ticks(4);
+  expect(npc('ostap') && npc('ostap').events.at(-1) !== 'acastle:alert', 'нежити нет — Остап спокоен');
+  expect(state().npcs.ostap === 'rest' && state().npcs.mitka === 'rest', 'ночью Остап и Митька уходят в караулки');
+  expect(state().f.gate === 'closed' && bars(), 'на ночь решётка опущена');
+  ticks(14);
+  { const r = CASTLE.posts.find((p) => p.guard === 'ostap').rest, e = npc('ostap'), w = W(r);
+    expect(e && Math.floor(e.location.x) === w.x && Math.floor(e.location.z) === w.z, 'Остап в караулке надвратной башни'); }
+  const back = { ...player.location };
+  goTo([63, 0, 132]); ticks(2);
+  expect(state().f.gate !== 'closed' && !bars(), 'ночью перед игроком решётку поднимают');
+  player.location = back; ticks(10);
+  expect(state().f.gate === 'closed' && bars(), 'за игроком решётку опускают');
+  // монстр на стене и под землёй — не нарушитель, стражник за ним не тянется
+  const wall = makeEntity('minecraft:skeleton', W([58, 9, 120])), deep = makeEntity('minecraft:zombie', W([63, -20, 120]));
+  const inYard = makeEntity('minecraft:zombie', W([60, 0, 116]));
+  ticks(2);
+  expect(!wall.hasTag('acastle_intruder') && !deep.hasTag('acastle_intruder'), 'монстр на стене и под землёй — не нарушитель');
+  expect(inYard.hasTag('acastle_intruder') && npc('ostap').events.at(-1) === 'acastle:alert', 'нежить во дворе у ворот: Остап выходит из караулки');
+  wall.remove(); deep.remove(); inYard.remove();
+  const out = makeEntity('minecraft:zombie', W([63, 0, 140])); ticks(2);
+  expect(!out.hasTag('acastle_intruder'), 'ночью поле за опущенной решёткой не охраняют');
+  out.remove();
+  time = 23500; ticks(16);
+  expect(state().npcs.ostap === 'post' && state().f.gate !== 'closed' && !bars(), 'на рассвете решётка поднята, стража на посту');
+  { const e = npc('ostap'), w = W(CASTLE.posts.find((p) => p.guard === 'ostap').at);
+    expect(e && Math.floor(e.location.x) === w.x && Math.floor(e.location.z) === w.z, 'Остап снова на посту в воротах'); }
+  time = 14000;
+}
 // огоньки до короля
 goTo(CASTLE.paths.home_vsevolod.slice(0, 3)); particles = 0; ticks(2);
 expect(particles > 0, 'огоньки-путеводители видны');

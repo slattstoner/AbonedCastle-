@@ -26,12 +26,13 @@ const GUARDS = [
   { id: 'savva', name: 'Лучник Савва' },
 ];
 // Посты в координатах замка (как в castle.js): x — восток, z — юг; f — поворот (0 — лицом на юг, наружу).
-// Этап 0: Остап и Митька в проезде ворот по обе стороны, у внешнего края арки.
+// Этап 0: Остап и Митька в проезде ворот по обе стороны, у внешнего края арки. rest — место
+// в караулке надвратной башни (Остап — левая, Митька — правая): там они ночью, когда решётка опущена.
 // Этап 1: трое стражников гарнизона у ворот со стороны двора и на площади.
 // Лучник Савва — на верху левой надвратной башни, стреляет по нежити перед воротами.
 const POSTS = [
-  { stage: 0, guard: 'ostap', at: [61, 0, 128], f: 0 },
-  { stage: 0, guard: 'mitka', at: [65, 0, 128], f: 0 },
+  { stage: 0, guard: 'ostap', at: [61, 0, 128], f: 0, rest: [56, 0, 126] },
+  { stage: 0, guard: 'mitka', at: [65, 0, 128], f: 0, rest: [70, 0, 126] },
   { stage: 1, guard: 'zhdan', at: [59, 0, 121], f: 0 },
   { stage: 1, guard: 'gavrila', at: [67, 0, 121], f: 0 },
   { stage: 1, guard: 'luka', at: [63, 0, 114], f: 0 },
@@ -72,7 +73,7 @@ function skinGroups(ids, groups, events) {
     events[`${NS}:as_${id}`] = { remove: { component_groups: ids.filter((o) => o !== id).map((o) => `${NS}:skin_${o}`) }, add: { component_groups: [`${NS}:skin_${id}`] } };
   }
 }
-const common = (family) => ({
+const common = (family, idle = true) => ({
   'minecraft:type_family': { family: [...family, `${NS}_person`] },
   'minecraft:variant': { value: 0 },
   'minecraft:collision_box': { width: 0.6, height: 1.9 },
@@ -87,7 +88,7 @@ const common = (family) => ({
   'minecraft:conditional_bandwidth_optimization': {},
   'minecraft:behavior.float': { priority: 0 },
   'minecraft:behavior.look_at_player': { priority: 8, look_distance: 8, probability: 0.6 },
-  'minecraft:behavior.random_look_around': { priority: 9 },
+  ...(idle ? { 'minecraft:behavior.random_look_around': { priority: 9 } } : {}),
   ...TALK,
 });
 
@@ -102,13 +103,35 @@ const ARCHER = {
     entity_types: [{ filters: { all_of: [monster, { test: 'is_family', subject: 'other', operator: '!=', value: 'creeper' }, { test: 'is_family', subject: 'other', operator: '!=', value: 'enderman' }] }, max_dist: 24 }],
   },
 };
+// Цель стражника — только «нарушитель»: монстр или враждебный разбойник, которого скрипт
+// пометил acastle_intruder, потому что тот в зоне ворот (tools/scripts/duty.js). Монстры
+// на стенах, в башнях, под землёй и в лесу меток не получают — за ними стражник не тянется.
+const notCreeper = [
+  { test: 'is_family', subject: 'other', operator: '!=', value: 'creeper' },
+  { test: 'is_family', subject: 'other', operator: '!=', value: 'enderman' },
+];
+const targeting = (filters, r) => ({
+  'minecraft:behavior.nearest_attackable_target': {
+    priority: 1, must_see: true, must_reach: true, reselect_targets: true, within_radius: r, must_see_forget_duration: 3,
+    entity_types: [{ filters: { all_of: [...filters, ...notCreeper] }, max_dist: r }],
+  },
+  'minecraft:behavior.melee_box_attack': { priority: 2, track_target: true, speed_multiplier: 1.2 },
+});
 function guardEntity() {
-  const groups = { [`${NS}:despawn`]: { 'minecraft:instant_despawn': {} }, [`${NS}:talked`]: {}, [`${NS}:archer`]: ARCHER };
+  const groups = {
+    [`${NS}:despawn`]: { 'minecraft:instant_despawn': {} }, [`${NS}:talked`]: {}, [`${NS}:archer`]: ARCHER,
+    // Тревога: в зоне ворот нарушитель — выйти и бить. Без неё стражник просто стоит на посту.
+    [`${NS}:alert`]: targeting([{ test: 'has_tag', subject: 'other', value: `${NS}_intruder` }], 28),
+    // Стражник из яйца призыва (без поста и скриптов): бьёт монстров рядом сам
+    [`${NS}:free`]: targeting([monster], 12),
+  };
   const events = {
     // Из яйца призыва — один из стражников гарнизона
-    'minecraft:entity_spawned': { randomize: GUARDS.slice(2, 5).map((g) => ({ weight: 1, add: { component_groups: [`${NS}:skin_${g.id}`] } })) },
+    'minecraft:entity_spawned': { add: { component_groups: [`${NS}:free`] }, randomize: GUARDS.slice(2, 5).map((g) => ({ weight: 1, add: { component_groups: [`${NS}:skin_${g.id}`] } })) },
     [`${NS}:despawn`]: { add: { component_groups: [`${NS}:despawn`] } },
     [`${NS}:talked`]: { add: { component_groups: [`${NS}:talked`] } },
+    [`${NS}:alert`]: { add: { component_groups: [`${NS}:alert`] } },
+    [`${NS}:calm`]: { remove: { component_groups: [`${NS}:alert`] } },
   };
   skinGroups(GUARDS.map((g) => g.id), groups, events);
   events[`${NS}:as_savva`].add.component_groups.push(`${NS}:archer`);
@@ -118,16 +141,19 @@ function guardEntity() {
       description: { identifier: `${NS}:guard`, is_spawnable: true, is_summonable: true, is_experimental: false },
       component_groups: groups,
       components: {
-        // irongolem — чтобы зомби и скелеты сами шли драться со стражей, как с железным големом
-        ...common([`${NS}_guard`, `${NS}_npc`, 'irongolem', 'mob']),
+        // irongolem — чтобы зомби и скелеты сами шли драться со стражей, как с железным големом.
+        // Без «оглядывания по сторонам» и прогулок: на посту стражник стоит смирно.
+        ...common([`${NS}_guard`, `${NS}_npc`, 'irongolem', 'mob'], false),
         'minecraft:health': { value: 40, max: 40 },
         'minecraft:attack': { damage: 6 },
         'minecraft:movement': { value: 0.3 },
-        'minecraft:navigation.walk': { can_walk: true, avoid_water: true, avoid_damage_blocks: true, can_pass_doors: true, can_open_doors: false },
+        // двери открывает: из караулки башни — во двор, если там нежить
+        'minecraft:navigation.walk': { can_walk: true, avoid_water: true, avoid_damage_blocks: true, can_pass_doors: true, can_open_doors: true },
+        'minecraft:annotation.open_door': {},
         'minecraft:knockback_resistance': { value: 0.4 },
-        'minecraft:follow_range': { value: 24, max: 24 },
-        // Пост: место появления. Дальше 12 блоков сам не уходит, после боя возвращается.
-        'minecraft:home': { restriction_type: 'random_movement', restriction_radius: 12 },
+        'minecraft:follow_range': { value: 28, max: 28 },
+        // Пост — место появления. Отошёл дальше двух блоков (бой, толкнули) — сам идёт обратно.
+        'minecraft:home': { restriction_type: 'random_movement', restriction_radius: 2 },
         'minecraft:equipment': {
           table: `loot_tables/${NS}/npc/guard_gear.json`,
           slot_drop_chance: [{ slot: 'slot.weapon.mainhand', drop_chance: 0 }],
@@ -142,20 +168,7 @@ function guardEntity() {
             { on_damage: { filters: { test: 'is_family', subject: 'other', value: `${NS}_npc` } }, deals_damage: 'no' },
           ],
         },
-        'minecraft:behavior.hurt_by_target': { priority: 1, entity_types: { filters: monster } },
-        'minecraft:behavior.melee_box_attack': { priority: 2, track_target: true, speed_multiplier: 1.2 },
-        // must_reach — как у железного голема: не гонится за тем, до кого не дойти (скелет на стене)
-        'minecraft:behavior.nearest_attackable_target': {
-          priority: 3, must_see: true, must_reach: true, reselect_targets: true, within_radius: 20, must_see_forget_duration: 5,
-          entity_types: [{
-            filters: { all_of: [monster,
-              { test: 'is_family', subject: 'other', operator: '!=', value: 'creeper' },
-              { test: 'is_family', subject: 'other', operator: '!=', value: 'enderman' }] },
-            max_dist: 20,
-          }],
-        },
         'minecraft:behavior.move_towards_home_restriction': { priority: 4 },
-        'minecraft:behavior.random_stroll': { priority: 7, speed_multiplier: 0.6, xz_dist: 2, y_dist: 1, interval: 400 },
       },
       events,
     },

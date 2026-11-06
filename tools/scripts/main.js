@@ -9,6 +9,7 @@
 //   repairs.js      — сундуки-подряды и утренний ремонт;
 //   places.js       — места тайги по заданию;
 //   guide.js        — огоньки-путеводители и указатель;
+//   duty.js         — служба стражи: кого бить у ворот, решётка, смена караула;
 //   story.js, stages.js — сюжет (что говорят жители и что считается сделанным);
 //   castle_data.js, places_data.js — данные, их собирает tools/build.js.
 //
@@ -24,6 +25,7 @@ import { beginBuild, placedByCommand, buildTick, measureTick, findHeart, status 
 import { contractTick, morningTick } from './repairs.js';
 import { placesTick } from './places.js';
 import { guideTick } from './guide.js';
+import { alertTick, dutyTick } from './duty.js';
 import { CASTLE } from './castle_data.js';
 
 const story = () => !!(S && S.origin); // сюжет идёт (замок поставлен)
@@ -107,7 +109,7 @@ system.runInterval(() => {
 // Общий цикл: путеводитель — дважды в секунду, остальное — раз в секунду, жители — раз в 3 секунды
 let tick = 0;
 const questsTick = () => { for (const q of Object.keys(S.q)) if (S.q[q] === 'active' && QUESTS[q] && QUESTS[q].tick) QUESTS[q].tick(api); };
-const SECOND = [morningTick, contractTick, placesTick, questsTick, () => { if (tick % 6 === 0) ensureNpcs(); }];
+const SECOND = [morningTick, contractTick, placesTick, questsTick, alertTick, dutyTick, () => { if (tick % 6 === 0) ensureNpcs(); }];
 system.runInterval(() => {
   if (!S) load();
   if (!S.origin) { if (!S.build) try { findHeart(); } catch (e) { /* позже */ } flush(); return; }
