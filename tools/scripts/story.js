@@ -25,10 +25,6 @@ export const NPCS = {
 export const CONTRACTS = {
   shell: { title: 'Корпус донжона', who: 'vsevolod', items: [['minecraft:stone_bricks', 64, 'Каменный кирпич'], ['minecraft:glass', 32, 'Стекло'], ['minecraft:spruce_planks', 32, 'Еловые доски']],
     done: 'Всё собрано. Остап с Фролом ночью залезут на крышу, а к утру окна будут целы.' },
-  breach_1: { title: 'Брешь в стене', who: 'demyan', items: [['minecraft:cobblestone', 48, 'Булыжник'], ['minecraft:stone_bricks', 16, 'Каменный кирпич']] },
-  breach_2: { title: 'Брешь в стене', who: 'demyan', items: [['minecraft:cobblestone', 48, 'Булыжник'], ['minecraft:stone_bricks', 16, 'Каменный кирпич']] },
-  breach_3: { title: 'Брешь в стене', who: 'demyan', items: [['minecraft:cobblestone', 48, 'Булыжник'], ['minecraft:stone_bricks', 16, 'Каменный кирпич']] },
-  walls: { title: 'Зубцы и башни', who: 'demyan', items: [['minecraft:stone_bricks', 64, 'Каменный кирпич'], ['minecraft:spruce_planks', 24, 'Еловые доски']] },
   barracks: { title: 'Казарма', who: 'demyan', items: [['minecraft:spruce_planks', 32, 'Еловые доски'], ['minecraft:spruce_stairs', 16, 'Еловые ступени']],
     done: 'Доски на месте. Ребята ночью перекроют крышу казармы.' },
   ...LATE_CONTRACTS,
@@ -109,13 +105,6 @@ export const QUESTS = {
   s0_wait: { title: 'Подмога из острога', hint: 'Острог увидел огонь. Дождитесь утра (можно лечь спать) — к воротам придут люди.', target: () => ({ at: [63, 0, 120], label: 'Ворота замка' }) },
   // ===== Этап 1 =====
   s1_captain: { title: 'Капитан', hint: 'У ворот ждёт капитан Демьян Беляк. Поговорите с ним.', target: () => ({ at: [63, 0, 118], label: 'Ворота замка' }) },
-  s1_breaches: { title: 'Дыры в стене', target: (api) => { const u = ['breach_1', 'breach_2', 'breach_3'].find((b) => !api.S.rep[b] || api.S.rep[b].st === 'open') || 'breach_1'; return { path: 'chest_' + u, label: 'Брешь в стене' }; },
-    hint: (api) => {
-      const left = ['breach_1', 'breach_2', 'breach_3'].filter((u) => !api.repaired(u)).length;
-      return `Через три бреши в крепостной стене нежить ходит во двор. У каждой бреши — сундук-подряд: 48 булыжника и 16 каменного кирпича. Брешь заделают в ночь после того, как сундук заполнен. Осталось брешей: ${left}.`;
-    } },
-  s1_walls: { title: 'Зубцы и башни', hint: 'Сундук-подряд у ворот: 64 каменного кирпича и 24 еловые доски — для зубцов стен и угловых башен.',
-    target: () => ({ path: 'chest_walls', label: 'Сундук у ворот' }) },
   s1_barracks: { title: 'Где спать людям', hint: 'Сундук-подряд у казармы во дворе: 32 еловые доски и 16 еловых ступеней — перекрыть крышу.',
     target: () => ({ path: 'chest_barracks', label: 'Казарма' }) },
   s1_ostrog: { title: 'Весть в острог', target: () => ({ place: 'stockade_hunt', label: 'Острог' }),
@@ -199,12 +188,12 @@ export function dialog(id, api, pl) {
       if (has('s1_captain')) return {
         text: 'Демьян Беляк, капитан. Брат мой, Ярослав, сотником в остроге. Увидели огонь на башне — я сразу людей собрал. Ждан, Гаврила, Лука — у ворот и на площади. Ну, показывай, что тут у вас.',
         options: [{ text: 'Замок в разрухе. Нужна защита.', run: (a) => {
-          a.finish('s1_captain'); a.start('s1_breaches'); a.start('s1_barracks'); a.start('s1_ostrog');
-          for (const u of ['breach_1', 'breach_2', 'breach_3', 'barracks']) a.openContract(u);
+          a.finish('s1_captain'); a.start('s1_barracks'); a.start('s1_ostrog');
+          a.openContract('barracks');
           a.setPlace('stockade_hunt', 300, 500); a.S.npcs.yaroslav = 'place:stockade_hunt'; a.save();
           a.arriveNextMorning('demyan', 'rooms_1');
         }, next: (a, p) => { a.give(p, 'minecraft:paper', 1, 'Донесение капитана', ['Сотнику Ярославу Беляку, в острог']); return {
-          text: 'Вижу. Через три бреши в стене нежить ходит, как к себе домой — так нам ворота не удержать. У каждой бреши я поставил сундук: носи туда камень, ночью мои заделают. Казарма во дворе без крыши — людям спать негде. И вот ещё: отнеси это донесение брату в острог. Он должен знать, что мы здесь. Острог лесом далеко, держи компас.',
+          text: 'Вижу. От стен одни огрызки — нежить ходит, как к себе домой. Стены — это к зодчему Мирону, его двор у ворот: носи ему камень и дерево, он сложит. А мои люди будут держать двор. Казарма во дворе без крыши — людям спать негде. И вот ещё: отнеси это донесение брату в острог. Он должен знать, что мы здесь. Острог лесом далеко, держи компас.',
         }; } }],
       };
       if (has('s1_ostrog') && api.flag('copy')) return {
@@ -251,7 +240,7 @@ function spawnMare(a) {
   try { const h = a.dim().spawnEntity('minecraft:horse', { x: at.x + 0.5, y: at.y, z: at.z + 0.5 }); h.nameTag = 'Ласточка'; } catch (e) { /* конюшня не загружена */ }
 }
 function stage1Check(a) {
-  if (['s1_breaches', 's1_walls', 's1_barracks', 's1_ostrog', 's1_seal'].every((q) => a.done(q)) && a.flag('s1_talked') && !a.flag('stage1_done')) {
+  if (['s1_barracks', 's1_ostrog', 's1_seal'].every((q) => a.done(q)) && a.flag('s1_talked') && !a.flag('stage1_done')) {
     a.flag('stage1_done', 1);
     a.rank('Оруженосец');
     a.tell('§6Этап 1 «Стража» пройден. Капитан Демьян хочет поговорить о кузне.');
@@ -281,15 +270,6 @@ export function onEvent(name, api, ev) {
         api.tell('§6На рассвете к воротам подошёл отряд из острога.');
       }
       break;
-    case 'repaired:breach_1': case 'repaired:breach_2': case 'repaired:breach_3':
-      api.tell('§6Брешь в стене заделана.');
-      if (['breach_1', 'breach_2', 'breach_3'].every((u) => api.repaired(u))) {
-        api.finish('s1_breaches');
-        api.say('demyan', 'Все три бреши закрыты! Теперь зубцы и башни: сундук я поставил у ворот.', 200);
-        api.start('s1_walls'); api.openContract('walls');
-      }
-      break;
-    case 'repaired:walls': api.finish('s1_walls'); stage1Check(api); break;
     case 'repaired:barracks':
       api.finish('s1_barracks'); api.tell('§6Казарма перекрыта: стражникам есть где спать. На надвратную башню встал лучник Савва.');
       S.npcs.savva = 'post'; api.save(); stage1Check(api); break;

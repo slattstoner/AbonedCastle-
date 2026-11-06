@@ -25,7 +25,7 @@ const PACK = {
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 8, 3],
+  version: [0, 9, 0],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -502,6 +502,8 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
       return best;
     };
     const units = {};
+    const woodState = {};
+    const SIM_DUMP = {}; // заплатки строителя для проверочного прогона (tools/test/sim.mjs), в аддон не идут
     const HINT = { shell: [info.KX + 19, 0, info.KZ + 50], catacombs: [info.KX + 19, 0, info.KZ + 40], walls: [info.CX + 5, 0, info.Z2 - 14] };
     for (const u of RU.units) {
       // заплатки единицы: клетки в восстановленном виде, куски по сетке 64×64
@@ -527,11 +529,12 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
         }
         const name = `castle_u_${u.id}_${k++}`;
         write(`structures/${NS}/${name}.mcstructure`, mcstructure([mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells));
+        if (u.kind === 'build') SIM_DUMP[name] = { size: [mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells: cells.map((c) => [c.x, c.y, c.z, c.block.name, c.block.states]) };
         pieces.push([name, ...mn, ...mx]);
       }
       // сундук-подряд и табличка рядом: свободный пол внутри стен, не на клетках ремонта
       let chest = null, sign = null;
-      if (u.kind !== 'rooms') {
+      if (u.kind !== 'rooms' && u.kind !== 'build') {
         const hint = HINT[u.id] || [u.center[0], 0, u.center[2]];
         const okCell = (x, y, z) => free(x, y, z) && free(x, y + 1, z) && solid(x, y - 1, z) && !RU.owner.has(K(x, y, z)) && !RU.owner.has(K(x, y + 1, z));
         const inside = (x, z) => x >= 6 && x <= info.X2 - 6 && z >= 6 && z <= info.Z2 - 6;
@@ -545,7 +548,43 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
           sign = [c[0] + dx, c[1], c[2] + dz];
         }
       }
-      units[u.id] = { title: u.title, kind: u.kind, stage: u.stage, pieces, chest, sign };
+      // Пролёт стены для строителя: ещё и временная заделка деревом (частокол с подпорками):
+      // завал убирается, пустые клетки стены до высоты 5 — брёвна снаружи, подпорки изнутри
+      let wood = null;
+      if (u.kind === 'build' && u.id.startsWith('wall_')) {
+        const rows = castle.wallRows(u.id);
+        const RUBBLE = /^(cobblestone|mossy_cobblestone|gravel|cobblestone_slab|mossy_cobblestone_slab)$/;
+        const groupsW = new Map();
+        for (const [k, id] of RU.owner) {
+          if (id !== u.id) continue;
+          const [x, y, z] = k.split(',').map(Number);
+          const f = mapFull.get(k), r = map.get(k);
+          const fAir = !f || f.env || f.id === 'air' || /grass|fern|flower/.test(f.id) && f.id !== 'grass_block';
+          let t = null;
+          if (r && RUBBLE.test(r.id) && fAir) t = { id: 'air' };
+          else if (!fAir && (!r || r.id === 'air') && y >= 0 && y <= 5) {
+            if (rows.outer(x, y, z)) t = { id: 'spruce_log', a: 'y' };
+            else if (y <= 4 && rows.along(x, y, z) % 3 === 0) t = { id: 'spruce_fence' };
+          }
+          if (!t) continue;
+          const g = Math.floor((x - lo[0]) / PART) + ',' + Math.floor((z - lo[2]) / PART);
+          if (!groupsW.has(g)) groupsW.set(g, []);
+          groupsW.get(g).push([x, y, z, t]);
+          (woodState[u.id] = woodState[u.id] || new Map()).set(k, t);
+        }
+        wood = [];
+        let kw = 0;
+        for (const list of groupsW.values()) {
+          const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+          for (const c of list) for (let q = 0; q < 3; q++) { mn[q] = Math.min(mn[q], c[q]); mx[q] = Math.max(mx[q], c[q]); }
+          const cells = list.map(([x, y, z, t]) => ({ x: x - mn[0], y: y - mn[1], z: z - mn[2], block: t.id === 'air' ? { name: 'minecraft:air', states: {} } : toBedrock({ x, y, z, ...t }, () => undefined, BLOCKS) }));
+          const name = `castle_w_${u.id}_${kw++}`;
+          write(`structures/${NS}/${name}.mcstructure`, mcstructure([mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells));
+          SIM_DUMP[name] = { size: [mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells: cells.map((c) => [c.x, c.y, c.z, c.block.name, c.block.states]) };
+          wood.push([name, ...mn, ...mx]);
+        }
+      }
+      units[u.id] = { title: u.title, kind: u.kind, stage: u.stage, pieces, chest, sign, ...(wood ? { wood } : {}), center: u.center };
     }
     // Дома жителей: свободный пол ближе всего к метке помещения (или к точке near),
     // свободный и в упадке, и после ремонта, не в дверях и не на чужом месте
@@ -605,7 +644,69 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     paths.catacombs = pathTo(lairs.catacombs[0], 'катакомбы');
     paths.throne = pathTo(homes.ryzhy, 'трон');
     for (const k of ['ledger', 'steward_book', 'priest', 'vault', 'master_diary', 'sealed', 'grave']) if (slots[k]) paths['slot_' + k] = pathTo(slots[k], 'тайник ' + k);
-    const data = { version: PACK.version.join('.'), build: bodyPieces, origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
+    // ---------- Работники (docs/workers.md) ----------
+    // Заказы строителя: у пролёта стены — частокол, потом камень; у башни — камень. Стоимость —
+    // по клеткам, которые придётся поставить (точный счёт строитель делает сам, по миру).
+    const CAT = (id) => (/glass/.test(id) ? 'glass' : /bars|chain/.test(id) ? 'iron' : /log|plank|fence|spruce|oak|birch|wood|trapdoor|_door|ladder/.test(id) ? 'wood'
+      : /stone|brick|cobble|andesite|diorite|granite|tuff|deepslate|calcite|polished/.test(id) ? 'stone' : 'other');
+    const costOf = (cells) => { const c = {}; for (const id of cells) { if (!id || id === 'air') continue; const k = CAT(id); c[k] = (c[k] || 0) + 1; } return c; };
+    const orders = [];
+    const gateAt = [info.CX, 0, info.Z2 - 10];
+    const buildUnits = Object.entries(units).filter(([, u]) => u.kind === 'build')
+      .sort((a, c) => Math.hypot(a[1].center[0] - gateAt[0], a[1].center[2] - gateAt[2]) - Math.hypot(c[1].center[0] - gateAt[0], c[1].center[2] - gateAt[2]));
+    for (const [id, u] of buildUnits) {
+      const ws = woodState[id] || new Map();
+      if (u.wood && u.wood.length) orders.push({ id: id + ':wood', unit: id, step: 'wood', title: 'Частокол: ' + u.title.toLowerCase(), pieces: u.wood, needs: [], at: u.center,
+        cost: costOf([...ws.values()].map((t) => t.id)) });
+      const stoneIds = [];
+      for (const [k, uid] of RU.owner) {
+        if (uid !== id) continue;
+        const f = mapFull.get(k), prev = ws.get(k) || map.get(k);
+        const fid = f && !f.env ? f.id : 'air', pid = prev ? prev.id : 'air';
+        if (fid !== pid) stoneIds.push(fid);
+      }
+      orders.push({ id: id + ':stone', unit: id, step: 'stone', title: (id.startsWith('tower_') ? 'Каменная кладка: ' : 'Камень: ') + u.title.toLowerCase(), pieces: u.pieces,
+        needs: u.wood && u.wood.length ? [id + ':wood'] : [], at: u.center, cost: costOf(stoneIds) });
+    }
+    const totalCost = {};
+    for (const o of orders) for (const [k, n] of Object.entries(o.cost)) totalCost[k] = (totalCost[k] || 0) + n;
+    console.log(`Работники: заказов строителя ${orders.length} (${orders.filter((o) => o.step === 'wood').length} частоколов), всего блоков: ${Object.entries(totalCost).map(([k, n]) => k + ' ' + n).join(', ')}`);
+    // Шахтёр не трогает подземелья замка: колонки 8×8 с вырезанными залами (катакомбы, склеп,
+    // камера «сердца») и запас по высоте
+    const protect = {};
+    for (const v of b.blocks.values()) {
+      if (v.y >= -1 || v.id !== 'air') continue;
+      const key = (v.x >> 3) + ',' + (v.z >> 3), p = protect[key] || (protect[key] = [v.y, v.y]);
+      p[0] = Math.min(p[0], v.y); p[1] = Math.max(p[1], v.y);
+    }
+    const works = b.works;
+    if (!works) warn('замок: нет шахты и двора строителя (works)');
+    else {
+      const free = (c) => { const v = map.get(K(...c)), h = map.get(K(c[0], c[1] + 1, c[2])); return (!v || v.id === 'air') && (!h || h.id === 'air'); };
+      if (!free(works.mine.home)) warn('замок: место рудокопа занято');
+      if (!free(works.yard.home)) warn('замок: место строителя занято');
+      for (const [x, z] of [[works.mine.ring[0], works.mine.ring[1]]]) for (const k of Object.keys(protect)) { const [cx, cz] = k.split(',').map(Number); if (Math.abs(cx - (x >> 3)) <= 1 && Math.abs(cz - (z >> 3)) <= 1) warn('замок: шахта рядом с подземельем'); }
+    }
+    const data = { version: PACK.version.join('.'), build: bodyPieces, works, orders, protect, origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
+    fs.mkdirSync(path.join(ROOT, 'build/sim'), { recursive: true });
+    fs.writeFileSync(path.join(ROOT, 'build/sim/structures.json'), JSON.stringify(SIM_DUMP));
+    // Что ставит строитель: клетки заказа в координатах замка и палитра блоков. Строитель
+    // читает это, а не шаблоны (так надёжнее: не зависит от того, видит ли игра шаблоны пакета).
+    {
+      const pal = [], palIdx = new Map(), cells = {};
+      let n = 0;
+      for (const o of orders) {
+        const out = [];
+        for (const [name, x1, y1, z1] of o.pieces) for (const [x, y, z, nm, st] of SIM_DUMP[name].cells) {
+          const key = JSON.stringify([nm, st]);
+          if (!palIdx.has(key)) { palIdx.set(key, pal.length); pal.push([nm, st]); }
+          out.push(x1 + x, y1 + y, z1 + z, palIdx.get(key));
+        }
+        cells[o.id] = out; n += out.length / 4;
+      }
+      write('scripts/work_data.js', '// Собрано tools/build.js — не править руками\nexport const WORK = ' + JSON.stringify({ pal, cells }) + ';\n');
+      console.log(`Заказы строителя: ${n} клеток, палитра ${pal.length} блоков`);
+    }
     write('scripts/castle_data.js', '// Собрано tools/build.js — не править руками\nexport const CASTLE = ' + JSON.stringify(data) + ';\n');
     const contracts = Object.entries(units).filter(([, u]) => u.chest).map(([id]) => id);
     console.log(`Ремонт: ${Object.keys(units).length} единиц, подрядов ${contracts.length}, путей ${Object.values(paths).filter(Boolean).length}, дома: ${Object.entries(homes).map(([k, v]) => k + (v ? '' : '?')).join(', ')}`);

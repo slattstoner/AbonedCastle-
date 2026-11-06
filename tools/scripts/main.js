@@ -13,7 +13,8 @@
 //   castle_data.js, places_data.js — данные, их собирает tools/build.js.
 //
 // Команды для проверки: /scriptevent acastle:status (что знают скрипты),
-// /scriptevent acastle:jump <этап> (сразу к началу этапа).
+// /scriptevent acastle:jump <этап> (сразу к началу этапа), /scriptevent acastle:work help
+// (работники: шахтёр и строитель, workers.js).
 import { world, system } from '@minecraft/server';
 import { S, load, flush, DIM, players } from './state.js';
 import { NPCS, QUESTS, onEvent, bark, jump } from './story.js';
@@ -25,6 +26,7 @@ import { contractTick, morningTick } from './repairs.js';
 import { placesTick } from './places.js';
 import { guideTick } from './guide.js';
 import { CASTLE } from './castle_data.js';
+import { workTick, workCommand, workerTalk, workerIdOf } from './workers.js';
 
 const story = () => !!(S && S.origin); // сюжет идёт (замок поставлен)
 const warn = (what, e) => console.warn(`acastle ${what}: ${e}${e && e.stack ? '\n' + e.stack : ''}`);
@@ -32,6 +34,8 @@ const warn = (what, e) => console.warn(`acastle ${what}: ${e}${e && e.stack ? '\
 // ---------- Разговор ----------
 world.afterEvents.playerInteractWithEntity.subscribe(({ player, target }) => {
   if (!story()) return;
+  const wid = workerIdOf(target);
+  if (wid) { workerTalk(player, wid); return; }
   const id = npcIdOf(target);
   if (id && NPCS[id]) talk(player, id);
 });
@@ -40,6 +44,8 @@ world.afterEvents.playerInteractWithEntity.subscribe(({ player, target }) => {
 // Посреди боя (монстр рядом) касание остаётся ударом мимо: окно не открывается.
 world.afterEvents.entityHitEntity.subscribe(({ damagingEntity, hitEntity }) => {
   if (!story() || !damagingEntity || damagingEntity.typeId !== 'minecraft:player') return;
+  const wid = workerIdOf(hitEntity);
+  if (wid) { workerTalk(damagingEntity, wid); return; }
   const id = npcIdOf(hitEntity);
   if (!id || !NPCS[id]) return;
   if (NPCS[id].bandit && (!damagingEntity.isSneaking || S.st[id] === 'hostile')) return;
@@ -67,6 +73,7 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
   try {
     if (ev.id === 'acastle:status') status();
     else if (ev.id === 'acastle:jump' && story()) { jump(parseInt(ev.message, 10) || 0, api); flush(); }
+    else if (ev.id === 'acastle:work') workCommand(ev.message, ev.sourceEntity);
     else if (ev.id === 'acastle:castle_build' && ev.sourceEntity) beginBuild(ev.sourceEntity.location);
     else if (ev.id === 'acastle:castle_placed' && ev.sourceEntity) placedByCommand(ev.sourceEntity.location);
   } catch (e) { warn(ev.id, e); }
@@ -103,6 +110,7 @@ system.runInterval(() => {
   measureTick();
   if (!S) load();
   if (S.build) try { buildTick(); } catch (e) { warn('стройка', e); }
+  try { workTick(); } catch (e) { warn('работники', e); }
 }, 1);
 // Общий цикл: путеводитель — дважды в секунду, остальное — раз в секунду, жители — раз в 3 секунды
 let tick = 0;

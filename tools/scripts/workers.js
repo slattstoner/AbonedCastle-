@@ -1,0 +1,1013 @@
+// Работники замка (новое ядро, docs/workers.md): рудокоп Кондрат и зодчий Мирон.
+//  • Они настоящие: Кондрат ломает блоки мира и складывает добычу в сундуки у копра, Мирон
+//    берёт материалы со склада и кладёт блоки по одному. Ничего не берётся из воздуха —
+//    счёт (ledger) это проверяет.
+//  • Ходят их ноги не сами: скрипт переносит работника маленькими шагами каждый тик (так игра
+//    показывает и анимацию ходьбы — приём из вики Bedrock, «Entity Movement»). Путь Кондрата —
+//    его же лесенка и штреки; путь Мирона ищет A* по блокам мира (work_core.js).
+//  • Работают, только пока участок мира прогружен. Чтобы шахта и стройка шли, пока игрок
+//    в другом конце замка, участок держится «тикающим» (tickingarea), это можно выключить.
+//  • Состояние — отдельная запись в памяти мира (acastle:work), каждый шаг сохраняется.
+// Команды: /scriptevent acastle:work help
+import { world, system, ItemStack, BlockPermutation } from '@minecraft/server';
+import { ActionFormData } from '@minecraft/server-ui';
+import { S, save, DIM, players, runCmd } from './state.js';
+import { CASTLE } from './castle_data.js';
+import { WORK } from './work_data.js';
+import { show, guarded } from './talk.js';
+import * as C from './work_core.js';
+
+const KEY = 'acastle:work';
+const WORKERS = {
+  kondrat: { name: 'Рудокоп Кондрат', tool: 'minecraft:stone_pickaxe' },
+  miron: { name: 'Зодчий Мирон', tool: 'minecraft:iron_axe' },
+};
+export const workerTag = (id) => 'acastle_wk_' + id;
+export function workerIdOf(e) {
+  try { for (const t of e.getTags()) if (t.startsWith('acastle_wk_')) return t.slice(11); } catch (err) { /* пропал */ }
+  return null;
+}
+
+// ---------- Состояние ----------
+export let WS = null;
+let wdirty = false;
+function wfresh(origin) {
+  return {
+    v: 1, origin, fast: 1, label: false, keep: true,
+    mine: { on: false, st: 'idle', msg: 'Ждёт кирку в бочке у копра', i: 0, h: 0, open: 1, phase: 'shaft', d: 0, dj: 0, side: -1, b: 0,
+      bag: {}, tool: null, uses: 0, torch: 0, rails: 0, layRails: false, railShaft: 0, railDrift: {}, veins: [], skip: {}, ri: 0, pos: null, dug: 0, blocked: null },
+    build: { st: 'idle', msg: 'Ждёт заказа', order: null, done: {}, cart: {}, scaff: [], pos: null, placed: 0, removed: 0, need: null },
+    led: { mined: {}, dep: {}, used: {} },
+    bled: { took: {}, placed: {}, back: {}, reclaimed: {} },
+    errs: [],
+  };
+}
+function wload() {
+  try { WS = JSON.parse(world.getDynamicProperty(KEY) || 'null'); } catch (e) { WS = null; }
+  if (!WS || WS.v !== 1) WS = wfresh(null);
+}
+const wsave = () => { wdirty = true; };
+function wflush() { if (wdirty && WS) { world.setDynamicProperty(KEY, JSON.stringify(WS)); wdirty = false; } }
+const add = (m, k, n) => { m[k] = (m[k] || 0) + n; if (!m[k]) delete m[k]; };
+const total = (m) => Object.values(m).reduce((a, b) => a + b, 0);
+
+// ---------- Мир ----------
+const Wc = (c) => ({ x: S.origin[0] + c[0], y: S.origin[1] + c[1], z: S.origin[2] + c[2] }); // замок → мир
+const toC = (p) => [p.x - S.origin[0], p.y - S.origin[1], p.z - S.origin[2]]; // мир → замок
+const V = (a) => ({ x: a[0], y: a[1], z: a[2] });
+const A = (v) => [v.x, v.y, v.z];
+const keyOf = (p) => p[0] + ',' + p[1] + ',' + p[2];
+function blk(p) { try { return DIM().getBlock(Array.isArray(p) ? V(p) : p); } catch (e) { return undefined; } }
+const idAt = (p) => { const b = blk(p); return b ? b.typeId : null; };
+const PASS = /(^|:)(air|cave_air|short_grass|tall_grass|fern|large_fern|poppy|dandelion|cornflower|allium|azure_bluet|oxeye_daisy|lily_of_the_valley|.*tulip|blue_orchid|deadbush|sweet_berry_bush|torch|wall_torch|rail|golden_rail|.*carpet|snow_layer|vine|.*sapling|.*button|lever|.*_sign|.*pressure_plate|light_block.*|brown_mushroom|red_mushroom)$/;
+const passable = (p) => { const id = idAt(p); return id !== null && PASS.test(id); };
+const solidAt = (p) => { const id = idAt(p); return id !== null && !PASS.test(id) && !C.LIQUID.test(id); };
+function standable(x, y, z) { return solidAt([x, y - 1, z]) && passable([x, y, z]) && passable([x, y + 1, z]); }
+standable.headroom = (x, y, z) => passable([x, y, z]) || /scaffolding|ladder/.test(idAt([x, y, z]) || '');
+standable.climb = (x, y, z) => /scaffolding|ladder/.test(idAt([x, y, z]) || '') && (passable([x, y + 1, z]) || /scaffolding|ladder/.test(idAt([x, y + 1, z]) || ''));
+const near = (p, r) => players().some((pl) => Math.abs(pl.location.x - p[0]) < r && Math.abs(pl.location.z - p[2]) < r);
+let tickMs = 50, lastNow = Date.now();
+function sound(id, p) { try { DIM().playSound(id, { x: p[0] + 0.5, y: p[1] + 0.5, z: p[2] + 0.5 }, { volume: 0.7 }); } catch (e) { /* ничего */ } }
+let errAt = 0;
+function report(who, what, e) {
+  const msg = `${who}: ${what}${e ? ' — ' + e : ''}`;
+  WS.errs.unshift(msg); WS.errs.length = Math.min(WS.errs.length, 6); wsave();
+  console.warn('acastle работники: ' + msg + (e && e.stack ? '\n' + e.stack : ''));
+  if (system.currentTick - errAt > 1200) { errAt = system.currentTick; world.sendMessage('§c[Замок] ' + msg + ' (подробно: /scriptevent acastle:work status)'); }
+}
+const say = (id, text) => { for (const pl of players()) pl.sendMessage(`§e${WORKERS[id].name}:§r ${text}`); };
+const speed = () => Math.max(1, WS.fast || 1);
+
+// Контейнер: положить предметы (сначала дополняем начатые стопки), вернуть, сколько не влезло
+function putItems(inv, id, n) {
+  const max = (() => { try { return new ItemStack(id, 1).maxAmount || 64; } catch (e) { return 64; } })();
+  for (let i = 0; i < inv.size && n > 0; i++) {
+    const it = inv.getItem(i);
+    if (!it || it.typeId !== id || it.amount >= max) continue;
+    const t = Math.min(n, max - it.amount); it.amount += t; inv.setItem(i, it); n -= t;
+  }
+  for (let i = 0; i < inv.size && n > 0; i++) {
+    if (inv.getItem(i)) continue;
+    const t = Math.min(n, max); inv.setItem(i, new ItemStack(id, t)); n -= t;
+  }
+  return n;
+}
+function countIn(inv, test) { const out = {}; for (let i = 0; i < inv.size; i++) { const it = inv.getItem(i); if (it && test(it.typeId)) add(out, it.typeId, it.amount); } return out; }
+function takeOut(inv, id, n) {
+  for (let i = 0; i < inv.size && n > 0; i++) {
+    const it = inv.getItem(i);
+    if (!it || it.typeId !== id) continue;
+    const t = Math.min(n, it.amount);
+    if (it.amount === t) inv.setItem(i); else { it.amount -= t; inv.setItem(i, it); }
+    n -= t;
+  }
+  return n;
+}
+// Сундуки (или бочка) в точках замка; двойной сундук — один контейнер
+function containers(list, type = 'minecraft:chest') {
+  const out = [];
+  for (const c of list) {
+    const b = blk(Wc(c));
+    if (!b) return null;
+    if (b.typeId !== type) { try { b.setType(type); } catch (e) { return null; } }
+    const inv = b.getComponent('minecraft:inventory');
+    if (inv && inv.container && !out.some((o) => o.size === inv.container.size && inv.container.size > 27)) out.push(inv.container);
+    if (inv && inv.container && inv.container.size > 27) break; // двойной: вторая половина — тот же сундук
+  }
+  return out;
+}
+
+// ---------- Существа ----------
+const ents = {};
+function entOf(id) {
+  const e = ents[id];
+  if (e) { try { if (e.isValid) return e; } catch (err) { /* нет */ } }
+  ents[id] = undefined;
+  return undefined;
+}
+const posOf = (id) => (id === 'kondrat' ? WS.mine : WS.build).pos;
+const homeOf = (id) => (id === 'kondrat' ? CASTLE.works.mine.home : CASTLE.works.yard.home);
+function ensureWorkers() {
+  let all = [];
+  try { all = DIM().getEntities({ type: 'acastle:worker' }); } catch (e) { all = []; }
+  const seen = {};
+  for (const e of all) {
+    const id = workerIdOf(e);
+    if (!id || !WORKERS[id] || seen[id]) { try { e.triggerEvent('acastle:despawn'); } catch (err) { /* нет */ } continue; }
+    seen[id] = e; ents[id] = e;
+  }
+  for (const id of Object.keys(WORKERS)) {
+    if (seen[id]) continue;
+    const p = posOf(id) || A(Wc(homeOf(id)));
+    if (!blk(p)) continue; // место не прогружено — позже
+    try {
+      const e = DIM().spawnEntity('acastle:worker', { x: p[0] + 0.5, y: p[1], z: p[2] + 0.5 }, { spawnEvent: 'acastle:as_' + id, initialPersistence: true });
+      e.addTag(workerTag(id)); e.nameTag = WORKERS[id].name; ents[id] = e;
+      if (id === 'kondrat') WS.mine.pos = p; else WS.build.pos = p;
+      hold(id, id === 'kondrat' ? (WS.mine.tool ? `minecraft:${WS.mine.tool}_pickaxe` : 'air') : WORKERS[id].tool, true);
+      wsave();
+    } catch (err) { report(WORKERS[id].name, 'не получается поставить', err); }
+  }
+}
+const held = {};
+function hold(id, item, force) {
+  if (!force && held[id] === item) return;
+  held[id] = item;
+  runCmd(`replaceitem entity @e[type=acastle:worker,tag=${workerTag(id)}] slot.weapon.mainhand 0 ${item}`);
+}
+const acts = {};
+function act(id, n) {
+  if (acts[id] === n) return;
+  const e = entOf(id); if (!e) return;
+  try { e.setProperty('acastle:act', n); acts[id] = n; } catch (err) { /* ещё не готов */ }
+}
+function place(id, p, face) {
+  const e = entOf(id); if (!e) return;
+  const opts = face ? { facingLocation: { x: face[0] + 0.5, y: face[1] + 0.5, z: face[2] + 0.5 } } : undefined;
+  try { e.teleport({ x: p[0] + 0.5, y: p[1], z: p[2] + 0.5 }, opts); } catch (err) { /* не прогружен */ }
+}
+
+// ---------- Ходьба ----------
+// Путь — список клеток (ноги). Скорость — блоков за тик. Пока идёт — act 1 (3 — в вагонетке).
+const movers = {};
+function walk(id, path, done, { speedBpt = 0.2, ride = false } = {}) {
+  if (!path || path.length < 2) { if (path && path.length) setPos(id, path[path.length - 1]); done(); return; }
+  movers[id] = { path, i: 0, t: 0, v: speedBpt, done, ride, cart: null };
+}
+function setPos(id, p) { if (id === 'kondrat') WS.mine.pos = p; else WS.build.pos = p; wsave(); }
+function moveTick(id, dt) {
+  const m = movers[id];
+  if (!m) return false;
+  const e = entOf(id);
+  if (!e) return true; // ждём, пока существо появится
+  m.t += m.v * dt * Math.min(speed(), 4);
+  while (m.t >= 1 && m.i < m.path.length - 1) { m.t -= 1; m.i++; }
+  const last = m.i >= m.path.length - 1;
+  const a = m.path[Math.min(m.i, m.path.length - 1)], b = m.path[Math.min(m.i + 1, m.path.length - 1)];
+  const t = last ? 0 : m.t;
+  const p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  act(id, m.ride ? 3 : 1);
+  if (m.ride && !m.cart) { try { m.cart = DIM().spawnEntity('minecraft:minecart', { x: p[0] + 0.5, y: p[1], z: p[2] + 0.5 }); } catch (err) { m.cart = null; } }
+  // далеко от игроков — переносим реже (дешевле для игры)
+  if (last || near(p, 48) || system.currentTick % 10 === 0) {
+    place(id, m.ride ? [p[0], p[1] + 0.35, p[2]] : p, b);
+    if (m.cart) try { m.cart.teleport({ x: p[0] + 0.5, y: p[1], z: p[2] + 0.5 }); } catch (err) { /* нет */ }
+  }
+  if (last) {
+    if (m.cart) try { m.cart.remove(); } catch (err) { /* нет */ }
+    delete movers[id];
+    setPos(id, a);
+    act(id, 0);
+    m.done();
+  }
+  return true;
+}
+
+// ======================= ШАХТЁР =======================
+const MW = () => CASTLE.works.mine;
+let HZ = null; // горизонты для этого замка
+const hz = () => HZ || (HZ = C.horizons(S.origin[1]));
+const shaftW = (i) => A(Wc(C.shaftCell(MW().ring, i)));
+const cornerW = (h) => shaftW(hz()[h].step);
+const driftW = (h, d) => C.driftCell(cornerW(h), d);
+const branchW = (h, d, side, b) => C.branchCell(cornerW(h), d, side, b);
+// Своя ли это клетка хода (её не заделываем как пещеру)
+function planned(p) {
+  const M = WS.mine, ring = MW().ring, c = toC(V(p));
+  if (c[0] >= ring[0] && c[0] <= ring[2] && c[2] >= ring[1] && c[2] <= ring[3]) {
+    if (c[1] >= 0) return true;
+    const P = C.ringCells(ring);
+    const k = P.findIndex(([x, z]) => x === c[0] && z === c[2]);
+    if (k < 0) return false; // столб
+    for (let j = k; j <= M.i + 16; j += P.length) { const L = C.shaftLevel(j); if (c[1] >= L && c[1] <= L + 2) return true; if (L < c[1] - 3) break; }
+    return false;
+  }
+  for (let h = 0; h < hz().length; h++) {
+    const co = cornerW(h);
+    if (p[1] < co[1] || p[1] > co[1] + 1) continue;
+    const d = co[0] - 1 - p[0];
+    if (d < 0 || d >= C.DRIFT) continue;
+    if (p[2] === co[2]) return true;
+    if (C.hasBranch(d) && Math.abs(p[2] - co[2]) >= 1 && Math.abs(p[2] - co[2]) <= C.BRANCH) return true;
+  }
+  return M.veins.includes(keyOf(p));
+}
+// Можно ли тут копать: не замок и не его подземелья
+function allowed(p) {
+  const c = toC(V(p)), ring = MW().ring;
+  const inRing = c[0] >= ring[0] && c[0] <= ring[2] && c[2] >= ring[1] && c[2] <= ring[3];
+  if (c[1] > -2 && !inRing) return false;
+  const pr = CASTLE.protect[(c[0] >> 3) + ',' + (c[2] >> 3)];
+  if (pr && c[1] >= pr[0] - 3 && c[1] <= pr[1] + 3) return false;
+  return true;
+}
+// Маршрут от копра к забою (клетки, где стоят ноги)
+function route() {
+  const M = WS.mine, r = [A(Wc(MW().home)), A(Wc([MW().ring[0], 0, MW().ring[1] - 1]))];
+  const shaftEnd = M.phase === 'shaft' ? M.i : hz()[M.h] ? hz()[M.h].step : M.i;
+  for (let j = 0; j <= shaftEnd; j++) r.push(shaftW(j));
+  if (M.phase === 'drift' || M.phase === 'branch') {
+    const dEnd = M.phase === 'branch' ? M.dj : M.d - 1;
+    for (let d = 0; d <= dEnd; d++) r.push(driftW(M.h, d));
+    if (M.phase === 'branch') for (let b = 0; b < M.b; b++) r.push(branchW(M.h, M.dj, M.side, b));
+  }
+  return r;
+}
+const railedTo = (M) => (M.phase === 'shaft' ? M.railShaft >= M.i : M.railShaft >= (hz()[M.h] ? hz()[M.h].step : 0));
+// Следующие клетки, которые надо вынуть, и куда потом встать
+function nextFace() {
+  const M = WS.mine;
+  if (M.phase === 'shaft') {
+    const H = hz()[M.h];
+    if (!H) return null;
+    if (M.i >= H.step) { M.phase = 'drift'; M.d = 0; wsave(); return nextFace(); }
+    const c = shaftW(M.i + 1);
+    return { cells: [c, [c[0], c[1] + 1, c[2]], [c[0], c[1] + 2, c[2]]], stand: c, kind: 'shaft' };
+  }
+  if (M.phase === 'drift') {
+    if (M.d >= C.DRIFT) return null;
+    const c = driftW(M.h, M.d);
+    return { cells: [c, [c[0], c[1] + 1, c[2]]], stand: c, kind: 'drift' };
+  }
+  if (M.phase === 'branch') {
+    if (M.b >= C.BRANCH) return null;
+    const c = branchW(M.h, M.dj, M.side, M.b);
+    return { cells: [c, [c[0], c[1] + 1, c[2]]], stand: c, kind: 'branch' };
+  }
+  return null;
+}
+// Ход упёрся (чужое, граница, конец): что дальше
+function faceDone(blockedBy) {
+  const M = WS.mine;
+  if (M.phase === 'shaft') {
+    M.blocked = blockedBy || 'ствол дальше не идёт'; M.st = 'idle'; M.msg = 'Ствол упёрся: ' + M.blocked; say('kondrat', 'Ствол дальше не идёт: ' + M.blocked + '. Глянь сам.');
+  } else if (M.phase === 'branch') {
+    if (blockedBy) M.msg = 'Ветка упёрлась: ' + blockedBy;
+    if (M.side === -1) { M.side = 1; M.b = 0; } else { M.phase = 'drift'; }
+    M.st = 'back';
+  } else if (M.phase === 'drift') {
+    if (blockedBy) say('kondrat', 'Штрек упёрся: ' + blockedBy + '. Горизонт закрываю.');
+    M.d = C.DRIFT; M.phase = 'hdone'; M.st = 'unload';
+    if (!blockedBy) M.msg = 'Горизонт выработан, несу добычу';
+  }
+  wsave();
+}
+function addBag(drops) { const M = WS.mine; for (const [it, n] of drops) { add(M.bag, it, n); add(WS.led.mined, it, n); } }
+function useFiller() {
+  const M = WS.mine;
+  for (const f of C.FILLER) if ((M.bag[f] || 0) > 0) { add(M.bag, f, -1); add(WS.led.used, f, 1); return f; }
+  return null;
+}
+const stacks = (bag) => Object.values(bag).reduce((a, n) => a + Math.ceil(n / 64), 0);
+// Вынуть один блок: добыча в сумку, износ кирки. Возвращает false, если нельзя.
+function breakBlock(p) {
+  const M = WS.mine, b = blk(p);
+  if (!b) return false;
+  const id = b.typeId;
+  if (C.isAirId(id)) return true;
+  if (C.LIQUID.test(id)) { b.setType('minecraft:air'); return true; }
+  const tier = C.TIERS[M.tool] || 0;
+  const drops = C.dropOf(id, tier);
+  if (C.isOre(id) && !drops.length) add(M.skip, C.oreOf(id) + ' (сломана впустую)', 1);
+  addBag(drops);
+  b.setType('minecraft:air');
+  M.uses--; M.dug++;
+  sound(/gravel|sand|dirt|grass|clay/.test(id) ? 'dig.gravel' : 'dig.stone', p);
+  if (C.oreOf(id) === 'diamond' && drops.length) say('kondrat', '§bАлмаз!§r Нашёл алмазную руду.');
+  return true;
+}
+// Перед тем как вынуть клетку: лаву и воду рядом — заложить, сыпучее над ходом — выбрать
+function prepCell(p, top) {
+  const out = [];
+  for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) {
+    const n = [p[0] + dx, p[1] + dy, p[2] + dz], id = idAt(n);
+    if (!id || !C.LIQUID.test(id) || planned(n) || !allowed(n)) continue;
+    const f = useFiller();
+    if (!f) return { stop: 'нечем заложить ' + (/lava/.test(id) ? 'лаву' : 'воду') };
+    blk(n).setType(f);
+    if (/lava/.test(id)) WS.mine.msg = 'Заложил лаву';
+  }
+  if (top) for (let y = 1; y <= 6; y++) {
+    const u = [p[0], p[1] + y, p[2]], id = idAt(u);
+    if (!id || !C.FALLING.test(id)) break;
+    out.push(u);
+  }
+  return { up: out.reverse() };
+}
+// После: дыры в пещеру — заделать, под ногами пусто — замостить; руда в стенах — в очередь.
+// У поверхности (двор) и у замка ничего не трогаем.
+function afterCell(p, isFeet, isTop) {
+  const ores = [];
+  for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) {
+    if ((dy === -1 && !isFeet) || (dy === 1 && !isTop)) continue; // свой же ход
+    const n = [p[0] + dx, p[1] + dy, p[2] + dz], id = idAt(n);
+    if (!id || !allowed(n) || toC(V(n))[1] >= -1) continue;
+    if (C.isOre(id)) { ores.push(n); continue; }
+    if ((C.isAirId(id) || C.LIQUID.test(id)) && !planned(n)) {
+      const f = useFiller(); if (!f) continue;
+      blk(n).setType(f);
+      WS.mine.sealed = (WS.mine.sealed || 0) + 1;
+    }
+  }
+  return ores;
+}
+// Жила: соседние блоки той же руды, до 12 штук, не дальше 4 от хода
+function vein(start, from) {
+  const out = [], seen = new Set([keyOf(start)]), q = [start];
+  const ore = C.oreOf(idAt(start) || '');
+  while (q.length && out.length < 12) {
+    const p = q.shift();
+    if (Math.max(Math.abs(p[0] - from[0]), Math.abs(p[1] - from[1]), Math.abs(p[2] - from[2])) > 4) continue;
+    out.push(p);
+    for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) {
+      const n = [p[0] + dx, p[1] + dy, p[2] + dz], k = keyOf(n);
+      if (seen.has(k)) continue; seen.add(k);
+      const id = idAt(n);
+      if (id && C.oreOf(id) === ore && allowed(n) && !planned(n)) q.push(n);
+    }
+  }
+  return out;
+}
+function torchAt(p, wallSide) {
+  const M = WS.mine, b = blk(p);
+  if (!b || !C.isAirId(b.typeId)) return;
+  const [dx, dz] = { north: [0, -1], south: [0, 1], east: [1, 0], west: [-1, 0] }[wallSide];
+  if (!solidAt([p[0] + dx, p[1], p[2] + dz])) return;
+  if (M.torch <= 0) {
+    if ((M.bag['minecraft:coal'] || 0) > 0) { add(M.bag, 'minecraft:coal', -1); add(WS.led.used, 'minecraft:coal', 1); M.torch += 4; } else return;
+  }
+  try { b.setPermutation(BlockPermutation.resolve('minecraft:torch', { torch_facing_direction: wallSide })); M.torch--; } catch (e) { report('Кондрат', 'факел', e); }
+}
+function railAt(p, dir) {
+  const M = WS.mine;
+  if (M.rails <= 0) return false;
+  const b = blk(p);
+  if (!b || !C.isAirId(b.typeId) || !solidAt([p[0], p[1] - 1, p[2]])) return false;
+  try { b.setPermutation(BlockPermutation.resolve('minecraft:rail', { rail_direction: dir })); M.rails--; return true; } catch (e) { report('Кондрат', 'рельс', e); return false; }
+}
+// Клетка забоя вынута: встаём в неё, ставим факел и рельс, двигаем план
+function advance(face) {
+  const M = WS.mine, s = face.stand;
+  if (face.kind === 'shaft') {
+    M.i++;
+    const tw = C.shaftTorch(M.i); if (tw) torchAt([s[0], s[1] + 1, s[2]], tw);
+    if (M.layRails && M.railShaft === M.i - 1 && railAt(s, C.shaftRail(M.i))) M.railShaft = M.i;
+  } else if (face.kind === 'drift') {
+    M.d++;
+    if ((M.d - 1) % C.TORCH_EVERY === 0 && !C.hasBranch(M.d - 1)) torchAt([s[0], s[1] + 1, s[2]], 'north');
+    if (M.layRails) { const k = String(M.h); if ((M.railDrift[k] || 0) === M.d - 1 && railAt(s, 1)) M.railDrift[k] = M.d; }
+    if (C.hasBranch(M.d - 1)) { M.phase = 'branch'; M.dj = M.d - 1; M.side = -1; M.b = 0; }
+    else if (M.d >= C.DRIFT) { M.phase = 'hdone'; }
+  } else {
+    M.b++;
+    if (M.b % C.TORCH_EVERY === 0) torchAt([s[0], s[1] + 1, s[2]], 'east');
+    if (M.b >= C.BRANCH) faceDone(null);
+  }
+  setPos('kondrat', s);
+  wsave();
+}
+
+// Работа шахтёра: один шаг за раз (таймер — в тиках игры)
+const mt = { until: 0, q: null, face: null };
+function mineTick(now) {
+  const M = WS.mine;
+  if (!M.on) return;
+  if (moveTick('kondrat', 1)) return;
+  if (now < mt.until) return;
+  const e = entOf('kondrat');
+  if (!e) return;
+  try {
+    // Наверху: сдать добычу, взять кирку и рельсы
+    if (M.st === 'unload' || M.st === 'tool' || !M.tool) {
+      const atHome = M.pos && keyOf(M.pos) === keyOf(A(Wc(MW().home)));
+      if (!atHome) return goHome();
+      unloadAndRestock();
+      return;
+    }
+    if (M.st === 'back') { // вернуться из ветки в штрек
+      M.st = 'work';
+      const to = driftW(M.h, M.dj);
+      const r = [M.pos];
+      for (let b = Math.abs(M.pos[2] - to[2]) - 1; b >= 0; b--) r.push([to[0], to[1], to[2] + Math.sign(M.pos[2] - to[2]) * b]);
+      r.push(to);
+      walk('kondrat', dedupe(r), () => {});
+      return;
+    }
+    if (M.phase === 'hdone') { M.st = 'unload'; wsave(); return; } // горизонт выработан: наверх, там решим
+    if (M.phase === 'done' || M.st === 'idle') { act('kondrat', 0); return; }
+    // Сумка полна или кирка кончилась — наверх
+    if (stacks(M.bag) >= 22 || M.uses <= 0) { M.st = M.uses <= 0 ? 'tool' : 'unload'; M.msg = M.uses <= 0 ? 'Кирка сломалась, иду за новой' : 'Несу добычу наверх'; wsave(); return; }
+    if (mt.pending) {
+      const p = mt.pending; mt.pending = null;
+      const top = mt.face && keyOf(p) === keyOf(mt.face.cells[mt.face.cells.length - 1]);
+      const pre = prepCell(p, top);
+      if (pre.stop) { mt.q = null; faceDone(pre.stop); return; }
+      if (pre.up.length) { mt.q.unshift(...pre.up, p); return; } // сначала сыпучее сверху
+      breakBlock(p);
+      if (mt.face) {
+        const isFeet = keyOf(p) === keyOf(mt.face.stand);
+        for (const o of afterCell(p, isFeet, top)) {
+          const tier = C.TIERS[M.tool] || 0, need = { gold: 2, redstone: 2, diamond: 2, emerald: 2 }[C.oreOf(idAt(o))] || 1;
+          if (tier < need) { add(M.skip, C.oreOf(idAt(o)), 1); continue; }
+          for (const v of vein(o, p)) { if (!mt.q.some((x) => keyOf(x) === keyOf(v))) { mt.q.push(v); M.veins.push(keyOf(v)); } }
+          if (M.veins.length > 80) M.veins.splice(0, M.veins.length - 80);
+        }
+      }
+      wsave();
+      return;
+    }
+    // Очередь блоков текущего шага
+    if (mt.q && mt.q.length) {
+      const p = mt.q.shift();
+      if (!allowed(p)) { mt.q = null; faceDone('граница участка (замок рядом)'); return; }
+      const id = idAt(p);
+      if (id === null) { mt.q.unshift(p); mt.until = now + 20; return; } // не прогружено
+      if (C.FOREIGN.test(id)) { mt.q = null; say('kondrat', `Наткнулся на чужое: ${id.replace('minecraft:', '')}. Не трогаю — глянь сам.`); faceDone('чужое: ' + id.replace('minecraft:', '')); return; }
+      if (C.isAirId(id)) return;
+      act('kondrat', 2);
+      try { e.teleport(e.location, { facingLocation: { x: p[0] + 0.5, y: p[1] + 0.5, z: p[2] + 0.5 } }); } catch (err) { /* нет */ }
+      const hard = /deepslate/.test(id) ? 1.5 : /dirt|gravel|sand|grass|clay/.test(id) ? 0.4 : C.isOre(id) ? 1.2 : 1;
+      mt.pending = p;
+      mt.until = now + Math.max(1, Math.round((C.DIG_TICKS[M.tool] || 60) * hard / speed()));
+      return;
+    }
+    if (mt.face) { advance(mt.face); mt.face = null; mt.q = null; return; }
+    // Новый шаг: встать на конец маршрута и копать дальше
+    const face = nextFace();
+    if (!face) { faceDone(null); return; }
+    const r = route();
+    const end = r[r.length - 1];
+    if (M.pos && keyOf(M.pos) !== keyOf(end)) { goFace(); return; }
+    mt.face = face; mt.q = face.cells.filter((p) => { const id = idAt(p); return id && !C.isAirId(id); });
+    M.st = 'work'; M.msg = workMsg(); wsave();
+  } catch (err) { report('Кондрат', 'шаг работы', err); mt.until = now + 100; mt.q = null; mt.face = null; mt.pending = null; }
+}
+const dedupe = (r) => r.filter((p, i) => !i || keyOf(p) !== keyOf(r[i - 1]));
+function workMsg() {
+  const M = WS.mine, H = hz()[M.h];
+  if (M.phase === 'shaft') return `Копаю ствол: глубина ${-C.shaftLevel(M.i)} (к ${H ? H.title : '…'}, y ${H ? H.y : '?'})`;
+  if (M.phase === 'drift') return `${H.title}: штрек ${M.d}/${C.DRIFT}`;
+  if (M.phase === 'branch') return `${H.title}: ветка у ${M.dj + 1}-й клетки штрека, ${M.side < 0 ? 'левая' : 'правая'}, ${M.b}/${C.BRANCH}`;
+  return M.msg;
+}
+// Пройти от текущей клетки по маршруту (наверх — к копру, вниз — к забою)
+function goAlong(toEnd) {
+  const M = WS.mine, r = route();
+  let at = r.findIndex((p) => M.pos && keyOf(p) === keyOf(M.pos));
+  if (at < 0) {
+    // не на маршруте (вышли из ветки, перезапуск): ближайшая клетка маршрута
+    let best = 0, bd = Infinity;
+    r.forEach((p, i) => { const d = M.pos ? Math.abs(p[0] - M.pos[0]) + Math.abs(p[1] - M.pos[1]) * 2 + Math.abs(p[2] - M.pos[2]) : i; if (d < bd) { bd = d; best = i; } });
+    at = best; if (M.pos && bd > 0) place('kondrat', r[best]);
+  }
+  const path = toEnd ? r.slice(at) : r.slice(0, at + 1).reverse();
+  const ride = M.railShaft >= 4 && railedTo(M) && path.length > 12;
+  // по пути кладём рельсы, если есть
+  walk('kondrat', path, () => { mt.until = system.currentTick + 5; }, { speedBpt: ride ? 0.4 : 0.2, ride });
+}
+const goHome = () => { WS.mine.msg = WS.mine.st === 'tool' || !WS.mine.tool ? 'Иду за киркой' : 'Несу добычу наверх'; goAlong(false); };
+const goFace = () => { WS.mine.msg = 'Иду в забой'; goAlong(true); };
+// Добыча — в сундуки у копра; новая кирка и рельсы — из бочки
+function unloadAndRestock() {
+  const M = WS.mine;
+  const chests = containers(MW().chests);
+  if (!chests) return; // не прогружено
+  let left = 0;
+  for (const [it, n] of Object.entries({ ...M.bag })) {
+    // уголь на факелы и камень на заделку оставляем себе понемногу
+    const keep = it === 'minecraft:coal' ? Math.min(n, 4) : C.FILLER[0] === it ? Math.min(n, 32) : 0;
+    let put = n - keep;
+    for (const inv of chests) put = putItems(inv, it, put);
+    const moved = n - keep - put;
+    add(M.bag, it, -moved); add(WS.led.dep, it, moved); left += put;
+  }
+  checkLedger();
+  const barrel = containers([MW().barrel], 'minecraft:barrel');
+  if (!barrel) return;
+  const inv = barrel[0];
+  if (M.uses <= 0 || !M.tool) {
+    let best = null;
+    for (let i = 0; i < inv.size; i++) {
+      const it = inv.getItem(i), m = it && /^minecraft:(\w+)_pickaxe$/.exec(it.typeId);
+      if (m && (!best || (C.TIERS[m[1]] || 0) > (C.TIERS[best] || 0))) best = m[1];
+    }
+    if (!best) {
+      if (M.msg !== 'Нужна кирка: положи её в бочку у копра') { M.msg = 'Нужна кирка: положи её в бочку у копра'; say('kondrat', 'Кирка кончилась. Положи кирку в бочку у копра — каменную, а лучше железную.'); }
+      M.tool = null; M.st = 'tool'; act('kondrat', 0); hold('kondrat', 'air'); mt.until = system.currentTick + 40; wsave(); return;
+    }
+    takeOut(inv, `minecraft:${best}_pickaxe`, 1);
+    M.tool = best; M.uses = C.TOOL_USES[best] * C.WEAR;
+    hold('kondrat', `minecraft:${best}_pickaxe`);
+    say('kondrat', `Взял ${({ wooden: 'деревянную', stone: 'каменную', golden: 'золотую', iron: 'железную', diamond: 'алмазную', netherite: 'незеритовую' })[best]} кирку. За работу.`);
+  }
+  if (M.layRails) {
+    const have = countIn(inv, (id) => id === 'minecraft:rail')['minecraft:rail'] || 0;
+    const want = Math.max(0, 64 - M.rails);
+    const t = Math.min(have, want);
+    if (t) { takeOut(inv, 'minecraft:rail', t); M.rails += t; }
+  }
+  if (left) { M.msg = 'Сундуки у копра полны — забери добычу'; if (system.currentTick % 1200 < 20) say('kondrat', 'Сундуки у копра полны. Забери добычу — тогда продолжу.'); mt.until = system.currentTick + 100; wsave(); return; }
+  if (M.phase === 'hdone') {
+    if (M.open > M.h + 1 && hz()[M.h + 1]) { M.h++; M.phase = 'shaft'; M.d = 0; M.msg = 'Копаю глубже: ' + hz()[M.h].title; say('kondrat', 'Горизонт выработан. Иду глубже — ' + hz()[M.h].title.toLowerCase() + '.'); }
+    else { M.phase = 'done'; M.msg = 'Горизонт выработан. Скажи копать глубже'; say('kondrat', `${hz()[M.h].title} выработан. Скажешь копать глубже — пойду.`); }
+  }
+  if (M.phase === 'done') { M.st = 'idle'; act('kondrat', 0); wsave(); return; }
+  M.st = 'work'; wsave();
+  // рельсы — по пути вниз: на клетки ствола без рельса
+  if (M.layRails && M.rails > 0) layRailsDown();
+  goFace();
+}
+function layRailsDown() {
+  const M = WS.mine, limit = M.phase === 'shaft' ? M.i : hz()[M.h] ? hz()[M.h].step : 0;
+  while (M.rails > 0 && M.railShaft < limit) {
+    const j = M.railShaft + 1;
+    if (!railAt(shaftW(j), C.shaftRail(j))) { const id = idAt(shaftW(j)); if (id && /rail/.test(id)) { M.railShaft = j; continue; } break; }
+    M.railShaft = j;
+  }
+  const k = String(M.h);
+  if (M.phase !== 'shaft') while (M.rails > 0 && (M.railDrift[k] || 0) < M.d) { const d = M.railDrift[k] || 0; if (!railAt(driftW(M.h, d), 1) && !/rail/.test(idAt(driftW(M.h, d)) || '')) break; M.railDrift[k] = d + 1; }
+  wsave();
+}
+// Счёт: добыто = в сумке + сдано + потрачено. Если не сходится — ошибка в чат.
+export function checkLedger() {
+  const L = WS.led, M = WS.mine, bad = [];
+  for (const it of new Set([...Object.keys(L.mined), ...Object.keys(L.dep), ...Object.keys(L.used), ...Object.keys(M.bag)])) {
+    const a = L.mined[it] || 0, b = (M.bag[it] || 0) + (L.dep[it] || 0) + (L.used[it] || 0);
+    if (a !== b) bad.push(`${it.replace('minecraft:', '')}: добыто ${a}, а учтено ${b}`);
+  }
+  if (bad.length) report('Кондрат', 'счёт не сходится: ' + bad.join('; '));
+  return bad;
+}
+
+// ======================= СТРОИТЕЛЬ =======================
+const YW = () => CASTLE.works.yard;
+const ORDERS = () => CASTLE.orders;
+const orderOf = (id) => ORDERS().find((o) => o.id === id);
+const orderOpen = (o) => !WS.build.done[o.id] && o.needs.every((n) => WS.build.done[n]);
+function storeUnits() {
+  const out = {}, chests = containers(YW().store);
+  if (!chests) return null;
+  for (const inv of chests) for (let i = 0; i < inv.size; i++) { const it = inv.getItem(i), u = it && C.unitsOf(it.typeId); if (u) add(out, u[0], u[1] * it.amount); }
+  return out;
+}
+// Забрать со склада units единиц разряда cat (бревно — 4 единицы; лишнее от бревна — в тележку)
+function takeUnits(cat, units) {
+  const chests = containers(YW().store);
+  if (!chests) return 0;
+  let got = 0;
+  for (const inv of chests) for (let i = 0; i < inv.size && got < units; i++) {
+    const it = inv.getItem(i), u = it && C.unitsOf(it.typeId);
+    if (!u || u[0] !== cat) continue;
+    const need = Math.ceil((units - got) / u[1]), t = Math.min(need, it.amount);
+    if (it.amount === t) inv.setItem(i); else { it.amount -= t; inv.setItem(i, it); }
+    got += t * u[1];
+  }
+  add(WS.build.cart, cat, got); add(WS.bled.took, cat, got);
+  return got;
+}
+const BACK_ITEM = { stone: 'minecraft:cobblestone', wood: 'minecraft:spruce_planks', glass: 'minecraft:glass', iron: 'minecraft:iron_bars' };
+function returnCart() {
+  const B = WS.build, chests = containers(YW().store);
+  if (!chests) return false;
+  for (const [cat, n] of Object.entries({ ...B.cart })) {
+    if (!BACK_ITEM[cat] || n <= 0) continue;
+    let left = n;
+    for (const inv of chests) left = putItems(inv, BACK_ITEM[cat], left);
+    add(B.cart, cat, -(n - left)); add(WS.bled.back, cat, n - left);
+  }
+  return true;
+}
+export function checkBuildLedger() {
+  const L = WS.bled, B = WS.build, bad = [];
+  for (const cat of new Set([...Object.keys(L.took), ...Object.keys(L.placed), ...Object.keys(L.back), ...Object.keys(L.reclaimed), ...Object.keys(B.cart)])) {
+    const inn = (L.took[cat] || 0) + (L.reclaimed[cat] || 0), out = (L.placed[cat] || 0) + (L.back[cat] || 0) + (B.cart[cat] || 0);
+    if (inn !== out) bad.push(`${C.CAT_NAME[cat] || cat}: взято ${inn}, а учтено ${out}`);
+  }
+  if (bad.length) report('Мирон', 'счёт не сходится: ' + bad.join('; '));
+  return bad;
+}
+function startOrder(oid) {
+  const B = WS.build, o = orderOf(oid);
+  if (!o || !orderOpen(o)) return 'Этот заказ сейчас не взять.';
+  if (B.order) return 'Я ещё прежний не закончил.';
+  const have = storeUnits();
+  if (!have) return 'Склад далеко, не видно, что там лежит.';
+  const lack = Object.entries(o.cost).filter(([cat, n]) => cat !== 'other' && (have[cat] || 0) + (B.cart[cat] || 0) < n);
+  if (lack.length) return 'На складе не хватает: ' + lack.map(([cat, n]) => `${C.CAT_NAME[cat]} ${(have[cat] || 0) + (B.cart[cat] || 0)}/${n}`).join(', ') + '.';
+  for (const [cat, n] of Object.entries(o.cost)) if (cat !== 'other') takeUnits(cat, Math.max(0, n - (B.cart[cat] || 0)));
+  B.order = oid; B.st = 'scan'; B.placed = 0; B.removed = 0; B.msg = 'Размечаю: ' + o.title; B.need = null;
+  wsave();
+  keepArea('build', o);
+  return null;
+}
+// Разметка: читаем заплатку по блоку и сравниваем с миром. Получается список работ.
+const bt = { jobs: null, gen: null, cell: 0, until: 0, stand: null, search: null, fails: {} };
+// Разметка: клетки заказа (work_data.js) сравниваем с миром — получается список работ
+const permCache = [];
+const permOf = (i) => permCache[i] || (permCache[i] = BlockPermutation.resolve(WORK.pal[i][0], WORK.pal[i][1]));
+function* scanGen(o) {
+  const jobs = [], cells = WORK.cells[o.id] || [];
+  if (!cells.length) report('Мирон', 'нет разметки заказа ' + o.id);
+  for (let k = 0; k < cells.length; k += 4) {
+    const p = A(Wc([cells[k], cells[k + 1], cells[k + 2]]));
+    let b = blk(p);
+    while (!b) { yield 'wait'; b = blk(p); }
+    let perm;
+    try { perm = permOf(cells[k + 3]); } catch (e) { report('Мирон', 'блок ' + WORK.pal[cells[k + 3]][0], e); continue; }
+    if (!same(b, perm)) {
+      const tid = perm.type.id;
+      jobs.push({ p, perm, rm: C.isAirId(tid), cat: C.catOf(tid), att: C.ATTACHED.test(tid) });
+    }
+    if (k % 256 === 0) yield null;
+  }
+  return jobs;
+}
+function same(b, perm) {
+  if (b.typeId !== perm.type.id) return false;
+  try {
+    const a = b.permutation.getAllStates(), c = perm.getAllStates();
+    return Object.keys(c).every((k) => a[k] === c[k]); // порядок состояний не важен
+  } catch (e) { return true; }
+}
+function sortJobs(o, jobs) {
+  const along = o.unit.startsWith('wall_') ? (/^wall_[ns]/.test(o.unit) ? 0 : 2) : -1;
+  const c = Wc(o.at);
+  const key = (j) => (along >= 0 ? j.p[along] : Math.atan2(j.p[2] - c.z, j.p[0] - c.x));
+  const rm = jobs.filter((j) => j.rm).sort((a, b) => b.p[1] - a.p[1] || key(a) - key(b));
+  const put = jobs.filter((j) => !j.rm).sort((a, b) => (a.att - b.att) || a.p[1] - b.p[1] || key(a) - key(b));
+  return [...rm, ...put];
+}
+const REACH = 4.5;
+const reachOk = (stand, p) => Math.hypot(stand[0] - p[0], stand[1] + 1.6 - (p[1] + 0.5), stand[2] - p[2]) <= REACH;
+function pendingSet() { const s = new Set(); for (const j of bt.jobs || []) if (!j.rm && !j.att) s.add(keyOf(j.p)); return s; }
+// Где встать, чтобы дотянуться до клетки
+function findStand(p, from) {
+  const pend = pendingSet(), cand = [];
+  for (let dx = -3; dx <= 3; dx++) for (let dz = -3; dz <= 3; dz++) for (let dy = -3; dy <= 1; dy++) {
+    const s = [p[0] + dx, p[1] + dy, p[2] + dz];
+    if (!reachOk(s, p) || (dx === 0 && dz === 0 && (dy === 0 || dy === -1))) continue;
+    cand.push(s);
+  }
+  cand.sort((a, b) => Math.hypot(a[0] - from[0], a[1] - from[1], a[2] - from[2]) - Math.hypot(b[0] - from[0], b[1] - from[1], b[2] - from[2]));
+  for (const s of cand) {
+    if (pend.has(keyOf(s)) || pend.has(keyOf([s[0], s[1] + 1, s[2]]))) continue;
+    if (standable(...s)) return s;
+  }
+  return null;
+}
+// Леса: столбик лесов рядом, наверху — место, откуда достать
+function findScaffold(p) {
+  const pend = pendingSet();
+  let best = null;
+  for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) {
+    if (!dx && !dz) continue;
+    const x = p[0] + dx, z = p[2] + dz, feet = p[1] - 2;
+    let g = null;
+    for (let y = feet + 1; y >= feet - 16; y--) { if (solidAt([x, y, z])) { g = y; break; } if (!passable([x, y, z]) || pend.has(keyOf([x, y, z]))) { g = undefined; break; } }
+    if (g === null || g === undefined || g >= feet - 1) continue;
+    if (!passable([x, feet, z]) || !passable([x, feet + 1, z]) || pend.has(keyOf([x, feet, z])) || pend.has(keyOf([x, feet + 1, z]))) continue;
+    if (!reachOk([x, feet, z], p)) continue;
+    const n = feet - 1 - g;
+    if (!best || n < best.n) best = { n, x, z, g, feet };
+  }
+  if (!best) return null;
+  const cells = [];
+  for (let y = best.g + 1; y < best.feet; y++) cells.push([best.x, y, best.z]);
+  return { cells, stand: [best.x, best.feet, best.z] };
+}
+function buildTick(now) {
+  const B = WS.build;
+  if (!B.order) { if (B.st !== 'idle') { B.st = 'idle'; wsave(); } return; }
+  if (moveTick('miron', 1)) return;
+  if (bt.search) { walkTo(bt.goal.to, bt.goal.then); return; } // путь ещё ищется
+  if (now < bt.until) return;
+  const o = orderOf(B.order);
+  if (!o) { B.order = null; return; }
+  const e = entOf('miron');
+  if (!e) return;
+  try {
+    if (B.st === 'scan') {
+      if (tickMs > 75) return;
+      if (!bt.gen) { bt.gen = scanGen(o); bt.jobs = null; }
+      for (let k = 0; k < 40; k++) {
+        const r = bt.gen.next();
+        if (r.done) { bt.jobs = sortJobs(o, r.value); bt.gen = null; B.st = 'work'; B.msg = `${o.title}: ${bt.jobs.length} блоков`; wsave(); say('miron', `Берусь: ${o.title.toLowerCase()}. Работы — на ${bt.jobs.length} блоков.`); return; }
+        if (r.value === 'wait') { B.msg = 'Место работ далеко — жду, пока прогрузится'; bt.until = now + 40; return; }
+      }
+      return;
+    }
+    if (!bt.jobs) { B.st = 'scan'; return; } // после перезапуска — разметить заново
+    if (B.st === 'need') {
+      if (!atHome()) return walkTo(A(Wc(YW().home)));
+      const cat = B.need, got = takeUnits(cat, 64);
+      if (!got) { B.msg = `Жду ${C.CAT_NAME[cat]} на складе`; if (now % 1200 < 20) say('miron', `Кончился ${C.CAT_NAME[cat]}. Положи на склад у двора строителя.`); bt.until = now + 100; wsave(); return; }
+      B.need = null; B.st = 'work'; wsave(); return;
+    }
+    if (B.st === 'scaff') {
+      const sc = bt.scaff;
+      if (sc && sc.cells.length) {
+        const c = sc.cells.shift(), b = blk(c);
+        if (b && passable(c)) { b.setType('minecraft:scaffolding'); B.scaff.push(c); B.scaffTotal = (B.scaffTotal || 0) + 1; sound('block.scaffold.place', c); }
+        act('miron', 2); bt.until = now + Math.max(1, Math.round(6 / speed())); wsave(); return;
+      }
+      // залезть наверх
+      const s = sc.stand; bt.scaff = null; B.st = 'work';
+      walk('miron', [B.pos, [s[0], B.pos[1], s[2]], s].filter((p, i, r) => !i || keyOf(p) !== keyOf(r[i - 1])), () => { bt.stand = s; }, { speedBpt: 0.15 });
+      return;
+    }
+    if (B.st === 'clean') {
+      if (B.scaff.length) {
+        if (!bt.down) { // сначала спуститься на землю
+          bt.down = true;
+          const base = B.scaff[0];
+          let g = base[1];
+          for (let y = base[1]; y > base[1] - 20; y--) if (solidAt([base[0], y - 1, base[2]]) && idAt([base[0], y - 1, base[2]]) !== 'minecraft:scaffolding') { g = y; break; }
+          const s = findStand([base[0], g, base[2]], [base[0], g, base[2]]) || [base[0] + 1, g, base[2]];
+          walk('miron', [B.pos, s], () => {}, { speedBpt: 0.15 });
+          return;
+        }
+        const c = B.scaff.pop(), b = blk(c);
+        if (b && b.typeId === 'minecraft:scaffolding') b.setType('minecraft:air');
+        act('miron', 2); bt.until = now + Math.max(1, Math.round(4 / speed())); wsave(); return;
+      }
+      bt.down = false;
+      if (!atHome()) return walkTo(A(Wc(YW().home)));
+      if (!returnCart()) return;
+      B.done[o.id] = 1;
+      if (o.step === 'stone' && S.rep) { S.rep[o.unit] = { st: 'done' }; save(); }
+      say('miron', `Готово: ${o.title.toLowerCase()}. Поставил ${B.placed} блоков, разобрал ${B.removed}.`);
+      for (const pl of players()) pl.onScreenDisplay.setTitle('§6Работа готова', { subtitle: o.title, fadeInDuration: 10, stayDuration: 50, fadeOutDuration: 10 });
+      checkBuildLedger();
+      B.order = null; B.st = 'idle'; B.msg = 'Ждёт заказа'; bt.jobs = null; keepArea('build', null); act('miron', 0);
+      wsave(); return;
+    }
+    // Работа: следующий блок
+    while (bt.jobs.length && same(blk(bt.jobs[0].p) || { typeId: '?' }, bt.jobs[0].perm)) bt.jobs.shift();
+    if (!bt.jobs.length) { B.st = 'clean'; B.msg = 'Разбираю леса, иду домой'; wsave(); return; }
+    const j = bt.jobs[0];
+    if (!blk(j.p)) { bt.until = now + 40; return; }
+    // Игрок стоит в клетке — подождать (переставить работу в конец)
+    if (players().some((pl) => Math.floor(pl.location.x) === j.p[0] && Math.abs(Math.floor(pl.location.y) - j.p[1]) <= 1 && Math.floor(pl.location.z) === j.p[2])) {
+      bt.jobs.push(bt.jobs.shift()); bt.until = now + 10; return;
+    }
+    const here = B.pos;
+    if (!here || !reachOk(here, j.p) || keyOf(here) === keyOf(j.p) || keyOf([here[0], here[1] + 1, here[2]]) === keyOf(j.p)) {
+      const s = findStand(j.p, here || j.p);
+      if (s) { walkTo(s); return; }
+      const sc = findScaffold(j.p);
+      if (sc) {
+        const base = [sc.stand[0], sc.cells.length ? sc.cells[0][1] : sc.stand[1], sc.stand[2]];
+        const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dz]) => [base[0] + dx, base[1], base[2] + dz]).find((c) => standable(...c) && !pendingSet().has(keyOf(c)));
+        bt.scaff = sc; walkTo(side || base, () => { B.st = 'scaff'; }); return;
+      }
+      const f = (bt.fails[keyOf(j.p)] = (bt.fails[keyOf(j.p)] || 0) + 1);
+      if (f > 3) { report('Мирон', `не достать блок (${j.p.join(' ')}), пропускаю`); bt.jobs.shift(); return; }
+      bt.jobs.push(bt.jobs.shift()); return;
+    }
+    // Хватает ли материала
+    if (!j.rm && j.cat !== 'other' && (B.cart[j.cat] || 0) <= 0) { B.need = j.cat; B.st = 'need'; B.msg = `Не хватило: ${C.CAT_NAME[j.cat]}, иду на склад`; wsave(); return; }
+    // Удар молотком — потом блок
+    if (!bt.swing) {
+      bt.swing = true; act('miron', 2);
+      try { e.teleport(e.location, { facingLocation: { x: j.p[0] + 0.5, y: j.p[1] + 0.5, z: j.p[2] + 0.5 } }); } catch (err) { /* нет */ }
+      if (!j.rm) hold('miron', j.cat === 'stone' ? 'minecraft:stone_bricks' : j.cat === 'wood' ? 'minecraft:spruce_log' : j.cat === 'glass' ? 'minecraft:glass' : WORKERS.miron.tool);
+      bt.until = now + Math.max(1, Math.round((j.rm ? 14 : 20) / speed()));
+      return;
+    }
+    bt.swing = false;
+    const b = blk(j.p);
+    const old = b.typeId, rec = C.reclaimOf(old);
+    if (rec && !C.isAirId(old)) { add(B.cart, rec, 1); add(WS.bled.reclaimed, rec, 1); }
+    if (j.rm) { b.setType('minecraft:air'); B.removed++; sound(/gravel/.test(old) ? 'dig.gravel' : 'dig.stone', j.p); }
+    else {
+      b.setPermutation(j.perm);
+      if (j.cat !== 'other') { add(B.cart, j.cat, -1); add(WS.bled.placed, j.cat, 1); }
+      B.placed++; sound(j.cat === 'wood' ? 'use.wood' : 'use.stone', j.p);
+    }
+    bt.jobs.shift();
+    B.msg = `${o.title}: осталось ${bt.jobs.length}`;
+    wsave();
+  } catch (err) { report('Мирон', 'шаг работы', err); bt.until = now + 100; }
+}
+const atHome = () => WS.build.pos && keyOf(WS.build.pos) === keyOf(A(Wc(YW().home)));
+// Дойти до клетки: путь ищет A* понемногу каждый тик; не нашёл — идёт напрямик
+function walkTo(to, then) {
+  const B = WS.build, from = B.pos || to;
+  if (keyOf(from) === keyOf(to)) { if (then) then(); return; }
+  if (!bt.search || bt.searchTo !== keyOf(to)) { bt.search = C.makeSearch(from, to, standable, { maxNodes: 3000, near: 0 }); bt.searchTo = keyOf(to); bt.goal = { to, then }; }
+  const r = bt.search.step(tickMs > 75 ? 30 : 120);
+  if (r === undefined) return; // ещё ищем
+  bt.search = null;
+  let path = r;
+  if (!path) {
+    // напрямик: по прямой, по клеткам
+    WS.dbgDirect = (WS.dbgDirect || 0) + 1;
+    WS.dbgLast = [from.join(' ') + ' → ' + to.join(' '), ...(WS.dbgLast || [])].slice(0, 6);
+    // вверх — сначала лезет, потом идёт; вниз — сначала идёт, потом слезает (как по лесам)
+    const n = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[2] - from[2])));
+    const up = to[1] > from[1], y0 = up ? to[1] : from[1];
+    path = [];
+    if (up) for (let y = from[1]; y < to[1]; y++) path.push([from[0], y, from[2]]);
+    for (let k = 0; k <= n; k++) path.push([Math.round(from[0] + (to[0] - from[0]) * k / n), y0, Math.round(from[2] + (to[2] - from[2]) * k / n)]);
+    if (!up) for (let y = from[1] - 1; y >= to[1]; y--) path.push([to[0], y, to[2]]);
+  } else if (keyOf(path[path.length - 1]) !== keyOf(to)) path.push(to);
+  walk('miron', path, () => { if (then) then(); }, { speedBpt: 0.2 });
+}
+
+// ---------- Тикающие участки ----------
+function keepArea(what, o) {
+  const name = 'acastle_' + what;
+  runCmd(`tickingarea remove ${name}`);
+  if (!WS.keep || !o) return;
+  if (what === 'mine') {
+    const r = MW().ring, a = Wc([r[0] - C.DRIFT - 4, 0, r[1] - C.BRANCH - 3]), b = Wc([r[2] + 2, 0, r[3] + C.BRANCH + 3]);
+    runCmd(`tickingarea add ${a.x} 0 ${a.z} ${b.x} 0 ${b.z} ${name}`);
+  } else {
+    let mn = [Infinity, Infinity], mx = [-Infinity, -Infinity];
+    for (const [, x1, , z1, x2, , z2] of o.pieces) { mn = [Math.min(mn[0], x1), Math.min(mn[1], z1)]; mx = [Math.max(mx[0], x2), Math.max(mx[1], z2)]; }
+    const a = Wc([mn[0] - 3, 0, mn[1] - 3]), b = Wc([mx[0] + 3, 0, mx[1] + 3]);
+    runCmd(`tickingarea add ${a.x} 0 ${a.z} ${b.x} 0 ${b.z} ${name}`);
+  }
+}
+
+// ======================= РАЗГОВОР =======================
+const TOOLS_RU = { wooden: 'деревянная', stone: 'каменная', golden: 'золотая', iron: 'железная', diamond: 'алмазная', netherite: 'незеритовая' };
+function mineReport() {
+  const M = WS.mine, chests = containers(MW().chests);
+  const inChest = {};
+  if (chests) for (const inv of chests) for (let i = 0; i < inv.size; i++) { const it = inv.getItem(i); if (it) add(inChest, it.typeId.replace('minecraft:', ''), it.amount); }
+  const top = (m) => Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => `${k.replace('minecraft:', '')} ${n}`).join(', ') || 'пусто';
+  return [
+    `§7Сейчас:§r ${M.on ? (M.st === 'work' ? workMsg() : M.msg) : 'отдыхает'}`,
+    `§7Кирка:§r ${M.tool ? `${TOOLS_RU[M.tool]}, хватит ещё на ${Math.max(0, M.uses)} блоков` : 'нет'}`,
+    `§7Горизонты:§r ${hz().map((h, k) => `${h.title} (y ${h.y})${k < M.open ? '' : ' — закрыт'}`).join('; ')}`,
+    `§7Выкопано блоков:§r ${M.dug}. §7В сумке:§r ${top(M.bag)}`,
+    `§7В сундуках у копра:§r ${top(inChest)}`,
+    ...(Object.keys(M.skip).length ? [`§7Оставил руду (нужна кирка лучше):§r ${Object.entries(M.skip).map(([k, n]) => `${k} ${n}`).join(', ')}`] : []),
+    ...(M.layRails ? [`§7Рельсы:§r уложено в ствол ${M.railShaft} шагов, в запасе ${M.rails}`] : []),
+  ].join('\n');
+}
+async function minerTalk(pl) {
+  const M = WS.mine;
+  const btn = [];
+  const f = new ActionFormData().title(WORKERS.kondrat.name);
+  let intro = M.on ? '' : 'Рудокоп я. Шахту дадите — накопаю. Кирку положите в бочку у копра, а добычу я сам в сундуки сложу.\n\n';
+  f.body(intro + mineReport());
+  if (!M.on) btn.push(['Начинай копать', () => { M.on = true; M.st = M.tool ? 'work' : 'tool'; keepArea('mine', true); say('kondrat', 'Ну, с богом. Пошёл.'); }]);
+  else btn.push(['Передохни', () => { M.on = false; act('kondrat', 0); keepArea('mine', null); say('kondrat', 'Передохну. Скажешь — продолжу.'); }]);
+  const H = hz();
+  if (M.open < H.length) btn.push([`Копать глубже: ${H[M.open].title} (y ${H[M.open].y})`, () => {
+    M.open++; if (M.phase === 'done') { M.phase = 'hdone'; M.st = 'unload'; }
+    say('kondrat', `Добро. Как выработаю этот горизонт — пойду на ${H[M.open - 1].title.toLowerCase()}.`);
+  }]);
+  if (!M.layRails) btn.push(['Клади рельсы в ствол (рельсы — в бочку)', () => { M.layRails = true; say('kondrat', 'Положи рельсы в бочку у копра — буду класть по пути. Как уложу до горизонта — поеду на вагонетке.'); }]);
+  btn.push(['Пока', () => {}]);
+  for (const [t] of btn) f.button(t);
+  const r = await show(pl, f);
+  if (r.canceled) return;
+  btn[r.selection][1]();
+  wsave(); wflush();
+}
+async function builderTalk(pl) {
+  const B = WS.build, have = storeUnits() || {};
+  const stock = ['stone', 'wood', 'glass', 'iron'].map((c) => `${C.CAT_NAME[c]} ${have[c] || 0}`).join(', ');
+  const list = ORDERS().filter(orderOpen);
+  const f = new ActionFormData().title(WORKERS.miron.name + ' — книга работ');
+  const cost = (o) => Object.entries(o.cost).filter(([c]) => c !== 'other').map(([c, n]) => `${C.CAT_NAME[c]} ${n}`).join(', ');
+  const ready = (o) => Object.entries(o.cost).every(([c, n]) => c === 'other' || (have[c] || 0) + (B.cart[c] || 0) >= n);
+  const body = [
+    B.order ? `§7Сейчас:§r ${B.msg}` : 'Зодчий я. Стены ваши катапультами биты, да ничего — сложим. Выбирай, с чего начать: сначала частокол, чтобы нечисть не лезла, потом камень.',
+    `§7На складе:§r ${stock} (камень — булыжник, кирпич, андезит; дерево — брёвна и доски)`,
+    `§7Сделано работ:§r ${Object.keys(B.done).length} из ${ORDERS().length}`,
+  ].join('\n');
+  f.body(body);
+  const btn = [];
+  if (!B.order) for (const o of list.slice(0, 10)) btn.push([`${ready(o) ? '§2' : '§8'}${o.title}§r\n${cost(o)}`, o]);
+  btn.push(['Пока', null]);
+  for (const [t] of btn) f.button(t);
+  const r = await show(pl, f);
+  if (r.canceled || !btn[r.selection][1]) return;
+  const o = btn[r.selection][1];
+  const c = new ActionFormData().title(o.title).body(`Нужно: ${cost(o)}.\nНа складе: ${stock}.\n\nВзять заказ? Материалы я заберу со склада сразу.`).button('Берись').button('Не сейчас');
+  const r2 = await show(pl, c);
+  if (r2.canceled || r2.selection !== 0) return;
+  const err = startOrder(o.id);
+  say('miron', err || 'Добро. Беру материал и иду размечать.');
+  wflush();
+}
+export const workerTalk = guarded(async (pl, id) => { if (!WS) wload(); if (id === 'kondrat') await minerTalk(pl); else await builderTalk(pl); });
+
+// ======================= КОМАНДЫ ОТЛАДКИ =======================
+export function workCommand(msg, src) {
+  if (!WS) wload();
+  const [cmd, arg] = (msg || '').trim().split(/\s+/);
+  const out = [];
+  if (cmd === 'save') { wflush(); return; } // сохранить сразу (для проверочного прогона)
+  if (!cmd || cmd === 'help') out.push('§6acastle:work§r status | fast N | tp kondrat|miron | label | pause | resume | keep on|off | ledger | fill (склад и бочка для проверки) | order <id> | orders | reset kondrat|miron | spawn');
+  else if (!S || !S.origin) out.push('Замок ещё не поставлен.');
+  else if (cmd === 'status') {
+    const M = WS.mine, B = WS.build;
+    out.push(`§6[Работники]§r скорость ×${WS.fast}, участки держатся: ${WS.keep ? 'да' : 'нет'}, тик игры ≈${Math.round(tickMs)} мс`);
+    for (const id of Object.keys(WORKERS)) { const e = entOf(id); out.push(`${WORKERS[id].name}: ${e ? 'на месте (' + [e.location.x, e.location.y, e.location.z].map(Math.floor).join(' ') + ')' : 'нет существа'}${movers[id] ? ', идёт' : ''}`); }
+    out.push(`Кондрат: ${M.on ? 'работает' : 'отдыхает'}, сост. ${M.st}, фаза ${M.phase}, шаг ствола ${M.i}, горизонт ${M.h + 1}/${M.open}, штрек ${M.d}, ветка ${M.side}:${M.b}; ${M.msg}`);
+    out.push(mineReport());
+    out.push(`Мирон: сост. ${B.st}, заказ ${B.order || 'нет'}, осталось ${bt.jobs ? bt.jobs.length : '?'}, поставлено ${B.placed}, разобрано ${B.removed}, лесов ${B.scaff.length}, переходов напрямик ${WS.dbgDirect || 0}; ${B.msg}`);
+    out.push(`Тележка Мирона: ${Object.entries(B.cart).map(([c, n]) => C.CAT_NAME[c] + ' ' + n).join(', ') || 'пусто'}`);
+    if (WS.errs.length) out.push('§cОшибки:§r ' + WS.errs.join(' | '));
+  } else if (cmd === 'fast') { WS.fast = Math.max(1, Math.min(50, parseInt(arg, 10) || 1)); out.push('Скорость работы ×' + WS.fast); }
+  else if (cmd === 'tp') { const e = entOf(arg === 'miron' ? 'miron' : 'kondrat'); if (e && src) { src.teleport(e.location); out.push('Перенёс к ' + WORKERS[arg === 'miron' ? 'miron' : 'kondrat'].name); } else out.push('Работника не видно.'); }
+  else if (cmd === 'label') { WS.label = !WS.label; if (!WS.label) for (const id of Object.keys(WORKERS)) { const e = entOf(id); if (e) e.nameTag = WORKERS[id].name; } out.push('Подписи над головой: ' + (WS.label ? 'вкл' : 'выкл')); }
+  else if (cmd === 'pause') { WS.paused = true; out.push('Работники стоят.'); }
+  else if (cmd === 'resume') { WS.paused = false; out.push('Работники продолжают.'); }
+  else if (cmd === 'keep') { WS.keep = arg !== 'off'; keepArea('mine', WS.keep && WS.mine.on); keepArea('build', WS.keep && WS.build.order ? orderOf(WS.build.order) : null); out.push('Участки держатся прогруженными: ' + (WS.keep ? 'да' : 'нет')); }
+  else if (cmd === 'ledger') {
+    const L = WS.led;
+    out.push('Добыто: ' + (Object.entries(L.mined).map(([k, n]) => k.replace('minecraft:', '') + ' ' + n).join(', ') || 'ничего'));
+    out.push('Сдано в сундуки: ' + (Object.entries(L.dep).map(([k, n]) => k.replace('minecraft:', '') + ' ' + n).join(', ') || 'ничего'));
+    out.push('Потрачено (заделка, факелы): ' + (Object.entries(L.used).map(([k, n]) => k.replace('minecraft:', '') + ' ' + n).join(', ') || 'ничего'));
+    const bad = checkLedger(), bb = checkBuildLedger();
+    out.push(bad.length || bb.length ? '§cСчёт НЕ сходится§r' : '§aСчёт сходится§r: добыто = в сумке + сдано + потрачено; у Мирона взято = поставлено + возвращено + в тележке');
+  } else if (cmd === 'fill') {
+    const st = containers(YW().store), br = containers([MW().barrel], 'minecraft:barrel');
+    if (st) { for (const inv of st) { putItems(inv, 'minecraft:cobblestone', 1280); putItems(inv, 'minecraft:spruce_log', 256); putItems(inv, 'minecraft:glass', 64); putItems(inv, 'minecraft:iron_ingot', 32); } }
+    if (br) { putItems(br[0], 'minecraft:iron_pickaxe', 3); putItems(br[0], 'minecraft:rail', 64); }
+    out.push('Положил на склад строителя камень, брёвна, стекло, железо; в бочку у копра — 3 железные кирки и рельсы.');
+  } else if (cmd === 'orders') out.push(ORDERS().map((o) => `${WS.build.done[o.id] ? '✓' : orderOpen(o) ? '•' : '·'} ${o.id}: ${o.title}`).join('\n'));
+  else if (cmd === 'order') { const err = startOrder(arg); out.push(err || 'Заказ начат: ' + arg); }
+  else if (cmd === 'reset') {
+    if (arg === 'miron') { WS.build = wfresh(null).build; WS.bled = wfresh(null).bled; bt.jobs = null; bt.gen = null; delete movers.miron; keepArea('build', null); }
+    else { const keepOpen = WS.mine.open; WS.mine = wfresh(null).mine; WS.mine.open = keepOpen; WS.led = wfresh(null).led; mt.q = null; mt.face = null; mt.pending = null; delete movers.kondrat; keepArea('mine', null); }
+    out.push('Сброшено. Работник начнёт с начала (уже выкопанное и построенное в мире остаётся).');
+  } else if (cmd === 'spawn') { for (const id of Object.keys(WORKERS)) { const e = entOf(id); if (e) try { e.triggerEvent('acastle:despawn'); } catch (err) { /* нет */ } ents[id] = undefined; } ensureWorkers(); out.push('Работники поставлены заново.'); }
+  else out.push('Не знаю такой команды. /scriptevent acastle:work help');
+  wsave(); wflush();
+  const text = out.join('\n');
+  if (src && src.sendMessage) src.sendMessage(text); else world.sendMessage(text);
+}
+
+// ======================= ГЛАВНЫЙ ЦИКЛ =======================
+let lastTick = 0, every = 0;
+export function workTick() {
+  const now = system.currentTick;
+  const dtMs = Date.now() - lastNow; lastNow = Date.now(); tickMs = tickMs * 0.9 + dtMs * 0.1;
+  if (!S || !S.origin || S.build) return;
+  if (!WS) wload();
+  if (!CASTLE.works) return;
+  // Новый замок — работа с начала
+  if (!WS.origin || WS.origin.join() !== S.origin.join()) { WS = wfresh(S.origin.slice()); HZ = null; wsave(); }
+  if (++every % 20 === 0) ensureWorkers();
+  if (WS.paused) { wflush(); return; }
+  const dt = Math.max(1, Math.min(20, now - (lastTick || now))); lastTick = now;
+  // В игре цикл идёт каждый тик (dt = 1); если тики пропущены — догоняем шагами
+  for (let k = 0; k < dt; k++) {
+    const t = now - dt + 1 + k;
+    try { mineTick(t); } catch (e) { report('Кондрат', 'цикл', e); }
+    try { buildTick(t); } catch (e) { report('Мирон', 'цикл', e); }
+  }
+  if (WS.label && every % 20 === 0) {
+    const M = WS.mine, B = WS.build;
+    const ek = entOf('kondrat'); if (ek) ek.nameTag = `${WORKERS.kondrat.name}\n§7${M.on ? (M.st === 'work' ? workMsg() : M.msg) : 'отдыхает'}`;
+    const em = entOf('miron'); if (em) em.nameTag = `${WORKERS.miron.name}\n§7${B.msg}`;
+  }
+  if (every % 40 === 0) wflush();
+}

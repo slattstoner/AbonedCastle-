@@ -11,7 +11,7 @@ import { api } from './api.js';
 const wait = (t) => new Promise((r) => system.runTimeout(r, t));
 // Окно не показывается, пока у игрока открыт другой экран (игра отвечает «занят»):
 // повторяем несколько раз с паузой — так окно откроется сразу после нажатия.
-async function show(pl, form) {
+export async function show(pl, form) {
   for (let i = 0; i < 10; i++) {
     const r = await form.show(pl);
     if (!r.canceled || r.cancelationReason !== 'UserBusy') return r;
@@ -21,7 +21,7 @@ async function show(pl, form) {
 }
 
 const busy = new Map(); // игрок → тик, когда окно закрылось (или true, пока открыто)
-function guarded(fn) {
+export function guarded(fn) {
   return (pl, ...args) => {
     const b = busy.get(pl.id);
     if (b === true || (b && system.currentTick - b < 10)) return;

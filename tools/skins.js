@@ -847,6 +847,30 @@ const NPC = [
     W.furHat(K, '#1e1a18', '#2a2024');
     return K;
   } },
+  // ===== Работники замка (новое ядро: docs/workers.md). В конце списка, чтобы номера скинов
+  // прежних жителей не сдвинулись =====
+  { id: 'kondrat', group: 'castle', name: 'Рудокоп Кондрат', stage: 0, role: 'шахта у кузни: копает и носит добычу в сундук', draw: (s) => {
+    const K = person({ skin: SKIN.weather, hair: '#4a3a2a', hairStyle: 'short', beard: 'full', beardColor: '#3a2e22', eyes: '#3a2a1a', soot: 1 }, s);
+    W.shirt(K, '#6a5a44', { sleeves: 'rolled', skin: SKIN.weather });
+    W.trousers(K, '#3a342c'); W.boots(K, '#2a1e14', 7);
+    W.apron(K, '#4a3a28', { top: 4, len: 8, stains: '#1e1a14' });
+    W.belt(K, '#2a1a10', { y: 8, buckle: '#8a8a8a' }); W.pouch(K, '#5a4028', 5, 9);
+    // кожаный колпак рудокопа со свечой спереди
+    W.cap(K, '#5a4028', { brim: '#3a2a18' });
+    K.side('hat', 'front', (x, y) => (x >= 3 && x <= 4 && y <= 1 ? { c: y === 0 ? '#ffd860' : '#e8e0c8', t: 0.6 } : undefined));
+    W.sprinkle(K, 'body', '#2a2620', 0.08); W.sprinkle(K, 'rLeg', '#2a2620', 0.1); W.sprinkle(K, 'lLeg', '#2a2620', 0.1);
+    return K;
+  } },
+  { id: 'miron', group: 'castle', name: 'Зодчий Мирон', stage: 0, role: 'мастер-каменщик: заделывает бреши, кладёт стены и башни', draw: (s) => {
+    const K = person({ skin: SKIN.ruddy, hair: '#8a7050', hairStyle: 'short', beard: 'short', beardColor: '#7a6040', eyes: '#4a5a6a', age: 1 }, s);
+    W.shirt(K, '#c8bca0', { sleeves: 'rolled', skin: SKIN.ruddy, emb: '#7a3a2a' });
+    W.trousers(K, '#4a4440'); W.boots(K, '#3a2a1a', 6);
+    W.apron(K, '#8a7a62', { top: 2, len: 9, stains: '#a8a8a0' });
+    W.belt(K, '#4a3020', { y: 8, buckle: '#a08040' }); W.knife(K, 1, 9); W.pouch(K, '#6a4a2a', 5, 9);
+    W.cap(K, '#6a5a44');
+    W.sprinkle(K, 'jacket', '#b8b8b0', 0.06); // каменная пыль
+    return K;
+  } },
 ];
 
 const skinPng = (id) => { const i = NPC.findIndex((n) => n.id === id); if (i < 0) throw new Error('нет скина ' + id); return NPC[i].draw(1000 + i * 7919).png(); };

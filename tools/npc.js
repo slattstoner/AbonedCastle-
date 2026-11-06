@@ -187,6 +187,37 @@ function npcEntity() {
   };
 }
 
+// Работник замка (шахтёр, строитель): сам не ходит — его ведут скрипты (tools/scripts/workers.js),
+// перенося маленькими шагами каждый тик (так игра показывает и анимацию ходьбы). Свойство
+// acastle:act: 0 — стоит, 1 — идёт, 2 — работает (машет киркой или молотком), 3 — едет в вагонетке.
+// Не падает (скрипт сам держит его на полу), его не толкают, урона не получает.
+function workerEntity() {
+  const groups = { [`${NS}:despawn`]: { 'minecraft:instant_despawn': {} }, [`${NS}:talked`]: {} };
+  const events = { [`${NS}:despawn`]: { add: { component_groups: [`${NS}:despawn`] } }, [`${NS}:talked`]: { add: { component_groups: [`${NS}:talked`] } } };
+  skinGroups(SKIN_IDS, groups, events);
+  return {
+    format_version: '1.21.0',
+    'minecraft:entity': {
+      description: {
+        identifier: `${NS}:worker`, is_spawnable: false, is_summonable: true, is_experimental: false,
+        properties: { [`${NS}:act`]: { type: 'int', range: [0, 3], default: 0, client_sync: true } },
+      },
+      component_groups: groups,
+      components: {
+        ...common([`${NS}_worker`, 'mob']),
+        'minecraft:health': { value: 20, max: 20 },
+        'minecraft:movement': { value: 0.25 },
+        'minecraft:physics': { has_gravity: false, has_collision: true },
+        'minecraft:pushable': { is_pushable: false, is_pushable_by_piston: false },
+        'minecraft:knockback_resistance': { value: 1 },
+        'minecraft:damage_sensor': { triggers: [{ cause: 'all', deals_damage: 'no' }] },
+        'minecraft:equipment': { table: `loot_tables/${NS}/npc/empty.json` },
+      },
+      events,
+    },
+  };
+}
+
 // Шайка Рыжего и Ножов: мирные в лагере, враждебные в набегах и осаде
 const bandit = (o) => ({ test: 'is_family', subject: 'other', value: o });
 // Касание пригнувшегося игрока — это разговор, а не удар: урона нет
@@ -288,7 +319,8 @@ function client(id, egg) {
         scripts: {
           initialize: ['v.gliding_speed_value = 1.0;'],
           pre_animation: ['v.tcos0 = Math.cos(query.modified_distance_moved * 38.17) * query.modified_move_speed / v.gliding_speed_value * 57.3;'],
-          animate: ['look_at_target_controller', 'move_controller', 'holding_controller', 'attack_controller', 'bob_controller'],
+          animate: ['look_at_target_controller', 'move_controller', 'holding_controller', 'attack_controller', 'bob_controller',
+            ...(id === 'worker' ? [{ work: `q.property('${NS}:act') == 2` }] : [])],
         },
         // Стандартные анимации человека (как у зомби и игрока)
         animations: {
@@ -304,6 +336,7 @@ function client(id, egg) {
           holding_controller: 'controller.animation.humanoid.holding',
           attack_controller: 'controller.animation.humanoid.attack',
           bob_controller: 'controller.animation.humanoid.bob',
+          ...(id === 'worker' ? { work: `animation.${NS}.work` } : {}),
         },
       },
     },
@@ -341,6 +374,7 @@ function writePacks(writeBP, writeRP, skinPng, checkTable) {
   writeBP('entities/guard.json', guardEntity());
   writeBP('entities/npc.json', npcEntity());
   writeBP('entities/bandit.json', banditEntity());
+  writeBP('entities/worker.json', workerEntity());
   for (const [name, item, what] of [['guard_gear', 'iron_sword', 'стражника'], ['archer_gear', 'bow', 'лучника'], ['bandit_gear', 'stone_axe', 'разбойника'],
     ['bandit_sword', 'iron_sword', 'атамана'], ['bandit_light', 'stone_sword', 'разведчика'], ['empty', null, 'мирного']]) {
     const gear = { pools: item ? [{ rolls: 1, entries: [{ type: 'item', name: 'minecraft:' + item, weight: 1 }] }] : [] };
@@ -364,6 +398,12 @@ function writePacks(writeBP, writeRP, skinPng, checkTable) {
   writeRP(`entity/guard.entity.json`, client('guard', { base_color: '#8a1e1e', overlay_color: '#d8b040' }));
   writeRP(`entity/npc.entity.json`, client('npc'));
   writeRP(`entity/bandit.entity.json`, client('bandit'));
+  writeRP(`entity/worker.entity.json`, client('worker'));
+  // Работа: правая рука с инструментом ходит вверх-вниз (удар киркой или молотком)
+  writeRP(`animations/${NS}.animation.json`, {
+    format_version: '1.8.0',
+    animations: { [`animation.${NS}.work`]: { loop: true, bones: { rightArm: { rotation: ['-95 + math.sin(q.life_time * 480) * 40', '0', '0'] } } } },
+  });
   writeRP(`render_controllers/${NS}.render_controllers.json`, {
     format_version: '1.8.0',
     render_controllers: {
@@ -379,6 +419,7 @@ function writePacks(writeBP, writeRP, skinPng, checkTable) {
     `entity.${NS}:guard.name=Стражник замка`,
     `entity.${NS}:npc.name=Житель замка`,
     `entity.${NS}:bandit.name=Человек Рыжего`,
+    `entity.${NS}:worker.name=Работник замка`,
     `item.spawn_egg.entity.${NS}:guard.name=Призвать стражника замка`,
     `item.${NS}:quest_book=Книга заданий`,
     `action.interact.${NS}_talk=Говорить`,

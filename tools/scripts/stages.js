@@ -951,7 +951,7 @@ export function jumpLate(n, api, base) {
     if (!m) continue;
     if (+m[1] < n) S.q[q] = 'done'; else delete S.q[q];
   }
-  for (const [u, info] of Object.entries(api.castle.units)) if (info.stage < n && !(S.rep[u] && S.rep[u].st === 'done')) S.rep[u] = { st: 'due' };
+  for (const [u, info] of Object.entries(api.castle.units)) if (info.kind !== 'build' && info.stage < n && !(S.rep[u] && S.rep[u].st === 'done')) S.rep[u] = { st: 'due' };
   // жители прежних этапов — дома, поздних — ещё не пришли (и при переходе назад уходят)
   for (const [k, ids] of Object.entries(ARRIVALS)) for (const id of ids) { if (+k < n) S.npcs[id] = 'home'; else delete S.npcs[id]; }
   S.arrive = [];
