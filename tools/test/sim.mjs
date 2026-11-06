@@ -622,7 +622,10 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
     await new Promise((r) => setTimeout(r, 5)); ticks(2);
     if (answers.length) { problems.push(`${id}: не все ответы использованы: ${answers.join(', ')}`); answers.length = 0; }
   }
-  const runUntil = (cond, max, what) => { let n = 0; while (!cond() && n < max) { ticks(1); n++; } if (!cond()) problems.push('не дождались: ' + what + ` (за ${n} шагов)`); return n; };
+  // Игрок забирает добычу, когда сундуки у копра полны (Кондрат тогда ждёт)
+  let taken = 0, picks = 0;
+  const takeLoot = () => { for (const c of CASTLE.works.mine.chests) { const ci = blockAt(W(c)).getComponent('minecraft:inventory').container; for (let i = 0; i < ci.size; i++) { const it = ci.getItem(i); if (it) { taken += it.amount; ci.setItem(i); } } } };
+  const runUntil = (cond, max, what) => { let n = 0; while (!cond() && n < max) { ticks(1); n++; if (n % 200 === 0) { const m = ws().mine.msg; if (/полны/.test(m)) takeLoot(); if (/Нужна кирка/.test(m)) { picks++; blockAt(W(CASTLE.works.mine.barrel)).getComponent('minecraft:inventory').container.addItem(new ItemStack('minecraft:iron_pickaxe', 1)); } } } if (!cond()) problems.push('не дождались: ' + what + ` (за ${n} шагов)`); return n; };
   const inv = (c) => blockAt(W(c)).getComponent('minecraft:inventory').container;
   ticks(25);
   expect(wk('kondrat') && wk('miron'), 'работники появились у копра и на дворе строителя');
@@ -638,7 +641,7 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
   expect(ws().mine.tool === 'iron', 'взял лучшую кирку из бочки (железную): ' + ws().mine.tool);
   const H = (await import(pathToFileURL(path.join(DIR, 'work_core.js')))).horizons(O.y);
   const C = await import(pathToFileURL(path.join(DIR, 'work_core.js')));
-  expect(H.length === 3 && H[0].y < O.y - 15 && Math.abs(H[1].y - 16) <= 12 && H[2].y >= -60 && H[2].y <= -48, 'горизонты: ' + H.map((h) => h.title + ' y ' + h.y).join(', '));
+  expect(H.length === 3 && H[0].y < O.y - 15 && Math.abs(H[1].y - 16) <= 12 && H[2].y >= -60 && H[2].y <= -48 && /Уголь/.test(H[0].title), 'горизонты: ' + H.map((h) => h.title + ' y ' + h.y).join(', '));
   let n = runUntil(() => ws().mine.phase === 'done', 40000, '1-й горизонт выработан');
   const st = ws();
   console.log(`Шахтёр, 1-й горизонт: ${n} шагов прогона, выкопано ${st.mine.dug}, добыто: ${Object.entries(st.led.mined).map(([k, v]) => k.replace('minecraft:', '') + ' ' + v).join(', ')}; заделано дыр ${st.mine.sealed || 0}`);
@@ -657,20 +660,37 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
     const c = [x - (O.x - CASTLE.origin[0]), z - (O.z - CASTLE.origin[2])];
     if (!(c[0] >= ring[0] && c[0] <= ring[2] && c[1] >= ring[1] && c[1] <= ring[3])) problems.push(`дыра в земле двора у (${c[0]}, ${c[1]})`);
   }
-  // Лава и вода не у хода: у каждой клетки штрека и веток соседи — не жидкость
-  const corner = W(C.shaftCell(ring, H[0].step));
-  let liquidNear = 0, tunnel = 0;
-  for (let d = 0; d < C.DRIFT; d++) {
-    const cells = [C.driftCell([corner.x, corner.y, corner.z], d)];
-    if (C.hasBranch(d)) for (const side of [-1, 1]) for (let b = 0; b < C.BRANCH; b++) cells.push(C.branchCell([corner.x, corner.y, corner.z], d, side, b));
-    for (const c of cells) for (let dy = 0; dy < 2; dy++) {
-      const p = { x: c[0], y: c[1] + dy, z: c[2] };
-      if (blockAt(p).typeId !== 'minecraft:air' && !/torch|rail/.test(blockAt(p).typeId)) continue;
-      tunnel++;
-      for (const [dx, ey, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) if (/water|lava/.test(blockAt({ x: p.x + dx, y: p.y + ey, z: p.z + dz }).typeId)) liquidNear++;
+  // Устройство горизонта: двор 9×9 вокруг ствола (3 высотой), 4 коридора, ветки вправо и влево
+  // через каждые 3 клетки. Ходы сухие: у вынутых клеток нет лавы и воды.
+  const horizonCells = (h) => {
+    const y = O.y + C.shaftLevel(H[h].step), out = [];
+    const [ga, gb, gc, gd] = C.galleryBox(ring);
+    for (let x = ga; x <= gc; x++) for (let z = gb; z <= gd; z++) if (C.inGallery(ring, x, z)) for (let dy = 0; dy < 3; dy++) out.push({ ...W([x, 0, z]), y: y + dy, kind: 'двор' });
+    for (const dr of C.drifts(ring)) for (let d = 0; d < C.DRIFT; d++) {
+      const cs = [[C.driftAt(dr, d), 'коридор ' + dr.n]];
+      if (C.hasBranch(d)) for (const side of [1, -1]) for (let bb = 0; bb < C.BRANCH; bb++) cs.push([C.branchAt(dr, d, side, bb), 'ветка ' + dr.n + (side > 0 ? 'п' : 'л')]);
+      for (const [c, kind] of cs) for (let dy = 0; dy < 2; dy++) out.push({ ...W([c[0], 0, c[1]]), y: y + dy, kind });
     }
-  }
-  expect(tunnel > 300 && !liquidNear, `ходы горизонта сухие: клеток хода ${tunnel}, жидкость рядом ${liquidNear}`);
+    return out;
+  };
+  const survey = (h) => {
+    const by = {}; let wet = 0, open = 0;
+    for (const p of horizonCells(h)) {
+      const id = blockAt(p).typeId, ok = /air|torch|rail/.test(id);
+      const k = p.kind.replace(/ \d.*$/, ''); by[k] = by[k] || [0, 0]; by[k][1]++; if (ok) { by[k][0]++; open++; }
+      if (ok) for (const [dx, ey, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) if (/water|lava/.test(blockAt({ x: p.x + dx, y: p.y + ey, z: p.z + dz }).typeId)) wet++;
+    }
+    return { by, wet, open };
+  };
+  { const sv = survey(0);
+    console.log(`  устройство 1-го горизонта (вынуто/по плану): ${Object.entries(sv.by).map(([k, [a, b]]) => `${k} ${a}/${b}`).join(', ')}; жидкость у ходов: ${sv.wet}`);
+    expect(sv.by['двор'][0] === sv.by['двор'][1], 'рудничный двор вынут целиком');
+    expect(sv.by['коридор'][0] >= C.DRIFT * 2 * 3 && sv.by['ветка'][0] > 300, 'коридоры и ветки вынуты');
+    expect(!sv.wet, 'ходы сухие'); }
+  // Ветки по обе стороны коридора: справа и слева
+  { const dr = C.drifts(ring)[0], y = O.y + C.shaftLevel(H[0].step);
+    const open = (c) => /air|torch|rail/.test(blockAt({ ...W([c[0], 0, c[1]]), y }).typeId);
+    expect(open(C.branchAt(dr, 2, 1, 5)) && open(C.branchAt(dr, 2, -1, 5)) && !open(C.branchAt(dr, 3, 1, 0)), 'в первом коридоре ветки справа и слева у 3-й клетки, между ветками — камень'); }
   // Счёт сходится, а в сундуках у копра — ровно сданное
   msgs.length = 0; work('ledger');
   expect(msgs.some((m) => /Счёт сходится/.test(m)), 'счёт шахтёра сходится: ' + msgs.join(' / ').slice(0, 300));
@@ -684,16 +704,18 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
   await talkW('kondrat', 'рельсы');
   await talkW('kondrat', 'глубже');
   expect(ws().mine.open === 2, 'открыт 2-й горизонт');
-  n = runUntil(() => ws().mine.h === 1 && ws().mine.phase !== 'shaft', 60000, '2-й горизонт: ствол дошёл');
+  n = runUntil(() => ws().mine.h === 1 && ws().mine.phase === 'gallery', 60000, '2-й горизонт: ствол дошёл');
   const sw = ws().mine;
   console.log(`Шахтёр, ствол до 2-го горизонта: ${n} шагов прогона, рельсов уложено на ${sw.railShaft} шагов ствола`);
   expect(sw.railShaft >= 20, 'рельсы уложены в ствол: ' + sw.railShaft);
   { const [x, y, z] = C.shaftCell(ring, 5), b = blockAt(W([x, y, z])); expect(b.typeId === 'minecraft:rail' && b.permutation.getState('rail_direction') === C.shaftRail(5), 'рельс на 5-м шаге ствола с подъёмом: ' + b.typeId + ' ' + b.permutation.getState('rail_direction')); }
   expect(!entities.some((e) => e.typeId === 'minecraft:minecart'), 'вагонетки после поездок убраны');
-  // Опасности на 2-м горизонте: лава у штрека, гравий над ходом, чужой сундук в ветке, алмаз в стене
-  const c2 = W(C.shaftCell(ring, H[1].step)), co = [c2.x, c2.y, c2.z];
-  const at = (c, dy = 0, dz = 0) => ({ x: c[0], y: c[1] + dy, z: c[2] + dz });
-  const lava = at(C.driftCell(co, 5), 0, 1), gravelAt = C.driftCell(co, 6), chestAt = C.branchCell(co, 7, -1, 5), dia = at(C.driftCell(co, 9), 1, -1);
+  // Опасности на 2-м горизонте (подкладываем, пока он рубит двор): лава у коридора, гравий над
+  // ходом, чужой сундук в ветке, алмаз в стене коридора
+  const y2 = O.y + C.shaftLevel(H[1].step), dr0 = C.drifts(ring)[0], R0 = C.rightOf(dr0.v);
+  const at = (c, dy = 0, side = 0) => ({ ...W([c[0] + R0[0] * side, 0, c[1] + R0[1] * side]), y: y2 + dy });
+  const lava = at(C.driftAt(dr0, 4), 0, 1), gravelAt = C.driftAt(dr0, 3), chestAt = C.branchAt(dr0, 5, 1, 5), dia = at(C.driftAt(dr0, 6), 1, -1);
+  expect(ws().mine.phase === 'gallery' || ws().mine.phase === 'shaft', 'опасности подложены до коридоров: ' + ws().mine.phase);
   blockAt(lava).setType('minecraft:lava');
   for (let dy = 2; dy <= 4; dy++) blockAt(at(gravelAt, dy)).setType('minecraft:gravel');
   blockAt(at(gravelAt, 5)).setType('minecraft:stone');
@@ -705,7 +727,8 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
   expect(blockAt(lava).typeId !== 'minecraft:lava', 'лава у штрека заложена: ' + blockAt(lava).typeId);
   expect([2, 3, 4].every((dy) => blockAt(at(gravelAt, dy)).typeId !== 'minecraft:gravel') && blockAt(at(gravelAt, 2)).typeId === 'minecraft:cobblestone' && blockAt(at(gravelAt, 5)).typeId === 'minecraft:stone',
     'гравий над ходом выбран, потолок заделан булыжником, камень выше цел: ' + [2, 3, 4, 5].map((dy) => blockAt(at(gravelAt, dy)).typeId.replace('minecraft:', '')).join(','));
-  expect(blockAt(at(chestAt)).typeId === 'minecraft:chest' && blockAt(at(C.branchCell(co, 7, -1, 4))).typeId !== 'minecraft:stone', 'чужой сундук не тронут, ветка остановилась перед ним');
+  expect(blockAt(at(chestAt)).typeId === 'minecraft:chest' && blockAt(at(C.branchAt(dr0, 5, 1, 4))).typeId === 'minecraft:air', 'чужой сундук не тронут, ветка остановилась перед ним (дальше клетку могла вынуть ветка соседнего коридора): ' + [4, 5, 6].map((bb) => blockAt(at(C.branchAt(dr0, 5, 1, bb))).typeId.replace('minecraft:', '')).join(','));
+  { const sv = survey(1); console.log(`  устройство 2-го горизонта: ${Object.entries(sv.by).map(([k, [a, b]]) => `${k} ${a}/${b}`).join(', ')}; жидкость у ходов: ${sv.wet}`); expect(!sv.wet, 'ходы 2-го горизонта сухие'); }
   expect((ws().led.mined['minecraft:diamond'] || 0) > dia0 && blockAt(dia).typeId === 'minecraft:air', 'алмаз из стены хода добыт');
   expect(ws().errs.length === 0, 'без ошибок: ' + ws().errs.join(' | '));
   msgs.length = 0; work('ledger');
@@ -714,12 +737,10 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
   await talkW('kondrat', 'глубже');
   n = runUntil(() => ws().mine.h === 2 && ws().mine.phase === 'done', 120000, 'глубинный горизонт выработан');
   { const L = ws().led.mined, m = ws().mine;
-    console.log(`Шахтёр, глубинный горизонт (y ${H[2].y}): ${n} шагов прогона, всего выкопано ${m.dug}, заделано дыр ${m.sealed || 0}, алмазов ${L['minecraft:diamond'] || 0}, красной пыли ${L['minecraft:redstone'] || 0}, глубинного булыжника ${L['minecraft:cobbled_deepslate'] || 0}, кирка ${m.tool} (${m.uses})`);
-    const c3 = W(C.shaftCell(ring, H[2].step)), k3 = [c3.x, c3.y, c3.z];
-    let wet = 0;
-    for (let d = 0; d < C.DRIFT; d++) for (const c of [C.driftCell(k3, d), ...(C.hasBranch(d) ? [-1, 1].flatMap((sd) => [...Array(C.BRANCH).keys()].map((b) => C.branchCell(k3, d, sd, b))) : [])])
-      for (let dy = 0; dy < 2; dy++) for (const [dx, ey, dz] of [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) if (/lava|water/.test(blockAt({ x: c[0] + dx, y: c[1] + dy + ey, z: c[2] + dz }).typeId) && !dx && !dz && !ey) wet++;
-    expect(!wet, 'в ходах глубинного горизонта нет лавы: ' + wet);
+    console.log(`Шахтёр, глубинный горизонт (y ${H[2].y}): ${n} шагов прогона, всего выкопано ${m.dug}, заделано дыр ${m.sealed || 0}, алмазов ${L['minecraft:diamond'] || 0}, красной пыли ${L['minecraft:redstone'] || 0}, глубинного булыжника ${L['minecraft:cobbled_deepslate'] || 0}, кирка ${m.tool} (${m.uses}), игрок подложил кирок: ${picks}, забрал добычи: ${taken}`);
+    const sv = survey(2);
+    console.log(`  устройство алмазного горизонта: ${Object.entries(sv.by).map(([k, [a, b]]) => `${k} ${a}/${b}`).join(', ')}; жидкость у ходов: ${sv.wet}`);
+    expect(!sv.wet, 'в ходах алмазного горизонта нет лавы и воды: ' + sv.wet);
     expect(ws().errs.length === 0, 'глубинный горизонт без ошибок: ' + ws().errs.join(' | '));
   }
   msgs.length = 0; work('ledger');

@@ -74,31 +74,81 @@ export function horizonStep(depth) {
   for (let i = 0; i < 4000; i += 4) { const k = i % 16; if ((k === 0 || k === 12) && shaftLevel(i) <= depth) return i; }
   return -1;
 }
-// Горизонты: 1-й — 16 блоков под двором; 2-й — y мира 16; 3-й — y мира −58 (не ниже −60).
-// surfaceY — высота пола двора в мире. Возвращает шаги ствола для каждого горизонта.
+// Горизонты — под свою руду: угольный — под двором (в толще под замком много угля, а выше
+// поверхности не копаем), железный — y 16 (больше всего железа), алмазный — y −58 (у дна мира,
+// не ниже −60). surfaceY — высота пола двора в мире. Возвращает шаги ствола и высоты.
 export function horizons(surfaceY) {
   const out = [];
-  const add = (worldY, title) => {
+  const add = (worldY, title, ore) => {
     let i = horizonStep(worldY - surfaceY);
     if (i < 0) return;
     while (i > 0 && surfaceY + shaftLevel(i) < -60) i -= 4;
     while (i > 0 && ![0, 12].includes(i % 16)) i -= 4;
     if (out.length && i <= out[out.length - 1].step + 8) return; // слишком близко к прежнему
-    out.push({ step: i, y: surfaceY + shaftLevel(i), title });
+    out.push({ step: i, y: surfaceY + shaftLevel(i), title, ore });
   };
-  add(surfaceY - 16, '1-й горизонт');
-  add(16, '2-й горизонт');
-  add(-58, 'Глубинный горизонт');
+  add(surfaceY - 16, 'Угольный горизонт', 'уголь');
+  add(16, 'Железный горизонт', 'железо');
+  add(-58, 'Алмазный горизонт', 'алмазы');
   return out;
 }
-// Штрек: от угла горизонта на запад (−x), длина DRIFT; ветки — через каждые 4 клетки штрека,
-// на север и юг, длиной BRANCH. Высота хода — 2.
-export const DRIFT = 32, BRANCH = 12, BRANCH_EVERY = 4;
-export const driftCell = (corner, d) => [corner[0] - 1 - d, corner[1], corner[2]];
-export const branchCell = (corner, d, side, b) => [corner[0] - 1 - d, corner[1], corner[2] + side * (1 + b)];
+// Горизонт: рудничный двор — квадрат 9×9 вокруг ствола (кольцо ствола 5×5 не трогаем), высота 3.
+// Из середины каждой стороны двора — коридор длиной DRIFT. В коридоре через каждые BRANCH_EVERY
+// клеток — ветки: сначала вправо, потом влево, длиной BRANCH. Между ветками 2 блока камня — так
+// виден каждый блок породы (руда не пропадает), а копать приходится меньше всего.
+// Высота коридоров и веток — 2.
+export const GALLERY = 2, DRIFT = 24, BRANCH = 12, BRANCH_EVERY = 3, TORCH_EVERY = 6;
 export const hasBranch = (d) => d % BRANCH_EVERY === BRANCH_EVERY - 1;
-// Факел: на стене хода у головы (стена — сбоку), через каждые 6 клеток
-export const TORCH_EVERY = 6;
+export function galleryBox([x1, z1, x2, z2]) { return [x1 - GALLERY, z1 - GALLERY, x2 + GALLERY, z2 + GALLERY]; }
+export function inGallery(ring, x, z) {
+  const [a, b, c, d] = galleryBox(ring);
+  return x >= a && x <= c && z >= b && z <= d && !(x >= ring[0] && x <= ring[2] && z >= ring[1] && z <= ring[3]);
+}
+// Коридоры: вход (клетка двора посередине стороны) и направление
+export function drifts(ring) {
+  const [a, b, c, d] = galleryBox(ring), cx = (ring[0] + ring[2]) >> 1, cz = (ring[1] + ring[3]) >> 1;
+  return [
+    { n: 1, entry: [a, cz], v: [-1, 0] },
+    { n: 2, entry: [cx, b], v: [0, -1] },
+    { n: 3, entry: [c, cz], v: [1, 0] },
+    { n: 4, entry: [cx, d], v: [0, 1] },
+  ];
+}
+export const rightOf = (v) => [-v[1], v[0]]; // правая рука, если идти по коридору
+export const driftAt = (dr, d) => [dr.entry[0] + dr.v[0] * (1 + d), dr.entry[1] + dr.v[1] * (1 + d)];
+// side: +1 — вправо, −1 — влево
+export function branchAt(dr, d, side, b) { const [x, z] = driftAt(dr, d), r = rightOf(dr.v); return [x + r[0] * side * (1 + b), z + r[1] * side * (1 + b)]; }
+// Клетки двора по порядку копки: от угла ствола (где кончается спуск) по соседям, у каждой —
+// с какой уже вынутой клетки до неё дотягиваться
+export function galleryOrder(ring, corner) {
+  const K = (c) => c[0] + ',' + c[1];
+  const seen = new Map([[K(corner), null]]), out = [], q = [corner];
+  while (q.length) {
+    const c = q.shift();
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const n = [c[0] + dx, c[1] + dz];
+      if (seen.has(K(n)) || !inGallery(ring, ...n)) continue;
+      seen.set(K(n), c); out.push({ c: n, from: c }); q.push(n);
+    }
+  }
+  return out;
+}
+// Путь по двору (поиск в ширину по клеткам, где ok(x, z))
+export function galleryPath(from, to, ok) {
+  const K = (c) => c[0] + ',' + c[1];
+  const prev = new Map([[K(from), null]]), q = [from];
+  while (q.length) {
+    const c = q.shift();
+    if (c[0] === to[0] && c[1] === to[1]) { const path = []; for (let p = c; p; p = prev.get(K(p))) path.push(p); return path.reverse(); }
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const n = [c[0] + dx, c[1] + dz];
+      if (!prev.has(K(n)) && ok(...n)) { prev.set(K(n), c); q.push(n); }
+    }
+  }
+  return null;
+}
+// В какой стороне стена (для факела)
+export const wallName = ([dx, dz]) => (dx > 0 ? 'east' : dx < 0 ? 'west' : dz > 0 ? 'south' : 'north');
 
 // ---------- Рельсы ----------
 // Направления рельса в игре: 0 — север-юг, 1 — восток-запад, 2…5 — подъём на восток, запад,

@@ -34,8 +34,9 @@ let wdirty = false;
 function wfresh(origin) {
   return {
     v: 1, origin, fast: 1, label: false, keep: true,
-    mine: { on: false, st: 'idle', msg: 'Ждёт кирку в бочке у копра', i: 0, h: 0, open: 1, phase: 'shaft', d: 0, dj: 0, side: -1, b: 0,
-      bag: {}, tool: null, uses: 0, torch: 0, rails: 0, layRails: false, railShaft: 0, railDrift: {}, veins: [], skip: {}, ri: 0, pos: null, dug: 0, blocked: null },
+    // phase: shaft (ствол) → gallery (рудничный двор) → drift (коридор n из 4) ↔ branch (ветка) → hdone (горизонт выработан) → done
+    mine: { on: false, st: 'idle', msg: 'Ждёт кирку в бочке у копра', i: 0, h: 0, open: 1, phase: 'shaft', g: 0, n: 0, d: 0, dj: 0, side: 1, b: 0, back: null,
+      bag: {}, tool: null, uses: 0, torch: 0, rails: 0, layRails: false, railShaft: 0, veins: [], skip: {}, pos: null, dug: 0, blocked: null },
     build: { st: 'idle', msg: 'Ждёт заказа', order: null, done: {}, cart: {}, scaff: [], pos: null, placed: 0, removed: 0, need: null },
     led: { mined: {}, dep: {}, used: {} },
     bled: { took: {}, placed: {}, back: {}, reclaimed: {} },
@@ -204,13 +205,30 @@ function moveTick(id, dt) {
 }
 
 // ======================= ШАХТЁР =======================
+// Устройство шахты (work_core.js): винтовой ствол лесенкой → на каждом горизонте рудничный
+// двор 9×9 вокруг ствола → из середины каждой стороны двора коридор → в коридоре через каждые
+// 3 клетки ветки: сначала вправо, потом влево. Горизонты: угольный, железный, алмазный.
 const MW = () => CASTLE.works.mine;
 let HZ = null; // горизонты для этого замка
 const hz = () => HZ || (HZ = C.horizons(S.origin[1]));
+const DR = () => C.drifts(MW().ring);
 const shaftW = (i) => A(Wc(C.shaftCell(MW().ring, i)));
 const cornerW = (h) => shaftW(hz()[h].step);
-const driftW = (h, d) => C.driftCell(cornerW(h), d);
-const branchW = (h, d, side, b) => C.branchCell(cornerW(h), d, side, b);
+const corner2 = (h) => { const c = C.shaftCell(MW().ring, hz()[h].step); return [c[0], c[2]]; };
+const at2 = (h, [x, z]) => [S.origin[0] + x, cornerW(h)[1], S.origin[2] + z]; // клетка горизонта h (x, z замка)
+const entryW = (h, n) => at2(h, DR()[n].entry);
+const driftW = (h, n, d) => at2(h, C.driftAt(DR()[n], d));
+const branchW = (h, n, d, side, b) => at2(h, C.branchAt(DR()[n], d, side, b));
+let GO = null; // порядок копки двора
+const gOrder = (h) => (GO && GO.h === h ? GO.list : (GO = { h, list: C.galleryOrder(MW().ring, corner2(h)) }).list);
+const col = (c, n) => [...Array(n).keys()].map((k) => [c[0], c[1] + k, c[2]]);
+const dedupe = (r) => r.filter((p, i) => !i || keyOf(p) !== keyOf(r[i - 1]));
+// Прямой отрезок по клеткам (по коридору)
+function line(a, b) {
+  const out = [a.slice()], n = Math.max(Math.abs(b[0] - a[0]), Math.abs(b[2] - a[2]));
+  for (let k = 1; k <= n; k++) out.push([Math.round(a[0] + (b[0] - a[0]) * k / n), b[1], Math.round(a[2] + (b[2] - a[2]) * k / n)]);
+  return dedupe(out);
+}
 // Своя ли это клетка хода (её не заделываем как пещеру)
 function planned(p) {
   const M = WS.mine, ring = MW().ring, c = toC(V(p));
@@ -223,12 +241,16 @@ function planned(p) {
     return false;
   }
   for (let h = 0; h < hz().length; h++) {
-    const co = cornerW(h);
-    if (p[1] < co[1] || p[1] > co[1] + 1) continue;
-    const d = co[0] - 1 - p[0];
-    if (d < 0 || d >= C.DRIFT) continue;
-    if (p[2] === co[2]) return true;
-    if (C.hasBranch(d) && Math.abs(p[2] - co[2]) >= 1 && Math.abs(p[2] - co[2]) <= C.BRANCH) return true;
+    const dy = p[1] - cornerW(h)[1];
+    if (dy < 0 || dy > 2) continue;
+    if (C.inGallery(ring, c[0], c[2])) return true;
+    if (dy > 1) continue;
+    for (const dr of DR()) {
+      const rx = c[0] - dr.entry[0], rz = c[2] - dr.entry[1], r = C.rightOf(dr.v);
+      const along = rx * dr.v[0] + rz * dr.v[1] - 1, perp = rx * r[0] + rz * r[1];
+      if (along < 0 || along >= C.DRIFT) continue;
+      if (perp === 0 || (C.hasBranch(along) && Math.abs(perp) <= C.BRANCH)) return true;
+    }
   }
   return M.veins.includes(keyOf(p));
 }
@@ -241,57 +263,104 @@ function allowed(p) {
   if (pr && c[1] >= pr[0] - 3 && c[1] <= pr[1] + 3) return false;
   return true;
 }
-// Маршрут от копра к забою (клетки, где стоят ноги)
+// Маршрут от копра к забою (клетки, где стоят ноги); r.nShaft — сколько в начале клеток до низа ствола
 function route() {
-  const M = WS.mine, r = [A(Wc(MW().home)), A(Wc([MW().ring[0], 0, MW().ring[1] - 1]))];
-  const shaftEnd = M.phase === 'shaft' ? M.i : hz()[M.h] ? hz()[M.h].step : M.i;
+  const M = WS.mine, r = [A(Wc(MW().home)), A(Wc([MW().ring[0], 0, MW().ring[1] - 1]))], H = hz()[M.h];
+  const shaftEnd = M.phase === 'shaft' || !H ? M.i : H.step;
   for (let j = 0; j <= shaftEnd; j++) r.push(shaftW(j));
-  if (M.phase === 'drift' || M.phase === 'branch') {
+  const nShaft = r.length;
+  if (H && (M.phase === 'drift' || M.phase === 'branch') && M.n < 4) {
+    const co = corner2(M.h);
+    const gp = C.galleryPath(co, DR()[M.n].entry, (x, z) => C.inGallery(MW().ring, x, z));
+    if (gp) for (const c of gp.slice(1)) r.push(at2(M.h, c));
     const dEnd = M.phase === 'branch' ? M.dj : M.d - 1;
-    for (let d = 0; d <= dEnd; d++) r.push(driftW(M.h, d));
-    if (M.phase === 'branch') for (let b = 0; b < M.b; b++) r.push(branchW(M.h, M.dj, M.side, b));
+    for (let d = 0; d <= dEnd; d++) r.push(driftW(M.h, M.n, d));
+    if (M.phase === 'branch') for (let b = 0; b < M.b; b++) r.push(branchW(M.h, M.n, M.dj, M.side, b));
   }
+  r.nShaft = nShaft;
   return r;
 }
 const railedTo = (M) => (M.phase === 'shaft' ? M.railShaft >= M.i : M.railShaft >= (hz()[M.h] ? hz()[M.h].step : 0));
-// Следующие клетки, которые надо вынуть, и куда потом встать
+// Что копать дальше: клетки, откуда (from) и куда потом встать (at)
 function nextFace() {
-  const M = WS.mine;
+  const M = WS.mine, H = hz()[M.h];
+  if (!H) return null;
   if (M.phase === 'shaft') {
-    const H = hz()[M.h];
-    if (!H) return null;
-    if (M.i >= H.step) { M.phase = 'drift'; M.d = 0; wsave(); return nextFace(); }
+    if (M.i >= H.step) { M.phase = 'gallery'; M.g = 0; wsave(); say('kondrat', `Дошёл до горизонта «${H.title}» (y ${H.y}). Рублю рудничный двор.`); return nextFace(); }
     const c = shaftW(M.i + 1);
-    return { cells: [c, [c[0], c[1] + 1, c[2]], [c[0], c[1] + 2, c[2]]], stand: c, kind: 'shaft' };
+    return { cells: col(c, 3), from: shaftW(M.i), at: c, kind: 'shaft' };
+  }
+  if (M.phase === 'gallery') {
+    const list = gOrder(M.h);
+    if (M.g >= list.length) { galleryTorches(); M.phase = 'drift'; M.n = 0; M.d = 0; wsave(); return nextFace(); }
+    const { c, from } = list[M.g];
+    return { cells: col(at2(M.h, c), 3), from: at2(M.h, from), at: at2(M.h, c), kind: 'gallery' };
   }
   if (M.phase === 'drift') {
-    if (M.d >= C.DRIFT) return null;
-    const c = driftW(M.h, M.d);
-    return { cells: [c, [c[0], c[1] + 1, c[2]]], stand: c, kind: 'drift' };
+    if (M.n >= 4) { M.phase = 'hdone'; wsave(); return null; }
+    if (M.d >= C.DRIFT) { driftEnd(null); return null; }
+    const c = driftW(M.h, M.n, M.d);
+    return { cells: col(c, 2), from: M.d ? driftW(M.h, M.n, M.d - 1) : entryW(M.h, M.n), at: c, kind: 'drift' };
   }
   if (M.phase === 'branch') {
-    if (M.b >= C.BRANCH) return null;
-    const c = branchW(M.h, M.dj, M.side, M.b);
-    return { cells: [c, [c[0], c[1] + 1, c[2]]], stand: c, kind: 'branch' };
+    const c = branchW(M.h, M.n, M.dj, M.side, M.b);
+    return { cells: col(c, 2), from: M.b ? branchW(M.h, M.n, M.dj, M.side, M.b - 1) : driftW(M.h, M.n, M.dj), at: c, kind: 'branch' };
   }
   return null;
 }
-// Ход упёрся (чужое, граница, конец): что дальше
+function galleryTorches() {
+  const M = WS.mine, [a, b, c, d] = C.galleryBox(MW().ring);
+  for (const [x, z, w] of [[a, b, 'west'], [c, b, 'east'], [a, d, 'west'], [c, d, 'east']]) { const p = at2(M.h, [x, z]); torchAt([p[0], p[1] + 1, p[2]], w); }
+}
+// Ветка кончилась (длина или упёрлась): сначала правая, потом левая, потом — дальше по коридору
+function branchEnd(blockedBy) {
+  const M = WS.mine;
+  if (blockedBy) M.msg = 'Ветка упёрлась: ' + blockedBy;
+  if (M.side === 1) { M.side = -1; M.b = 0; } else M.phase = 'drift';
+  M.back = 'junction'; M.st = 'back'; wsave();
+}
+// Коридор кончился: назад во двор и к следующему коридору
+function driftEnd(blockedBy) {
+  const M = WS.mine;
+  if (blockedBy) say('kondrat', `Коридор ${M.n + 1} упёрся: ${blockedBy}. Иду в следующий.`);
+  M.phase = 'drift'; M.back = 'entry'; M.st = 'back'; wsave();
+}
+// Ход упёрся (чужое, граница): что дальше
 function faceDone(blockedBy) {
   const M = WS.mine;
   if (M.phase === 'shaft') {
     M.blocked = blockedBy || 'ствол дальше не идёт'; M.st = 'idle'; M.msg = 'Ствол упёрся: ' + M.blocked; say('kondrat', 'Ствол дальше не идёт: ' + M.blocked + '. Глянь сам.');
-  } else if (M.phase === 'branch') {
-    if (blockedBy) M.msg = 'Ветка упёрлась: ' + blockedBy;
-    if (M.side === -1) { M.side = 1; M.b = 0; } else { M.phase = 'drift'; }
-    M.st = 'back';
-  } else if (M.phase === 'drift') {
-    if (blockedBy) say('kondrat', 'Штрек упёрся: ' + blockedBy + '. Горизонт закрываю.');
-    M.d = C.DRIFT; M.phase = 'hdone'; M.st = 'unload';
-    if (!blockedBy) M.msg = 'Горизонт выработан, несу добычу';
-  }
+  } else if (M.phase === 'gallery') { if (blockedBy) M.msg = 'Двор: ' + blockedBy; M.g++; }
+  else if (M.phase === 'branch') branchEnd(blockedBy);
+  else if (M.phase === 'drift') driftEnd(blockedBy);
   wsave();
 }
+function goBack() {
+  const M = WS.mine;
+  M.st = 'work';
+  let path;
+  if (M.back === 'junction') path = line(M.pos, driftW(M.h, M.n, M.dj));
+  else {
+    path = line(M.pos, entryW(M.h, M.n));
+    M.n++; M.d = 0;
+    if (M.n < 4) { const gp = C.galleryPath(DR()[M.n - 1].entry, DR()[M.n].entry, (x, z) => C.inGallery(MW().ring, x, z)); if (gp) for (const c of gp.slice(1)) path.push(at2(M.h, c)); }
+    else M.phase = 'hdone';
+  }
+  M.back = null; wsave();
+  walk('kondrat', dedupe(path), () => {});
+}
+// Пройти по двору горизонта (по уже вынутым клеткам)
+function localWalk(to) {
+  const M = WS.mine, h = M.h, co = corner2(h), list = gOrder(h);
+  const dug = new Set([co.join()]);
+  const lim = M.phase === 'gallery' ? M.g : list.length;
+  for (let k = 0; k < lim; k++) dug.add(list[k].c.join());
+  const a = toC(V(M.pos)), b = toC(V(to));
+  const gp = C.galleryPath([a[0], a[2]], [b[0], b[2]], (x, z) => dug.has(x + ',' + z));
+  if (!gp) { place('kondrat', to); setPos('kondrat', to); return; }
+  walk('kondrat', gp.map((c) => at2(h, c)), () => {});
+}
+const onHorizon = (p) => { const H = hz()[WS.mine.h]; return p && H && p[1] === cornerW(WS.mine.h)[1]; };
 function addBag(drops) { const M = WS.mine; for (const [it, n] of drops) { add(M.bag, it, n); add(WS.led.mined, it, n); } }
 function useFiller() {
   const M = WS.mine;
@@ -385,30 +454,31 @@ function railAt(p, dir) {
   if (!b || !C.isAirId(b.typeId) || !solidAt([p[0], p[1] - 1, p[2]])) return false;
   try { b.setPermutation(BlockPermutation.resolve('minecraft:rail', { rail_direction: dir })); M.rails--; return true; } catch (e) { report('Кондрат', 'рельс', e); return false; }
 }
-// Клетка забоя вынута: встаём в неё, ставим факел и рельс, двигаем план
+// Клетка вынута: шагнуть в неё, поставить факел и рельс, сдвинуть план
 function advance(face) {
-  const M = WS.mine, s = face.stand;
+  const M = WS.mine, s = face.at;
+  walk('kondrat', [face.from, s], () => {}, { speedBpt: 0.25 });
   if (face.kind === 'shaft') {
     M.i++;
     const tw = C.shaftTorch(M.i); if (tw) torchAt([s[0], s[1] + 1, s[2]], tw);
     if (M.layRails && M.railShaft === M.i - 1 && railAt(s, C.shaftRail(M.i))) M.railShaft = M.i;
-  } else if (face.kind === 'drift') {
+  } else if (face.kind === 'gallery') M.g++;
+  else if (face.kind === 'drift') {
     M.d++;
-    if ((M.d - 1) % C.TORCH_EVERY === 0 && !C.hasBranch(M.d - 1)) torchAt([s[0], s[1] + 1, s[2]], 'north');
-    if (M.layRails) { const k = String(M.h); if ((M.railDrift[k] || 0) === M.d - 1 && railAt(s, 1)) M.railDrift[k] = M.d; }
-    if (C.hasBranch(M.d - 1)) { M.phase = 'branch'; M.dj = M.d - 1; M.side = -1; M.b = 0; }
-    else if (M.d >= C.DRIFT) { M.phase = 'hdone'; }
+    const dr = DR()[M.n];
+    if ((M.d - 1) % C.TORCH_EVERY === 0 && !C.hasBranch(M.d - 1)) torchAt([s[0], s[1] + 1, s[2]], C.wallName(C.rightOf(dr.v)));
+    if (C.hasBranch(M.d - 1)) { M.phase = 'branch'; M.dj = M.d - 1; M.side = 1; M.b = 0; }
   } else {
     M.b++;
-    if (M.b % C.TORCH_EVERY === 0) torchAt([s[0], s[1] + 1, s[2]], 'east');
-    if (M.b >= C.BRANCH) faceDone(null);
+    if (M.b % C.TORCH_EVERY === 0) torchAt([s[0], s[1] + 1, s[2]], C.wallName(DR()[M.n].v));
+    if (M.b >= C.BRANCH) branchEnd(null);
   }
   setPos('kondrat', s);
   wsave();
 }
 
 // Работа шахтёра: один шаг за раз (таймер — в тиках игры)
-const mt = { until: 0, q: null, face: null };
+const mt = { until: 0, q: null, face: null, pending: null };
 function mineTick(now) {
   const M = WS.mine;
   if (!M.on) return;
@@ -424,15 +494,7 @@ function mineTick(now) {
       unloadAndRestock();
       return;
     }
-    if (M.st === 'back') { // вернуться из ветки в штрек
-      M.st = 'work';
-      const to = driftW(M.h, M.dj);
-      const r = [M.pos];
-      for (let b = Math.abs(M.pos[2] - to[2]) - 1; b >= 0; b--) r.push([to[0], to[1], to[2] + Math.sign(M.pos[2] - to[2]) * b]);
-      r.push(to);
-      walk('kondrat', dedupe(r), () => {});
-      return;
-    }
+    if (M.st === 'back') { goBack(); return; }
     if (M.phase === 'hdone') { M.st = 'unload'; wsave(); return; } // горизонт выработан: наверх, там решим
     if (M.phase === 'done' || M.st === 'idle') { act('kondrat', 0); return; }
     // Сумка полна или кирка кончилась — наверх
@@ -445,7 +507,7 @@ function mineTick(now) {
       if (pre.up.length) { mt.q.unshift(...pre.up, p); return; } // сначала сыпучее сверху
       breakBlock(p);
       if (mt.face) {
-        const isFeet = keyOf(p) === keyOf(mt.face.stand);
+        const isFeet = keyOf(p) === keyOf(mt.face.at);
         for (const o of afterCell(p, isFeet, top)) {
           const tier = C.TIERS[M.tool] || 0, need = { gold: 2, redstone: 2, diamond: 2, emerald: 2 }[C.oreOf(idAt(o))] || 1;
           if (tier < need) { add(M.skip, C.oreOf(idAt(o)), 1); continue; }
@@ -472,38 +534,60 @@ function mineTick(now) {
       return;
     }
     if (mt.face) { advance(mt.face); mt.face = null; mt.q = null; return; }
-    // Новый шаг: встать на конец маршрута и копать дальше
+    // Новый шаг: встать, откуда копать, и копать дальше
     const face = nextFace();
-    if (!face) { faceDone(null); return; }
-    const r = route();
-    const end = r[r.length - 1];
-    if (M.pos && keyOf(M.pos) !== keyOf(end)) { goFace(); return; }
+    if (!face) return;
+    if (!M.pos || keyOf(M.pos) !== keyOf(face.from)) {
+      if ((face.kind === 'gallery' || face.kind === 'drift') && onHorizon(M.pos) && onHorizon(face.from) && C.inGallery(MW().ring, toC(V(face.from))[0], toC(V(face.from))[2])) { localWalk(face.from); return; }
+      if (face.kind === 'gallery' && M.pos && keyOf(M.pos) === keyOf(cornerW(M.h))) { localWalk(face.from); return; }
+      goFace(); return;
+    }
     mt.face = face; mt.q = face.cells.filter((p) => { const id = idAt(p); return id && !C.isAirId(id); });
     M.st = 'work'; M.msg = workMsg(); wsave();
   } catch (err) { report('Кондрат', 'шаг работы', err); mt.until = now + 100; mt.q = null; mt.face = null; mt.pending = null; }
 }
-const dedupe = (r) => r.filter((p, i) => !i || keyOf(p) !== keyOf(r[i - 1]));
 function workMsg() {
   const M = WS.mine, H = hz()[M.h];
-  if (M.phase === 'shaft') return `Копаю ствол: глубина ${-C.shaftLevel(M.i)} (к ${H ? H.title : '…'}, y ${H ? H.y : '?'})`;
-  if (M.phase === 'drift') return `${H.title}: штрек ${M.d}/${C.DRIFT}`;
-  if (M.phase === 'branch') return `${H.title}: ветка у ${M.dj + 1}-й клетки штрека, ${M.side < 0 ? 'левая' : 'правая'}, ${M.b}/${C.BRANCH}`;
+  if (!H) return M.msg;
+  if (M.phase === 'shaft') return `Копаю ствол: глубина ${-C.shaftLevel(M.i)} из ${-C.shaftLevel(H.step)} (до горизонта «${H.title}»)`;
+  if (M.phase === 'gallery') return `${H.title}: рудничный двор ${M.g}/${gOrder(M.h).length}`;
+  if (M.phase === 'drift') return `${H.title}: коридор ${M.n + 1} из 4, ${M.d}/${C.DRIFT}`;
+  if (M.phase === 'branch') return `${H.title}: коридор ${M.n + 1} из 4, ветка ${M.side > 0 ? 'вправо' : 'влево'} у ${M.dj + 1}-й клетки, ${M.b}/${C.BRANCH}`;
   return M.msg;
 }
-// Пройти от текущей клетки по маршруту (наверх — к копру, вниз — к забою)
+// Пройти по маршруту (наверх — к копру, вниз — к забою). По стволу с рельсами — на вагонетке.
 function goAlong(toEnd) {
   const M = WS.mine, r = route();
-  let at = r.findIndex((p) => M.pos && keyOf(p) === keyOf(M.pos));
+  let pre = [], at = r.findIndex((p) => M.pos && keyOf(p) === keyOf(M.pos));
+  // стоит во дворе горизонта — сначала по двору к стволу
+  if (at < 0 && onHorizon(M.pos) && C.inGallery(MW().ring, toC(V(M.pos))[0], toC(V(M.pos))[2])) {
+    const a = toC(V(M.pos)), co = corner2(M.h);
+    const gp = C.galleryPath([a[0], a[2]], co, (x, z) => C.inGallery(MW().ring, x, z) || (x === co[0] && z === co[1]));
+    const ci = r.findIndex((p) => keyOf(p) === keyOf(cornerW(M.h)));
+    if (gp && ci >= 0) { pre = gp.map((c) => at2(M.h, c)); at = ci; }
+  }
   if (at < 0) {
-    // не на маршруте (вышли из ветки, перезапуск): ближайшая клетка маршрута
+    // не на маршруте (перезапуск): ближайшая клетка маршрута
     let best = 0, bd = Infinity;
     r.forEach((p, i) => { const d = M.pos ? Math.abs(p[0] - M.pos[0]) + Math.abs(p[1] - M.pos[1]) * 2 + Math.abs(p[2] - M.pos[2]) : i; if (d < bd) { bd = d; best = i; } });
     at = best; if (M.pos && bd > 0) place('kondrat', r[best]);
   }
-  const path = toEnd ? r.slice(at) : r.slice(0, at + 1).reverse();
-  const ride = M.railShaft >= 4 && railedTo(M) && path.length > 12;
-  // по пути кладём рельсы, если есть
-  walk('kondrat', path, () => { mt.until = system.currentTick + 5; }, { speedBpt: ride ? 0.4 : 0.2, ride });
+  const path = dedupe([...pre, ...(toEnd ? r.slice(at) : r.slice(0, at + 1).reverse())]);
+  // куски пути: по стволу (можно ехать) и пешком
+  const inShaft = new Set(r.slice(2, r.nShaft).map(keyOf));
+  const canRide = M.railShaft >= 4 && railedTo(M);
+  const segs = [];
+  for (const p of path) {
+    const ride = canRide && inShaft.has(keyOf(p));
+    if (!segs.length || segs[segs.length - 1].ride !== ride) segs.push({ ride, path: segs.length ? [segs[segs.length - 1].path.slice(-1)[0]] : [] });
+    segs[segs.length - 1].path.push(p);
+  }
+  const go = (k) => {
+    if (k >= segs.length) { mt.until = system.currentTick + 5; return; }
+    const sg = segs[k], ride = sg.ride && sg.path.length > 8;
+    walk('kondrat', dedupe(sg.path), () => go(k + 1), { speedBpt: ride ? 0.4 : 0.2, ride });
+  };
+  go(0);
 }
 const goHome = () => { WS.mine.msg = WS.mine.st === 'tool' || !WS.mine.tool ? 'Иду за киркой' : 'Несу добычу наверх'; goAlong(false); };
 const goFace = () => { WS.mine.msg = 'Иду в забой'; goAlong(true); };
@@ -548,7 +632,7 @@ function unloadAndRestock() {
   }
   if (left) { M.msg = 'Сундуки у копра полны — забери добычу'; if (system.currentTick % 1200 < 20) say('kondrat', 'Сундуки у копра полны. Забери добычу — тогда продолжу.'); mt.until = system.currentTick + 100; wsave(); return; }
   if (M.phase === 'hdone') {
-    if (M.open > M.h + 1 && hz()[M.h + 1]) { M.h++; M.phase = 'shaft'; M.d = 0; M.msg = 'Копаю глубже: ' + hz()[M.h].title; say('kondrat', 'Горизонт выработан. Иду глубже — ' + hz()[M.h].title.toLowerCase() + '.'); }
+    if (M.open > M.h + 1 && hz()[M.h + 1]) { M.h++; M.phase = 'shaft'; M.d = 0; M.n = 0; M.g = 0; M.msg = 'Копаю глубже: ' + hz()[M.h].title; say('kondrat', 'Горизонт выработан. Иду глубже — ' + hz()[M.h].title.toLowerCase() + '.'); }
     else { M.phase = 'done'; M.msg = 'Горизонт выработан. Скажи копать глубже'; say('kondrat', `${hz()[M.h].title} выработан. Скажешь копать глубже — пойду.`); }
   }
   if (M.phase === 'done') { M.st = 'idle'; act('kondrat', 0); wsave(); return; }
@@ -564,10 +648,9 @@ function layRailsDown() {
     if (!railAt(shaftW(j), C.shaftRail(j))) { const id = idAt(shaftW(j)); if (id && /rail/.test(id)) { M.railShaft = j; continue; } break; }
     M.railShaft = j;
   }
-  const k = String(M.h);
-  if (M.phase !== 'shaft') while (M.rails > 0 && (M.railDrift[k] || 0) < M.d) { const d = M.railDrift[k] || 0; if (!railAt(driftW(M.h, d), 1) && !/rail/.test(idAt(driftW(M.h, d)) || '')) break; M.railDrift[k] = d + 1; }
   wsave();
 }
+
 // Счёт: добыто = в сумке + сдано + потрачено. Если не сходится — ошибка в чат.
 export function checkLedger() {
   const L = WS.led, M = WS.mine, bad = [];
@@ -860,7 +943,7 @@ function keepArea(what, o) {
   runCmd(`tickingarea remove ${name}`);
   if (!WS.keep || !o) return;
   if (what === 'mine') {
-    const r = MW().ring, a = Wc([r[0] - C.DRIFT - 4, 0, r[1] - C.BRANCH - 3]), b = Wc([r[2] + 2, 0, r[3] + C.BRANCH + 3]);
+    const r = MW().ring, e = C.GALLERY + C.DRIFT + C.BRANCH + 2, a = Wc([r[0] - e, 0, r[1] - e]), b = Wc([r[2] + e, 0, r[3] + e]);
     runCmd(`tickingarea add ${a.x} 0 ${a.z} ${b.x} 0 ${b.z} ${name}`);
   } else {
     let mn = [Infinity, Infinity], mx = [-Infinity, -Infinity];
@@ -949,7 +1032,7 @@ export function workCommand(msg, src) {
     const M = WS.mine, B = WS.build;
     out.push(`§6[Работники]§r скорость ×${WS.fast}, участки держатся: ${WS.keep ? 'да' : 'нет'}, тик игры ≈${Math.round(tickMs)} мс`);
     for (const id of Object.keys(WORKERS)) { const e = entOf(id); out.push(`${WORKERS[id].name}: ${e ? 'на месте (' + [e.location.x, e.location.y, e.location.z].map(Math.floor).join(' ') + ')' : 'нет существа'}${movers[id] ? ', идёт' : ''}`); }
-    out.push(`Кондрат: ${M.on ? 'работает' : 'отдыхает'}, сост. ${M.st}, фаза ${M.phase}, шаг ствола ${M.i}, горизонт ${M.h + 1}/${M.open}, штрек ${M.d}, ветка ${M.side}:${M.b}; ${M.msg}`);
+    out.push(`Кондрат: ${M.on ? 'работает' : 'отдыхает'}, сост. ${M.st}, фаза ${M.phase}, шаг ствола ${M.i}, горизонт ${M.h + 1}/${M.open}, двор ${M.g}, коридор ${M.n + 1}: ${M.d}, ветка ${M.side > 0 ? 'вправо' : 'влево'} ${M.b}; ${M.msg}`);
     out.push(mineReport());
     out.push(`Мирон: сост. ${B.st}, заказ ${B.order || 'нет'}, осталось ${bt.jobs ? bt.jobs.length : '?'}, поставлено ${B.placed}, разобрано ${B.removed}, лесов ${B.scaff.length}, переходов напрямик ${WS.dbgDirect || 0}; ${B.msg}`);
     out.push(`Тележка Мирона: ${Object.entries(B.cart).map(([c, n]) => C.CAT_NAME[c] + ' ' + n).join(', ') || 'пусто'}`);
