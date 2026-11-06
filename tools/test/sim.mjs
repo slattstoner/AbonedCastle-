@@ -625,7 +625,16 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
   // Игрок забирает добычу, когда сундуки у копра полны (Кондрат тогда ждёт)
   let taken = 0, picks = 0;
   const takeLoot = () => { for (const c of CASTLE.works.mine.chests) { const ci = blockAt(W(c)).getComponent('minecraft:inventory').container; for (let i = 0; i < ci.size; i++) { const it = ci.getItem(i); if (it) { taken += it.amount; ci.setItem(i); } } } };
-  const runUntil = (cond, max, what) => { let n = 0; while (!cond() && n < max) { ticks(1); n++; if (n % 200 === 0) { const m = ws().mine.msg; if (/полны/.test(m)) takeLoot(); if (/Нужна кирка/.test(m)) { picks++; blockAt(W(CASTLE.works.mine.barrel)).getComponent('minecraft:inventory').container.addItem(new ItemStack('minecraft:iron_pickaxe', 1)); } } } if (!cond()) problems.push('не дождались: ' + what + ` (за ${n} шагов)`); return n; };
+  // Где на самом деле стоит шахтёр: существо должно быть там, где он копает (рядом с клеткой
+  // из своего состояния), а не стоять наверху, пока шахта «копается сама»
+  const follow = { n: 0, ok: 0, minY: Infinity, worst: 0 };
+  const sample = () => {
+    const e = wk('kondrat'), m = ws().mine;
+    if (!e || !m.pos || m.st !== 'work' || m.walking) return;
+    const d = Math.hypot(e.location.x - (m.pos[0] + 0.5), e.location.y - m.pos[1], e.location.z - (m.pos[2] + 0.5));
+    follow.n++; if (d <= 1.6) follow.ok++; follow.worst = Math.max(follow.worst, d); follow.minY = Math.min(follow.minY, e.location.y);
+  };
+  const runUntil = (cond, max, what) => { let n = 0; while (!cond() && n < max) { ticks(1); n++; if (n % 7 === 0) sample(); if (n % 200 === 0) { const m = ws().mine.msg; if (/полны/.test(m)) takeLoot(); if (/Нужна кирка/.test(m)) { picks++; blockAt(W(CASTLE.works.mine.barrel)).getComponent('minecraft:inventory').container.addItem(new ItemStack('minecraft:iron_pickaxe', 1)); } } } if (!cond()) problems.push('не дождались: ' + what + ` (за ${n} шагов)`); return n; };
   const inv = (c) => blockAt(W(c)).getComponent('minecraft:inventory').container;
   ticks(25);
   expect(wk('kondrat') && wk('miron'), 'работники появились у копра и на дворе строителя');
@@ -644,6 +653,11 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
   expect(H.length === 3 && H[0].y < O.y - 15 && Math.abs(H[1].y - 16) <= 12 && H[2].y >= -60 && H[2].y <= -48 && /Уголь/.test(H[0].title), 'горизонты: ' + H.map((h) => h.title + ' y ' + h.y).join(', '));
   let n = runUntil(() => ws().mine.phase === 'done', 40000, '1-й горизонт выработан');
   const st = ws();
+  console.log(`  шахтёр там, где копает: ${follow.ok} из ${follow.n} проверок, глубже всего был на y ${Math.round(follow.minY)} (горизонт y ${H[0].y}), дальше всего от забоя ${follow.worst.toFixed(1)} бл.`);
+  expect(follow.n > 50 && follow.ok / follow.n > 0.9, 'шахтёр стоит у забоя, а не наверху');
+  expect(follow.minY <= H[0].y + 1, 'шахтёр спустился до горизонта сам');
+  { let torches = 0; for (const [k, b] of blocks) if (b.typeId === 'minecraft:torch') { const [x, y, z] = k.split(',').map(Number); if (y < O.y && Math.abs(x - W(CASTLE.works.mine.ring).x) < 60) torches++; }
+    console.log(`  факелов в шахте: ${torches}`); expect(torches >= 30, 'шахта освещена факелами: ' + torches); }
   console.log(`Шахтёр, 1-й горизонт: ${n} шагов прогона, выкопано ${st.mine.dug}, добыто: ${Object.entries(st.led.mined).map(([k, v]) => k.replace('minecraft:', '') + ' ' + v).join(', ')}; заделано дыр ${st.mine.sealed || 0}`);
   expect(st.mine.dug > 400, 'выкопано больше 400 блоков: ' + st.mine.dug);
   // Ствол: в каждой клетке спуска три блока воздуха, столб цел
@@ -746,6 +760,26 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
   msgs.length = 0; work('ledger');
   expect(msgs.some((m) => /Счёт сходится/.test(m)), 'счёт сходится после глубинного горизонта');
   await talkW('kondrat', 'Передохни');
+  // --- Решётка ворот ---
+  {
+    const G = CASTLE.portcullis, cell = (r, k) => blockAt(W(G.rows[r][k]));
+    for (const c of G.levers) blockAt(W(c)).setType('minecraft:lever'); // в макете блоков замка нет
+    const pull = () => { for (const h of handlers.block) h({ player, block: blockAt(W(G.levers[0])), itemStack: undefined }); };
+    expect(G.rows.every((row) => row.every((c) => blockAt(W(c)).typeId !== 'minecraft:iron_bars')), 'решётка поднята');
+    pull(); ticks(1);
+    expect(cell(3, 0).typeId === 'minecraft:iron_bars' && cell(0, 0).typeId !== 'minecraft:iron_bars', 'решётка опускается по рядам (сначала верхний)');
+    ticks(10);
+    expect(G.rows.every((row) => row.every((c) => blockAt(W(c)).typeId === 'minecraft:iron_bars')), 'решётка опущена до земли');
+    pull(); ticks(10);
+    expect(G.rows.every((row) => row.every((c) => blockAt(W(c)).typeId === 'minecraft:air')), 'решётка поднята рычагом');
+    // в проёме стоит игрок — нижний ряд ждёт
+    const was = { ...player.location }; player.location = { ...W(G.rows[0][2]), x: W(G.rows[0][2]).x + 0.5, z: W(G.rows[0][2]).z + 0.5 };
+    pull(); ticks(10);
+    expect(cell(2, 2).typeId === 'minecraft:iron_bars' && cell(1, 2).typeId === 'minecraft:air' && cell(0, 2).typeId === 'minecraft:air', 'решётка не опускается на игрока (ни на ноги, ни на голову)');
+    player.location = was; ticks(10);
+    expect(cell(0, 2).typeId === 'minecraft:iron_bars', 'игрок ушёл — решётка опустилась');
+    pull(); ticks(10);
+  }
   // --- Строитель ---
   work('fill');
   const O1 = CASTLE.orders.find((o) => o.step === 'wood');

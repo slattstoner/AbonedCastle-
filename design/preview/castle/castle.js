@@ -1181,9 +1181,15 @@
     for (let x = g1; x <= g2; x++) { b.set(x, 5, GZ2 - 1, 'iron_bars'); b.set(x, 4, GZ2 - 1, 'iron_bars'); }
     box(g1, 14, GZ1, g2, 14, GZ2, (x, y, z) => { if (z === GZ1 || z === GZ2) b.set(x, y, z, STONE); });
     box(g1, 15, GZ1, g2, 15, GZ2, (x, y, z) => { if ((z === GZ1 || z === GZ2) && (x + z) % 2 === 0) b.set(x, y, z, STONE); });
-    b.door(g1, 0, GZ1 + 1, 'w', 'dark_oak_door', true); b.door(g2, 0, GZ1 + 1, 'e', 'dark_oak_door', true);
+    // Опускная решётка: висит под аркой (два ряда сверху), рычагом опускается до земли.
+    // Ряды ставят и убирают скрипты (tools/scripts/gate.js), по одному — видно, как она идёт.
+    // Рычаги: у ворот со стороны двора, снаружи и у лебёдки в каждой надвратной башне.
+    const gateLevers = [[g1 - 1, 0, GZ1 - 1], [g2 + 1, 0, GZ2 + 1]];
+    for (const c of gateLevers) b.set(...c, 'lever');
+    // ряды решётки снизу вверх (y 0…3); верхние два ряда (y 4, 5) висят всегда
+    b.gate = { rows: [0, 1, 2, 3].map((y) => [...Array(g2 - g1 + 1).keys()].map((k) => [g1 + k, y, GZ2 - 1])), levers: gateLevers };
     for (const x of [g1 - 1, g2 + 1]) { lamp(b, x, 4, GZ2 + 1); lamp(b, x, 4, GZ1 - 1); b.set(x, 6, GZ2 + 1, 'red_banner', { f: 'n' }); }
-    b.mark('room', CX, 0, SZ, 'Ворота', 'Проезд между двух надвратных башен, поднятая решётка, тяжёлые створки. Над аркой — каменный переход.');
+    b.mark('room', CX, 0, SZ, 'Ворота', 'Проезд между двух надвратных башен. Опускная решётка: рычаг у ворот со двора, снаружи и у лебёдки в надвратных башнях. Над аркой — каменный переход.');
     for (let k = 0; k <= 8; k++) {
       b.set(CX - 21 + k, k, SZ - 1, 'stone_brick_stairs', { f: 'e' }); solid(b, CX - 21 + k, -1, SZ - 1, CX - 21 + k, k - 1, SZ - 1, MOSSY);
       b.set(CX + 21 - k, k, SZ - 1, 'stone_brick_stairs', { f: 'w' }); solid(b, CX + 21 - k, -1, SZ - 1, CX + 21 - k, k - 1, SZ - 1, MOSSY);
@@ -1518,6 +1524,7 @@
       K.stand(x1 + 3, 0, SZ); K.chair(x1 + 2, 0, SZ, 'e'); K.chair(x1 + 4, 0, SZ, 'w');
       const wx = west ? x1 + 5 : x1 + 1; // ближе к проезду
       put(wx, 0, SZ - 1, 'grindstone'); for (let y = 1; y <= 7; y++) put(wx, y, SZ - 1, 'iron_chain');
+      put(wx, 0, SZ, 'lever'); if (b.gate) b.gate.levers.push([wx, 0, SZ]); // лебёдка решётки
       put(wx, 0, SZ - 2, 'chest', { f: west ? 'w' : 'e', ...(west ? { slot: 'gatehouse' } : { theme: 'soldier' }) });
       put(west ? x1 + 5 : x1 + 1, 0, SZ + 2, 'barrel', { f: 'u' });
       arms(x1 + 2, 2, SZ + 2, 's', 'iron_spear'); arms(x1 + 4, 2, SZ + 2, 's', 'crossbow');

@@ -25,7 +25,7 @@ const PACK = {
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 9, 1],
+  version: [0, 9, 2],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -687,7 +687,9 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
       if (!free(works.yard.home)) warn('замок: место строителя занято');
       for (const [x, z] of [[works.mine.ring[0], works.mine.ring[1]]]) for (const k of Object.keys(protect)) { const [cx, cz] = k.split(',').map(Number); if (Math.abs(cx - (x >> 3)) <= 1 && Math.abs(cz - (z >> 3)) <= 1) warn('замок: шахта рядом с подземельем'); }
     }
-    const data = { version: PACK.version.join('.'), build: bodyPieces, works, orders, protect, origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
+    if (!b.gate) warn('замок: нет решётки ворот');
+    else for (const c of b.gate.levers) { const v = map.get(K(...c)); if (!v || v.id !== 'lever') warn(`замок: рычаг решётки (${c.join(',')}) не встал`); }
+    const data = { version: PACK.version.join('.'), build: bodyPieces, works, orders, protect, portcullis: b.gate, origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
     fs.mkdirSync(path.join(ROOT, 'build/sim'), { recursive: true });
     fs.writeFileSync(path.join(ROOT, 'build/sim/structures.json'), JSON.stringify(SIM_DUMP));
     // Что ставит строитель: клетки заказа в координатах замка и палитра блоков. Строитель

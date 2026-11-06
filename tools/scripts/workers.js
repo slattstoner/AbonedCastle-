@@ -38,7 +38,7 @@ function wfresh(origin) {
     mine: { on: false, st: 'idle', msg: 'Ждёт кирку в бочке у копра', i: 0, h: 0, open: 1, phase: 'shaft', g: 0, n: 0, d: 0, dj: 0, side: 1, b: 0, back: null,
       bag: {}, tool: null, uses: 0, torch: 0, rails: 0, layRails: false, railShaft: 0, veins: [], skip: {}, pos: null, dug: 0, blocked: null },
     build: { st: 'idle', msg: 'Ждёт заказа', order: null, done: {}, cart: {}, scaff: [], pos: null, placed: 0, removed: 0, need: null },
-    led: { mined: {}, dep: {}, used: {} },
+    led: { mined: {}, dep: {}, used: {}, given: {} },
     bled: { took: {}, placed: {}, back: {}, reclaimed: {} },
     errs: [],
   };
@@ -174,6 +174,7 @@ const movers = {};
 function walk(id, path, done, { speedBpt = 0.2, ride = false } = {}) {
   if (!path || path.length < 2) { if (path && path.length) setPos(id, path[path.length - 1]); done(); return; }
   movers[id] = { path, i: 0, t: 0, v: speedBpt, done, ride, cart: null };
+  (id === 'kondrat' ? WS.mine : WS.build).walking = true;
 }
 function setPos(id, p) { if (id === 'kondrat') WS.mine.pos = p; else WS.build.pos = p; wsave(); }
 function moveTick(id, dt) {
@@ -197,6 +198,7 @@ function moveTick(id, dt) {
   if (last) {
     if (m.cart) try { m.cart.remove(); } catch (err) { /* нет */ }
     delete movers[id];
+    (id === 'kondrat' ? WS.mine : WS.build).walking = false;
     setPos(id, a);
     act(id, 0);
     m.done();
@@ -599,7 +601,7 @@ function unloadAndRestock() {
   let left = 0;
   for (const [it, n] of Object.entries({ ...M.bag })) {
     // уголь на факелы и камень на заделку оставляем себе понемногу
-    const keep = it === 'minecraft:coal' ? Math.min(n, 4) : C.FILLER[0] === it ? Math.min(n, 32) : 0;
+    const keep = it === 'minecraft:coal' ? Math.min(n, 16) : C.FILLER[0] === it ? Math.min(n, 32) : 0;
     let put = n - keep;
     for (const inv of chests) put = putItems(inv, it, put);
     const moved = n - keep - put;
@@ -624,6 +626,22 @@ function unloadAndRestock() {
     hold('kondrat', `minecraft:${best}_pickaxe`);
     say('kondrat', `Взял ${({ wooden: 'деревянную', stone: 'каменную', golden: 'золотую', iron: 'железную', diamond: 'алмазную', netherite: 'незеритовую' })[best]} кирку. За работу.`);
   }
+  // Свет: факелы из бочки; нет — уголь из бочки; нет — свой уголь из сундуков с добычей
+  if (M.torch < 24) {
+    const tHave = countIn(inv, (id) => id === 'minecraft:torch')['minecraft:torch'] || 0;
+    const t = Math.min(tHave, 64 - M.torch);
+    if (t) { takeOut(inv, 'minecraft:torch', t); M.torch += t; }
+  }
+  if (M.torch < 24 && (M.bag['minecraft:coal'] || 0) < 8) {
+    const want = 8 - (M.bag['minecraft:coal'] || 0);
+    const fromBarrel = Math.min(want, countIn(inv, (id) => id === 'minecraft:coal' || id === 'minecraft:charcoal')['minecraft:coal'] || 0);
+    if (fromBarrel) { takeOut(inv, 'minecraft:coal', fromBarrel); add(M.bag, 'minecraft:coal', fromBarrel); add(WS.led.given, 'minecraft:coal', fromBarrel); }
+    let left = want - fromBarrel;
+    for (const ci of chests) { if (left <= 0) break; const got = left - takeOut(ci, 'minecraft:coal', left); if (got) { add(M.bag, 'minecraft:coal', got); add(WS.led.dep, 'minecraft:coal', -got); left -= got; } }
+  }
+  if (M.torch <= 0 && !(M.bag['minecraft:coal'] > 0)) {
+    if (!M.darkSaid) { M.darkSaid = true; say('kondrat', 'Нечем светить. Положи факелы или уголь в бочку у копра — без света в шахте нечисть заведётся.'); }
+  } else M.darkSaid = false;
   if (M.layRails) {
     const have = countIn(inv, (id) => id === 'minecraft:rail')['minecraft:rail'] || 0;
     const want = Math.max(0, 64 - M.rails);
@@ -654,8 +672,9 @@ function layRailsDown() {
 // Счёт: добыто = в сумке + сдано + потрачено. Если не сходится — ошибка в чат.
 export function checkLedger() {
   const L = WS.led, M = WS.mine, bad = [];
-  for (const it of new Set([...Object.keys(L.mined), ...Object.keys(L.dep), ...Object.keys(L.used), ...Object.keys(M.bag)])) {
-    const a = L.mined[it] || 0, b = (M.bag[it] || 0) + (L.dep[it] || 0) + (L.used[it] || 0);
+  L.given = L.given || {};
+  for (const it of new Set([...Object.keys(L.mined), ...Object.keys(L.dep), ...Object.keys(L.used), ...Object.keys(M.bag), ...Object.keys(L.given)])) {
+    const a = (L.mined[it] || 0) + (L.given[it] || 0), b = (M.bag[it] || 0) + (L.dep[it] || 0) + (L.used[it] || 0);
     if (a !== b) bad.push(`${it.replace('minecraft:', '')}: добыто ${a}, а учтено ${b}`);
   }
   if (bad.length) report('Кондрат', 'счёт не сходится: ' + bad.join('; '));
@@ -962,7 +981,7 @@ function mineReport() {
   const top = (m) => Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => `${k.replace('minecraft:', '')} ${n}`).join(', ') || 'пусто';
   return [
     `§7Сейчас:§r ${M.on ? (M.st === 'work' ? workMsg() : M.msg) : 'отдыхает'}`,
-    `§7Кирка:§r ${M.tool ? `${TOOLS_RU[M.tool]}, хватит ещё на ${Math.max(0, M.uses)} блоков` : 'нет'}`,
+    `§7Кирка:§r ${M.tool ? `${TOOLS_RU[M.tool]}, хватит ещё на ${Math.max(0, M.uses)} блоков` : 'нет'}. §7Факелов:§r ${M.torch}${M.bag['minecraft:coal'] ? `, угля на факелы ${M.bag['minecraft:coal']}` : ''}`,
     `§7Горизонты:§r ${hz().map((h, k) => `${h.title} (y ${h.y})${k < M.open ? '' : ' — закрыт'}`).join('; ')}`,
     `§7Выкопано блоков:§r ${M.dug}. §7В сумке:§r ${top(M.bag)}`,
     `§7В сундуках у копра:§r ${top(inChest)}`,
@@ -974,7 +993,7 @@ async function minerTalk(pl) {
   const M = WS.mine;
   const btn = [];
   const f = new ActionFormData().title(WORKERS.kondrat.name);
-  let intro = M.on ? '' : 'Рудокоп я. Шахту дадите — накопаю. Кирку положите в бочку у копра, а добычу я сам в сундуки сложу.\n\n';
+  let intro = M.on ? '' : 'Рудокоп я. Шахту дадите — накопаю. В бочку у копра положите кирку, а для света — факелы или уголь. Добычу я сам в сундуки сложу.\n\n';
   f.body(intro + mineReport());
   if (!M.on) btn.push(['Начинай копать', () => { M.on = true; M.st = M.tool ? 'work' : 'tool'; keepArea('mine', true); say('kondrat', 'Ну, с богом. Пошёл.'); }]);
   else btn.push(['Передохни', () => { M.on = false; act('kondrat', 0); keepArea('mine', null); say('kondrat', 'Передохну. Скажешь — продолжу.'); }]);
@@ -1053,8 +1072,8 @@ export function workCommand(msg, src) {
   } else if (cmd === 'fill') {
     const st = containers(YW().store), br = containers([MW().barrel], 'minecraft:barrel');
     if (st) { for (const inv of st) { putItems(inv, 'minecraft:cobblestone', 1280); putItems(inv, 'minecraft:spruce_log', 256); putItems(inv, 'minecraft:glass', 64); putItems(inv, 'minecraft:iron_ingot', 32); } }
-    if (br) { putItems(br[0], 'minecraft:iron_pickaxe', 3); putItems(br[0], 'minecraft:rail', 64); }
-    out.push('Положил на склад строителя камень, брёвна, стекло, железо; в бочку у копра — 3 железные кирки и рельсы.');
+    if (br) { putItems(br[0], 'minecraft:iron_pickaxe', 3); putItems(br[0], 'minecraft:rail', 64); putItems(br[0], 'minecraft:torch', 64); }
+    out.push('Положил на склад строителя камень, брёвна, стекло, железо; в бочку у копра — 3 железные кирки, рельсы и факелы.');
   } else if (cmd === 'orders') out.push(ORDERS().map((o) => `${WS.build.done[o.id] ? '✓' : orderOpen(o) ? '•' : '·'} ${o.id}: ${o.title}`).join('\n'));
   else if (cmd === 'order') { const err = startOrder(arg); out.push(err || 'Заказ начат: ' + arg); }
   else if (cmd === 'reset') {

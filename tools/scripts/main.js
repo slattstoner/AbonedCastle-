@@ -27,6 +27,7 @@ import { placesTick } from './places.js';
 import { guideTick } from './guide.js';
 import { CASTLE } from './castle_data.js';
 import { workTick, workCommand, workerTalk, workerIdOf } from './workers.js';
+import { isGateLever, toggleGate, gateTick, gateCommand } from './gate.js';
 
 const story = () => !!(S && S.origin); // сюжет идёт (замок поставлен)
 const warn = (what, e) => console.warn(`acastle ${what}: ${e}${e && e.stack ? '\n' + e.stack : ''}`);
@@ -63,6 +64,7 @@ world.afterEvents.itemUse.subscribe(({ source, itemStack }) => {
 const OWN_ACTION = /chest|barrel|door|gate|lever|button|lectern|bed|table|furnace|smoker|anvil|grindstone|loom|stonecutter|brewing|cauldron|campfire|bell|shelf|frame|sign|composter|hopper|dispenser|dropper|jukebox|noteblock|beehive|pot|shulker/;
 world.afterEvents.playerInteractWithBlock.subscribe((ev) => {
   if (!story()) return;
+  if (ev.block && ev.block.typeId === 'minecraft:lever' && isGateLever(ev.block)) { toggleGate(); return; } // решётка ворот
   // Запасной путь для книги: на телефоне долгое нажатие по земле с книгой в руке
   if (ev.itemStack && ev.itemStack.typeId === 'acastle:quest_book' && !OWN_ACTION.test(ev.block.typeId)) openBook(ev.player);
   try { onEvent('block', api, ev); } catch (e) { warn('block', e); }
@@ -74,6 +76,7 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
     if (ev.id === 'acastle:status') status();
     else if (ev.id === 'acastle:jump' && story()) { jump(parseInt(ev.message, 10) || 0, api); flush(); }
     else if (ev.id === 'acastle:work') workCommand(ev.message, ev.sourceEntity);
+    else if (ev.id === 'acastle:gate') gateCommand(ev.message, ev.sourceEntity);
     else if (ev.id === 'acastle:castle_build' && ev.sourceEntity) beginBuild(ev.sourceEntity.location);
     else if (ev.id === 'acastle:castle_placed' && ev.sourceEntity) placedByCommand(ev.sourceEntity.location);
   } catch (e) { warn(ev.id, e); }
@@ -111,6 +114,7 @@ system.runInterval(() => {
   if (!S) load();
   if (S.build) try { buildTick(); } catch (e) { warn('стройка', e); }
   try { workTick(); } catch (e) { warn('работники', e); }
+  try { gateTick(); } catch (e) { warn('ворота', e); }
 }, 1);
 // Общий цикл: путеводитель — дважды в секунду, остальное — раз в секунду, жители — раз в 3 секунды
 let tick = 0;
