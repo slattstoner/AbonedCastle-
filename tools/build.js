@@ -25,7 +25,7 @@ const PACK = {
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 9, 2],
+  version: [0, 9, 3],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -687,9 +687,69 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
       if (!free(works.yard.home)) warn('замок: место строителя занято');
       for (const [x, z] of [[works.mine.ring[0], works.mine.ring[1]]]) for (const k of Object.keys(protect)) { const [cx, cz] = k.split(',').map(Number); if (Math.abs(cx - (x >> 3)) <= 1 && Math.abs(cz - (z >> 3)) <= 1) warn('замок: шахта рядом с подземельем'); }
     }
+    // ---------- Кузня и гарнизон (с 0.9.3) ----------
+    // Путь по клеткам, где может стоять игрок (поиск в ширину, как пути от ворот)
+    const snap = (c, what) => { const n = nearest(c, (x, y, z) => standOk(x, y, z) || (x === c[0] && y === c[1] && z === c[2] && W.has(x, y, z)), 4); if (!n) warn(`замок: нет места «${what}» у (${c.join(',')})`); else if (Math.hypot(n[0] - c[0], n[2] - c[2]) > 4 || n[1] !== c[1]) warn(`замок: «${what}» сдвинуто с (${c.join(',')}) на (${n.join(',')})`); return n; };
+    function bfsPath(a, z, what) {
+      if (!a || !z) return null;
+      const prev = new Map([[K(...a), null]]), q2 = [a];
+      for (let h = 0; h < q2.length; h++) {
+        const [x, y, zz] = q2[h];
+        if (x === z[0] && y === z[1] && zz === z[2]) break;
+        const nb = [[x, y + 1, zz], [x, y - 1, zz]];
+        for (const [dx, dz] of N4) for (let dy = 1; dy >= -6; dy--) if (W.has(x + dx, y + dy, zz + dz)) { nb.push([x + dx, y + dy, zz + dz]); break; }
+        for (const n of nb) { const kk = K(...n); if (W.has(...n) && !prev.has(kk)) { prev.set(kk, [x, y, zz]); q2.push(n); } }
+      }
+      if (!prev.has(K(...z))) { warn(`замок: нет пути «${what}»`); return null; }
+      const out = [];
+      for (let c = z; c; c = prev.get(K(...c))) out.push(c);
+      return out.reverse().flat();
+    }
+    const WK = b.works;
+    // Кузня: подмастерье ходит от кузни к шахте и к складу строителя
+    const forge = { ...WK.forge, toMine: bfsPath(WK.forge.apprentice, WK.mine.apprentice, 'кузня → шахта'), toYard: bfsPath(WK.forge.apprentice, WK.yard.apprentice, 'кузня → двор строителя') };
+    for (const [c, what] of [[WK.forge.apprentice, 'подмастерье у кузни'], [WK.mine.apprentice, 'подмастерье у шахты'], [WK.yard.apprentice, 'подмастерье у склада'], [WK.forge.anvilStand, 'кузнец у наковальни'], [WK.forge.furnaceStand, 'кузнец у печи']]) if (!(free(...c) && free(c[0], c[1] + 1, c[2]) && freeFull(...c) && freeFull(c[0], c[1] + 1, c[2]))) warn(`замок: место «${what}» (${c.join(',')}) занято`);
+    // Что кузнец куёт — видно в рамке на верстаке: на каждый предмет — шаблон из одной рамки
+    const SHOW = ['iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots', 'iron_sword', 'iron_pickaxe', 'diamond_helmet', 'diamond_chestplate', 'diamond_leggings', 'diamond_boots', 'diamond_sword', 'diamond_pickaxe', 'rail', 'iron_ingot'];
+    for (const it of [...SHOW, null]) {
+      if (it && !VANILLA_ITEMS.has('minecraft:' + it)) warn('рамка кузни: неизвестный предмет ' + it);
+      const blk = { x: 0, y: 0, z: 0, id: 'item_frame', f: 'u', ...(it ? { item: it, keep: 1 } : {}) };
+      write(`structures/${NS}/forge_show_${it || 'empty'}.mcstructure`, mcstructure([1, 1, 1], [{ x: 0, y: 0, z: 0, block: toBedrock(blk, () => ({ id: 'spruce_slab' }), BLOCKS) }]));
+    }
+    forge.show = SHOW;
+    // Гарнизон: койки в казарме, посты, обходы, пути от койки к посту
+    const beds = [...b.blocks.values()].filter((v) => /_bed$/.test(v.id) && !v.head && v.x >= 10 && v.x <= 34 && v.z >= 70 && v.z <= 80).sort((p2, q3) => p2.y - q3.y || p2.x - q3.x);
+    if (beds.length !== 14) warn(`замок: в казарме ${beds.length} коек, а гарнизону нужно 14`);
+    const bedStand = beds.map((v, i) => nearest([v.x, v.y, v.z + 2], (x, y, z) => y === v.y && standOk(x, y, z), 8) || warn(`замок: у койки ${i} нет места`));
+    const info2 = b.castleInfo, X2c = info2.X2, Z2c = info2.Z2, CXc = info2.CX;
+    const posts = {
+      gate_l: npc.POSTS.find((q3) => q3.guard === 'ostap').at, gate_r: npc.POSTS.find((q3) => q3.guard === 'mitka').at,
+      keep_l: snap([CXc - 2, 0, info2.KZ + 50], 'пост у входа в донжон'), keep_r: snap([CXc + 2, 0, info2.KZ + 50], 'пост у входа в донжон'),
+      tower_nw: snap([6, 0, 6], 'дозор башни'), tower_ne: snap([X2c - 6, 0, 6], 'дозор башни'), tower_sw: snap([6, 0, Z2c - 6], 'дозор башни'), tower_se: snap([X2c - 6, 0, Z2c - 6], 'дозор башни'),
+      arch_l: npc.POSTS.find((q3) => q3.guard === 'savva').at, arch_r: [2 * CXc - npc.POSTS.find((q3) => q3.guard === 'savva').at[0], 16, npc.POSTS.find((q3) => q3.guard === 'savva').at[2]],
+    };
+    for (const [k, c] of Object.entries(posts)) if (c && !(standOk(...c) || (k.startsWith('arch') && freeFull(...c)))) warn(`замок: пост ${k} (${c.join(',')}) занят`);
+    // Обходы: по точкам двора, путь между точками — по клеткам, где можно пройти; петля
+    const ROUTES = {
+      patrol_yard: { title: 'дозор по двору: площадь — кузня — шахта — казарма', pts: [[63, 0, 112], [46, 0, 100], [24, 0, 102], [20, 0, 106], [22, 0, 84], [36, 0, 76], [44, 0, 90]] },
+      patrol_keep: { title: 'обход донжона: огород — амбар — дом управителя — ристалище — часовня', pts: [[63, 0, 68], [40, 0, 62], [38, 0, 30], [40, 0, 10], [63, 0, 9], [88, 0, 10], [90, 0, 40], [86, 0, 64]] },
+    };
+    const routes = {};
+    for (const [id, r] of Object.entries(ROUTES)) {
+      const pts = r.pts.map((c) => snap(c, r.title));
+      const flat2 = [];
+      for (let k = 0; k < pts.length; k++) { const seg = bfsPath(pts[k], pts[(k + 1) % pts.length], r.title); if (seg) flat2.push(...seg.slice(0, -3)); }
+      routes[id] = { title: r.title, path: flat2 };
+      posts[id] = flat2.slice(0, 3);
+    }
+    const roster = npc.GARRISON.map((g) => ({ ...g }));
+    const paths2 = {};
+    for (const g of roster) if (g.bed !== undefined && bedStand[g.bed] && posts[g.post]) paths2[g.id] = bfsPath(bedStand[g.bed], posts[g.post], `${g.name}: от койки на пост`);
+    const garrison = { roster, posts, beds: bedStand, routes, paths: paths2 };
+    console.log(`Гарнизон: ${roster.length} стражников (смены ${roster.filter((g) => g.bed !== undefined).length}, коек ${beds.length}), обходы: ${Object.entries(routes).map(([k, r]) => k + ' ' + r.path.length / 3).join(', ')} клеток; кузня — путей подмастерья ${[forge.toMine, forge.toYard].filter(Boolean).length}/2`);
     if (!b.gate) warn('замок: нет решётки ворот');
     else for (const c of b.gate.levers) { const v = map.get(K(...c)); if (!v || v.id !== 'lever') warn(`замок: рычаг решётки (${c.join(',')}) не встал`); }
-    const data = { version: PACK.version.join('.'), build: bodyPieces, works, orders, protect, portcullis: b.gate, origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
+    const data = { version: PACK.version.join('.'), build: bodyPieces, works, orders, protect, portcullis: b.gate, forge, garrison, origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
     fs.mkdirSync(path.join(ROOT, 'build/sim'), { recursive: true });
     fs.writeFileSync(path.join(ROOT, 'build/sim/structures.json'), JSON.stringify(SIM_DUMP));
     // Что ставит строитель: клетки заказа в координатах замка и палитра блоков. Строитель

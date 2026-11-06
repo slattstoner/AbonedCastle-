@@ -7,6 +7,8 @@ import { LATE_NPCS, LATE_CONTRACTS, LATE_QUESTS, STARTS, lateDialog, lateEvent, 
 
 // ---------- Жители ----------
 // start — где живёт с самого начала: 'post' (пост стражника), 'home' (комната в замке), null — ещё не пришёл.
+// Крючки для модулей, которые сюжет не импортирует (гарнизон: окно капитана)
+export const HOOKS = {};
 export const NPCS = {
   ostap: { name: 'Стражник Остап', guard: true, start: 'post' },
   mitka: { name: 'Стражник Митька', guard: true, start: 'post' },
@@ -208,7 +210,8 @@ export function dialog(id, api, pl) {
         options: [{ text: 'Что дальше?', run: (a) => { a.flag('s1_talked', 1); stage1Check(a); }, next: { text: 'Держать стены. И точить мечи — а с этим без кузнеца никак.' } }],
       };
       if (S.f.tidy_demyan && !S.f.tidy_demyan_said) { api.flag('tidy_demyan_said', 1); return { text: 'Я тут порядок навёл: караульный этаж, своя комната, оружие по стойкам. Теперь это гарнизон, а не развалины.', options: [bye] }; }
-      return { text: ['Стены — это хорошо. Но стены держат люди.', 'Рыжий шалит на дорогах. Брат за ним третий год гоняется.', 'Лучника бы на стены… Савва придёт, как казарму перекроем.'][Math.floor(Math.random() * 3)], options: [lostBook(api), bye] };
+      return { text: ['Стены — это хорошо. Но стены держат люди.', 'Рыжий шалит на дорогах. Брат за ним третий год гоняется.', 'Лучника бы на стены… Савва придёт, как казарму перекроем.'][Math.floor(Math.random() * 3)],
+        options: [{ text: 'Гарнизон: посты, смены, набор', run: (a, p) => HOOKS.garrisonMenu && HOOKS.garrisonMenu(p) }, lostBook(api), bye] };
     }
     case 'yaroslav': {
       if (has('s1_ostrog') && !api.flag('copy')) return {

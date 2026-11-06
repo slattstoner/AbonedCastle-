@@ -1956,9 +1956,15 @@
     for (let x = 106; x <= 109; x++) b.set(x, 1, 114, 'spruce_slab');
     b.fill(Y.x2 - 1, 0, Y.z1 + 1, Y.x2 - 1, 1, Y.z1 + 1, 'spruce_log', { a: 'y' }); b.set(Y.x2 - 1, 2, Y.z1 + 1, 'lantern');
     b.mark('room', 104, 0, 112, 'Двор строителя', 'Склад камня и дерева, бочка с инструментом, верстак и камнерез. Здесь живёт зодчий Мирон.');
+    // Кузня (с 0.9.3): двойной сундук «сырьё и готовое» у стены, рамка на верстаке — в ней видно,
+    // что кузнец сейчас куёт (ставят скрипты), места у наковальни и у печи
+    const forgeChests = [[19, 0, 89], [19, 0, 90]];
+    for (const [x, y, z] of forgeChests) b.set(x, y, z, 'chest', { f: 'w' });
+    b.set(16, 1, 94, 'item_frame', { f: 'u' });
     b.works = {
-      mine: { ring: [R.x1, R.z1, R.x2, R.z2], entry: [R.x1, 0, F.z1 - 1], home: [R.x1, 0, F.z1 - 1], chests, barrel, frame: [F.x1, F.z1, F.x2, F.z2] },
-      yard: { home: [104, 0, 112], store, tools, box: [Y.x1, Y.z1, Y.x2, Y.z2] },
+      forge: { chests: forgeChests, frame: [16, 1, 94], anvil: [15, 0, 91], anvilStand: [16, 0, 91], furnace: [15, 0, 87], furnaceStand: [15, 0, 88], apprentice: [18, 0, 89] },
+      mine: { ring: [R.x1, R.z1, R.x2, R.z2], entry: [R.x1, 0, F.z1 - 1], home: [R.x1, 0, F.z1 - 1], chests, barrel, frame: [F.x1, F.z1, F.x2, F.z2], apprentice: [R.x1 + 2, 0, F.z1 - 1] },
+      yard: { home: [104, 0, 112], store, tools, box: [Y.x1, Y.z1, Y.x2, Y.z2], apprentice: [103, 0, 111] },
     };
   }
 

@@ -24,7 +24,43 @@ const GUARDS = [
   { id: 'gavrila', name: 'Стражник Гаврила' },
   { id: 'luka', name: 'Стражник Лука' },
   { id: 'savva', name: 'Лучник Савва' },
+  // гарнизон (с 0.9.3): набирает капитан, меч куёт кузнец
+  { id: 'bogdan', name: 'Стражник Богдан' }, { id: 'eryoma', name: 'Стражник Ерёма' }, { id: 'vlas', name: 'Десятник Влас' },
+  { id: 'gleb', name: 'Стражник Глеб' }, { id: 'foma', name: 'Стражник Фома' }, { id: 'prokop', name: 'Стражник Прокоп' },
+  { id: 'stepan', name: 'Стражник Степан' }, { id: 'yakov', name: 'Стражник Яков' }, { id: 'nestor', name: 'Стражник Нестор' },
+  { id: 'arkhip', name: 'Дозорный Архип' }, { id: 'semyon', name: 'Дозорный Семён' }, { id: 'kirill', name: 'Дозорный Кирилл' },
+  { id: 'khariton', name: 'Дозорный Харитон' }, { id: 'lyubim', name: 'Лучник Любим' },
 ];
+// Гарнизон (docs/workers.md, раздел «Стража»). Две смены по 7 человек живут в казарме во дворе —
+// по койке на каждого (в казарме 14 коек). Смена: ворота ×2, вход в донжон ×2, дозор по двору
+// (пара), обход донжона (один). Днём стоит дневная смена, ночью — ночная; на пересменке новый
+// приходит от своей койки на пост, прежний уходит спать. Без смен: дозорные башен (по одному
+// в каждой угловой башне, живут там) и два лучника на надвратных башнях. Капитан — сам по себе.
+// from: 'story' — приходит по сюжету; иначе — набирает капитан (нужен меч от кузнеца).
+// needs: что должно быть готово (barracks — казарма, tower_* — башня у строителя).
+const GARRISON = [
+  { id: 'ostap', rank: 'десятник', post: 'gate_l', shift: 'day', bed: 0, from: 'story' },
+  { id: 'mitka', rank: 'стражник', post: 'gate_r', shift: 'day', bed: 1, from: 'story' },
+  { id: 'zhdan', rank: 'стражник', post: 'keep_l', shift: 'day', bed: 2, from: 'story' },
+  { id: 'gavrila', rank: 'стражник', post: 'keep_r', shift: 'day', bed: 3, from: 'story' },
+  { id: 'luka', rank: 'стражник', post: 'patrol_yard', slot: 0, shift: 'day', bed: 4, from: 'story' },
+  { id: 'bogdan', rank: 'стражник', post: 'patrol_yard', slot: 1, shift: 'day', bed: 5, needs: 'barracks' },
+  { id: 'eryoma', rank: 'стражник', post: 'patrol_keep', slot: 0, shift: 'day', bed: 6, needs: 'barracks' },
+  { id: 'vlas', rank: 'десятник', post: 'gate_l', shift: 'night', bed: 7, needs: 'barracks' },
+  { id: 'gleb', rank: 'стражник', post: 'gate_r', shift: 'night', bed: 8, needs: 'barracks' },
+  { id: 'foma', rank: 'стражник', post: 'keep_l', shift: 'night', bed: 9, needs: 'barracks' },
+  { id: 'prokop', rank: 'стражник', post: 'keep_r', shift: 'night', bed: 10, needs: 'barracks' },
+  { id: 'stepan', rank: 'стражник', post: 'patrol_yard', slot: 0, shift: 'night', bed: 11, needs: 'barracks' },
+  { id: 'yakov', rank: 'стражник', post: 'patrol_yard', slot: 1, shift: 'night', bed: 12, needs: 'barracks' },
+  { id: 'nestor', rank: 'стражник', post: 'patrol_keep', slot: 0, shift: 'night', bed: 13, needs: 'barracks' },
+  { id: 'arkhip', rank: 'дозорный', post: 'tower_nw', needs: 'tower_nw:stone' },
+  { id: 'semyon', rank: 'дозорный', post: 'tower_ne', needs: 'tower_ne:stone' },
+  { id: 'kirill', rank: 'дозорный', post: 'tower_sw', needs: 'tower_sw:stone' },
+  { id: 'khariton', rank: 'дозорный', post: 'tower_se', needs: 'tower_se:stone' },
+  { id: 'savva', rank: 'лучник', post: 'arch_l', from: 'story' },
+  { id: 'lyubim', rank: 'лучник', post: 'arch_r', needs: 'barracks', archer: true },
+];
+for (const g of GARRISON) { const n = GUARDS.find((q) => q.id === g.id); if (!n) throw new Error('нет стражника ' + g.id); g.name = n.name; }
 // Посты в координатах замка (как в castle.js): x — восток, z — юг; f — поворот (0 — лицом на юг, наружу).
 // Этап 0: Остап и Митька в проезде ворот по обе стороны, у внешнего края арки.
 // Этап 1: трое стражников гарнизона у ворот со стороны двора и на площади.
@@ -112,6 +148,14 @@ function guardEntity() {
   };
   skinGroups(GUARDS.map((g) => g.id), groups, events);
   events[`${NS}:as_savva`].add.component_groups.push(`${NS}:archer`);
+  events[`${NS}:as_lyubim`].add.component_groups.push(`${NS}:archer`);
+  // Гарнизон: стражника водят скрипты (пост, обход, пересменка) — своя «привязка к дому» и
+  // случайные прогулки ему мешают. Бой — как прежде, сам.
+  groups[`${NS}:patrol`] = {
+    'minecraft:home': { restriction_type: 'none' },
+    'minecraft:behavior.random_stroll': { priority: 7, speed_multiplier: 0.6, xz_dist: 1, y_dist: 1, interval: 1000000 },
+  };
+  events[`${NS}:patrol`] = { add: { component_groups: [`${NS}:patrol`] } };
   return {
     format_version: '1.21.0',
     'minecraft:entity': {
@@ -441,4 +485,4 @@ function summonLines(stage, pos) {
   return lines;
 }
 
-module.exports = { GUARDS, POSTS, HOMES, GANG, GUARD_SEL, SKIN_IDS, variantOf, writePacks, summonLines };
+module.exports = { GUARDS, GARRISON, POSTS, HOMES, GANG, GUARD_SEL, SKIN_IDS, variantOf, writePacks, summonLines };

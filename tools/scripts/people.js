@@ -12,6 +12,11 @@ import { CASTLE } from './castle_data.js';
 import { NPCS } from './story.js';
 
 export const tagOf = (id) => 'acastle_npc_' + id;
+// Кого ведут другие модули: кузнец и подмастерье — работники (workers.js), стражники на посту —
+// гарнизон (garrison.js). Их здесь не ставят и не переселяют.
+const WORKER_NPC = new Set(['gordey', 'vaska']);
+const GARR = new Set((CASTLE.garrison ? CASTLE.garrison.roster : []).map((g) => g.id));
+const elsewhere = (id) => WORKER_NPC.has(id) || (GARR.has(id) && whereOf(id) === 'post');
 export function npcIdOf(e) {
   try { for (const t of e.getTags()) if (t.startsWith('acastle_npc_')) return t.slice(12); } catch (err) { /* существо пропало */ }
   return null;
@@ -62,6 +67,7 @@ function spawnNpc(id, at) {
 
 // Переезд: прежний житель исчезает сразу (если он рядом с игроком), на новом месте появится сам
 export function relocate(id) {
+  if (elsewhere(id)) return;
   const e = findNpc(id);
   if (!e) return;
   const where = whereOf(id);
@@ -87,12 +93,20 @@ export function ensureNpcs() {
   const byId = {};
   let all = [];
   try { all = DIM().getEntities({ families: ['acastle_person'] }); } catch (err) { all = []; }
-  for (const e of all) { const id = npcIdOf(e); if (id) (byId[id] = byId[id] || []).push(e); }
+  for (const e of all) {
+    const id = npcIdOf(e);
+    if (!id) continue;
+    // старая копия кузнеца или подмастерья (не работник) — убрать
+    if (WORKER_NPC.has(id)) { if (e.typeId !== 'acastle:worker') despawn(id, e); continue; }
+    if (elsewhere(id)) continue;
+    (byId[id] = byId[id] || []).push(e);
+  }
   for (const [id, list] of Object.entries(byId)) {
     // метка жителя, которого больше нет в сюжете (старая версия), или житель ушёл совсем
     if (!NPCS[id] || !whereOf(id)) { for (const e of list) despawn(id, e); delete byId[id]; }
   }
   for (const id of Object.keys(NPCS)) {
+    if (elsewhere(id)) continue;
     const where = whereOf(id);
     if (!where) continue;
     const at = npcSpot(id);

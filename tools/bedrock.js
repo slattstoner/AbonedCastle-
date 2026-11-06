@@ -141,7 +141,7 @@ function toBedrock(blk, get, BLOCKS, slot = {}) {
   else if (id === 'item_frame') {
     // f: 'u' — рамка лежит на столе лицом вверх
     st = { facing_direction: f === 'u' ? DIR6.u : DIR6[OPP[f || 'n']], item_frame_map_bit: false, item_frame_photo_bit: false };
-    const fields = { ItemRotation: T.float(0), ItemDropChance: T.float(1) };
+    const fields = { ItemRotation: T.float(0), ItemDropChance: T.float(blk.keep ? 0 : 1) }; // keep — рамка-витрина кузни: предмет не выпадает
     if (slot.book) fields.Item = bookItem(slot.book);
     else if (blk.item) fields.Item = item(blk.item);
     entity = be('ItemFrame', fields);

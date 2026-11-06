@@ -158,8 +158,8 @@ const left = (api, units) => units.filter((u) => !api.repaired(u));
 const firstOpen = (api, units) => units.find((u) => api.S.rep[u] && api.S.rep[u].st === 'open');
 export const LATE_QUESTS = {
   // ===== Этап 2. Кузня =====
-  s2_smith: { title: 'Кузнец у охотников', target: () => ({ place: 'camp_hunters_bear', label: 'Стан охотничьей артели' }),
-    hint: 'Кузнец Гордей ушёл к охотникам старшины Кузьмы. Их стан далеко в лесу. Держите в руке компас или эту книгу — внизу экрана видно, куда идти. Поговорите с Кузьмой.' },
+  s2_smith: { title: 'Охотничья артель', target: () => ({ place: 'camp_hunters_bear', label: 'Стан охотничьей артели' }),
+    hint: 'Гордей ковал стрелы охотникам старшины Кузьмы, а у них беда. Их стан далеко в лесу. Держите в руке компас или эту книгу — внизу экрана видно, куда идти. Поговорите с Кузьмой.' },
   s2_bear: { title: 'Шатун', target: () => ({ tag: 'acastle_shatun', near: { place: 'camp_hunters_bear' }, label: 'Шатун' }),
     hint: 'Медведь-шатун не залёг зимой и ходит вокруг стана. Выследите его недалеко от стана и убейте. Он сильный — возьмите еду и броню.',
     tick(api) {
@@ -181,8 +181,8 @@ export const LATE_QUESTS = {
       } catch (err) { /* не загружено */ }
     } },
   s2_knife: { title: 'Нож с клеймом', target: () => ({ place: 'camp_hunters_bear', label: 'Стан охотников' }),
-    hint: 'Гордей заметил у охотника Ерофея нож с клеймом замка. Спросите Ерофея, откуда нож, и расскажите Гордею.' },
-  s2_wait: { title: 'Кузня ждёт', hint: 'Гордей и Васька собираются в замок. Наутро они будут в кузнице во дворе.', target: () => ({ path: 'home_gordey', label: 'Кузница' }) },
+    hint: 'У охотника Ерофея нож с клеймом замка. Спросите Ерофея, откуда нож, и расскажите кузнецу Гордею в кузне во дворе.' },
+  s2_wait: { title: 'Кузня ждёт', hint: 'Гордей приводит кузню в порядок. Наутро загляните к нему.', target: () => ({ path: 'home_gordey', label: 'Кузница' }) },
   s2_forge: { title: 'Огонь в горне', target: () => ({ path: 'chest_forge', label: 'Сундук у кузницы' }),
     hint: (api) => (api.S.rep.forge && api.S.rep.forge.st !== 'open' ? 'Всё собрано. Утром кузня будет готова.' : 'Сундук-подряд у кузницы во дворе: 32 угля и 16 железных слитков. Наутро Гордей разожжёт горн.') },
   s2_tiltyard: { title: 'Ристалище', target: () => ({ path: 'chest_tiltyard', label: 'Сундук у ристалища' }),
@@ -359,7 +359,8 @@ export const LATE_QUESTS = {
 
 // ---------- Начало этапов (и для перехода командой acastle:jump) ----------
 export const STARTS = {
-  2: (api) => { api.start('s2_smith'); toPlace(api, 'camp_hunters_bear', ['kuzma', 'hunter', 'gordey', 'vaska']); },
+  // с 0.9.3 кузнец Гордей и Васька — работники кузни с самого начала (docs/workers.md); в стане их нет
+  2: (api) => { api.start('s2_smith'); toPlace(api, 'camp_hunters_bear', ['kuzma', 'hunter']); },
   3: (api) => { api.start('s3_farm'); toPlace(api, 'farmstead_voronin', ['nastya', 'ignat', 'dunya']); },
   4: (api) => { api.start('s4_hermit'); toPlace(api, 'hermitage_nikodim', ['nikodim', 'varlaam']); },
   5: (api) => { api.start('s5_carto'); toPlace(api, 'hut_cartographer_liza', ['liza', 'evsey']); },
@@ -488,12 +489,12 @@ function talkLate(id, api, pl) {
       return null;
     }
     case 'gordey': {
-      if (has('s2_smith')) return { text: 'Демьян зовёт? Замок жив?.. Ты сперва с Кузьмой потолкуй. Артель меня приютила — не брошу их, пока шатун у стана ходит.', options: [bye] };
-      if (has('s2_bear')) return { text: 'Шатун ещё ходит. Пока он тут, я не уйду.', options: [bye] };
-      if (has('s2_knife') && !f('knife')) return { text: 'Глянь на нож у Ерофея. Видишь клеймо — башня в круге? Это клеймо нашей кузни, я сам его ставил! Спроси, откуда у него.', options: [bye] };
+      if (has('s2_smith')) return { text: 'Мечи тупые, говоришь? Наконечники мне ковать не для кого: артель Кузьмы, что брала у меня стрелы, шатун замучил. Сходи к ним, помоги — тогда и разговор будет.', options: [bye] };
+      if (has('s2_bear')) return { text: 'Шатун у стана ещё ходит, слыхал.', options: [bye] };
+      if (has('s2_knife') && !f('knife')) return { text: 'У охотника Ерофея, говорят, нож с клеймом — башня в круге? Это клеймо нашей кузни, я сам его ставил! Спроси, откуда у него.', options: [bye] };
       if (has('s2_knife') && f('knife')) return {
-        text: 'Купил у людей Рыжего на дороге? Значит, оружие уходило из арсенала через кого-то внутри. Двадцать лет назад, в ту зиму… Ладно. Иду в замок. Васька, собирай инструмент!',
-        options: [{ text: 'Жду в замке.', run: (a) => { a.finish('s2_knife'); a.start('s2_wait'); a.arriveNextMorning('gordey', 'rooms_2'); a.arriveNextMorning('vaska'); } }],
+        text: 'Купил у людей Рыжего на дороге? Значит, оружие уходило из арсенала через кого-то внутри. Двадцать лет назад, в ту зиму… Ладно. Разожгу горн как следует. Васька, разбирай кладовую!',
+        options: [{ text: 'Жду, мастер.', run: (a) => { a.finish('s2_knife'); a.start('s2_wait'); a.arriveNextMorning('gordey', 'rooms_2'); a.arriveNextMorning('vaska'); } }],
       };
       if (has('s2_wait')) return { text: 'Соберём инструмент — и в путь. Наутро будем в кузне.', options: [bye] };
       if (has('s2_forge')) return { text: 'Горн холодный. 32 угля и 16 железа — в сундук у кузни. Утром разожгу.', options: [bye] };

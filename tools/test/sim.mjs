@@ -201,7 +201,7 @@ process.on('unhandledRejection', (e) => { console.log('Ошибка прогон
 await import(pathToFileURL(path.join(DIR, 'main.js')));
 const { CASTLE } = await import(pathToFileURL(path.join(DIR, 'castle_data.js')));
 const state = () => JSON.parse(props['acastle:state']);
-CASTLE_SPOTS = [...Object.values(CASTLE.homes).filter(Boolean), ...CASTLE.posts.map((p) => p.at), ...CASTLE.feast, ...CASTLE.lairs.crypt, ...CASTLE.lairs.catacombs, [63, 0, 121], [63, 0, 118]];
+CASTLE_SPOTS = [...(CASTLE.garrison ? [...Object.values(CASTLE.garrison.posts).filter((p) => p && p.length === 3), ...CASTLE.garrison.beds] : []), ...Object.values(CASTLE.homes).filter(Boolean), ...CASTLE.posts.map((p) => p.at), ...CASTLE.feast, ...CASTLE.lairs.crypt, ...CASTLE.lairs.catacombs, [63, 0, 121], [63, 0, 118]];
 // /function castle: стройка скриптом до конца
 async function buildCastle() {
   placed.length = 0;
@@ -710,8 +710,8 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
   expect(msgs.some((m) => /Счёт сходится/.test(m)), 'счёт шахтёра сходится: ' + msgs.join(' / ').slice(0, 300));
   const chest = {};
   for (const c of M.chests) { const ci = inv(c); for (let i = 0; i < ci.size; i++) { const it = ci.getItem(i); if (it) chest[it.typeId] = (chest[it.typeId] || 0) + it.amount; } }
-  const dep = ws().led.dep;
-  expect(Object.keys(dep).every((k) => chest[k] === dep[k]), 'в сундуках у копра ровно сданное');
+  const dep = ws().led.dep, carried = ws().app.fromMine || {};
+  expect(Object.keys(dep).every((k) => (chest[k] || 0) + (carried[k] || 0) === dep[k]), 'в сундуках у копра ровно сданное (вместе с тем, что унёс Васька): ' + Object.keys(dep).filter((k) => (chest[k] || 0) + (carried[k] || 0) !== dep[k]).map((k) => `${k} ${chest[k]}+${carried[k]}≠${dep[k]}`).join(', '));
   expect(Object.values(chest).reduce((a, b) => a + b, 0) > 300, 'добыча в сундуках');
   // Рельсы и вагонетка, второй горизонт
   for (let k = 0; k < 3; k++) inv(M.barrel).addItem(new ItemStack('minecraft:rail', 64));
@@ -760,6 +760,72 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
   msgs.length = 0; work('ledger');
   expect(msgs.some((m) => /Счёт сходится/.test(m)), 'счёт сходится после глубинного горизонта');
   await talkW('kondrat', 'Передохни');
+  // --- Подмастерье: носил добычу от копра ---
+  { const a = ws().app, fch = {}; for (const c of CASTLE.works.forge.chests) { const ci = inv(c); for (let i = 0; i < ci.size; i++) { const it = ci.getItem(i); if (it) fch[it.typeId] = (fch[it.typeId] || 0) + it.amount; } }
+    console.log(`Подмастерье: ходок ${a.trips}, перенёс: ${Object.entries(a.moved).map(([k, v]) => k.replace('minecraft:', '') + ' ' + v).join(', ')}`);
+    expect(a.trips > 3 && (a.moved['minecraft:raw_iron'] || 0) > 0 && (a.moved['minecraft:coal'] || 0) > 0, 'Васька носит руду и уголь в кузню');
+    expect((a.moved['minecraft:cobblestone'] || 0) > 0, 'Васька носит камень на склад строителя');
+    expect((fch['minecraft:raw_iron'] || 0) > 0, 'в сундуке кузни сырое железо от шахты'); }
+  // --- Кузнец: броня по званию, переплавка, рамка на верстаке ---
+  {
+    const g0 = () => JSON.parse(props['acastle:garrison'] || '{}');
+    const fc = inv(CASTLE.works.forge.chests[0]);
+    fc.addItem(new ItemStack('minecraft:iron_ingot', 10)); fc.addItem(new ItemStack('minecraft:coal', 8));
+    log.length = 0;
+    await talkW('gordey', 'Железная броня страже');
+    expect(ws().smith.q.length >= 3 || ws().smith.job, 'кузнец взял заказы: ' + ws().smith.q.map((o) => o.title).join('; '));
+    const first = ws().smith.q[0] || ws().smith.job;
+    let n2 = runUntil(() => !ws().smith.job && !ws().smith.q.length, 20000, 'кузнец сковал броню');
+    const gear = g0().gear || {};
+    console.log(`Кузнец: ${n2} шагов, сделано: ${Object.entries(ws().smith.made).map(([k, v]) => k.replace('minecraft:', '') + ' ' + v).join(', ')}, переплавлено: ${Object.entries(ws().smith.smelted).map(([k, v]) => k.replace('minecraft:', '') + ' ' + v).join(', ') || 'ничего'}; на ${first && first.guard}: ${JSON.stringify(gear[first && first.guard])}`);
+    expect(first && gear[first.guard] && gear[first.guard].head === 'minecraft:iron_helmet' && gear[first.guard].chest === 'minecraft:iron_chestplate', 'первый по званию в железном шлеме и нагруднике');
+    expect(first && first.guard === 'demyan', 'первым одет капитан: ' + (first && first.guard));
+    expect((ws().smith.smelted['minecraft:iron_ingot'] || 0) > 0, 'кузнец переплавил сырое железо');
+    expect(log.some((c) => /structure load acastle:forge_show_iron_/.test(c)) && log.some((c) => /structure load acastle:forge_show_empty/.test(c)), 'в рамке на верстаке видно изделие, потом рамка пустеет');
+    expect(log.some((c) => /replaceitem entity @e\[tag=acastle_npc_demyan\] slot\.armor\.head 0 minecraft:iron_helmet/.test(c)), 'шлем надет на капитана');
+    // рельсы: кузнец куёт, Васька несёт в бочку у копра
+    const r0 = (() => { const b = inv(CASTLE.works.mine.barrel); let n3 = 0; for (let i = 0; i < b.size; i++) { const it = b.getItem(i); if (it && it.typeId === 'minecraft:rail') n3 += it.amount; } return n3; })();
+    fc.addItem(new ItemStack('minecraft:iron_ingot', 6));
+    await talkW('gordey', 'Рельсы');
+    runUntil(() => (ws().smith.made['minecraft:rail'] || 0) >= 16, 6000, 'рельсы скованы');
+    runUntil(() => { const b = inv(CASTLE.works.mine.barrel); let n3 = 0; for (let i = 0; i < b.size; i++) { const it = b.getItem(i); if (it && it.typeId === 'minecraft:rail') n3 += it.amount; } return n3 >= r0 + 16; }, 8000, 'Васька отнёс рельсы к копру');
+    // капитан набирает новобранца, кузнец куёт ему меч — новобранец на посту
+    fc.addItem(new ItemStack('minecraft:iron_ingot', 4));
+    await talk('demyan', 'Гарнизон', 'Набрать: Стражник Богдан');
+    expect(g0().want && g0().want.bogdan, 'капитан ждёт меч для Богдана');
+    runUntil(() => state().npcs.bogdan === 'post', 8000, 'Богдан получил меч и заступил');
+    expect((g0().gear.bogdan || {}).hand === 'minecraft:iron_sword', 'у Богдана меч от кузнеца');
+  }
+  // --- Гарнизон: смены, пересменка от коек, обход ---
+  {
+    const g0 = () => JSON.parse(props['acastle:garrison'] || '{}');
+    const R = CASTLE.garrison.roster, guard = (id) => entities.find((e) => e.hasTag('acastle_npc_' + id) && e.typeId === 'acastle:guard');
+    for (const h of handlers.script) h({ id: 'acastle:guard', message: 'all', sourceEntity: player });
+    time = 1000; ticks(40);
+    const day = R.filter((g) => g.shift !== 'night').map((g) => g.id), night = R.filter((g) => g.shift === 'night').map((g) => g.id);
+    const present = (ids) => ids.filter((id) => guard(id));
+    console.log(`Гарнизон днём: на постах ${present(day).length} из ${day.length}, ночная смена спит: ${night.length - present(night).length} из ${night.length}`);
+    expect(present(day).length === day.length, 'днём на постах вся дневная смена, дозорные и лучники: нет ' + day.filter((id) => !guard(id)).join(', '));
+    expect(!present(night).length, 'ночная смена днём спит в казарме: не спят ' + present(night).join(', '));
+    // обход: дозорный идёт по петле
+    const luka = guard('luka'), l0 = { ...luka.location }; ticks(30);
+    expect(Math.hypot(luka.location.x - l0.x, luka.location.z - l0.z) > 3, 'дозорный Лука идёт по обходу');
+    // ночь: ночная смена встаёт с коек и идёт на посты, дневная — спать
+    time = 13000; ticks(2);
+    const vlas = guard('vlas'), bed = CASTLE.garrison.beds[R.find((g) => g.id === 'vlas').bed];
+    expect(vlas && Math.hypot(vlas.location.x - W(bed).x - 0.5, vlas.location.z - W(bed).z - 0.5) < 3, 'десятник Влас встал со своей койки');
+    ticks(240);
+    console.log(`Гарнизон ночью: на постах ${present(night).length} из ${night.length}, дневная смена: на ногах ${present(day.filter((id) => R.find((g) => g.id === id).shift)).length}`);
+    expect(present(night).length === night.length && night.every((id) => g0().st[id] === 'duty'), 'ночью на постах ночная смена: ' + night.map((id) => id + ':' + g0().st[id]).join(' '));
+    expect(R.filter((g) => g.shift === 'day').every((g) => !guard(g.id) && g0().st[g.id] === 'rest'), 'дневная смена ушла спать: ' + R.filter((g) => g.shift === 'day').map((g) => g.id + ':' + g0().st[g.id]).join(' '));
+    expect(guard('arkhip') && guard('savva'), 'дозорные башен и лучники — без смен, на месте');
+    const post = W(CASTLE.garrison.posts.gate_l);
+    expect(Math.hypot(vlas.location.x - post.x - 0.5, vlas.location.z - post.z - 0.5) < 2.5, 'Влас дошёл до ворот');
+    msgs.length = 0; for (const h of handlers.script) h({ id: 'acastle:guard', message: 'status', sourceEntity: player });
+    expect(msgs.some((m) => /Гарнизон/.test(m)), 'acastle:guard status отвечает');
+    time = 1000; ticks(240);
+    expect(R.filter((g) => g.shift === 'day').every((g) => guard(g.id)) && R.filter((g) => g.shift === 'night').every((g) => !guard(g.id)), 'утром дневная смена снова на постах, ночная спит');
+  }
   // --- Решётка ворот ---
   {
     const G = CASTLE.portcullis, cell = (r, k) => blockAt(W(G.rows[r][k]));
@@ -780,7 +846,8 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
     expect(cell(0, 2).typeId === 'minecraft:iron_bars', 'игрок ушёл — решётка опустилась');
     pull(); ticks(10);
   }
-  // --- Строитель ---
+  // --- Строитель --- (игрок освобождает склад: Васька натаскал туда камня)
+  for (const c of CASTLE.works.yard.store) { const ci = blockAt(W(c)).getComponent('minecraft:inventory').container; for (let i = 0; i < ci.size; i++) ci.setItem(i); }
   work('fill');
   const O1 = CASTLE.orders.find((o) => o.step === 'wood');
   await talkW('miron', O1.title, 'Берись');

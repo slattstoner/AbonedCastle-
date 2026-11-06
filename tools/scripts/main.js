@@ -14,7 +14,8 @@
 //
 // Команды для проверки: /scriptevent acastle:status (что знают скрипты),
 // /scriptevent acastle:jump <этап> (сразу к началу этапа), /scriptevent acastle:work help
-// (работники: шахтёр и строитель, workers.js).
+// (работники: шахтёр, строитель, кузнец, подмастерье — workers.js), /scriptevent acastle:guard
+// status (гарнизон, garrison.js), /scriptevent acastle:gate open|close (решётка ворот).
 import { world, system } from '@minecraft/server';
 import { S, load, flush, DIM, players } from './state.js';
 import { NPCS, QUESTS, onEvent, bark, jump } from './story.js';
@@ -28,6 +29,7 @@ import { guideTick } from './guide.js';
 import { CASTLE } from './castle_data.js';
 import { workTick, workCommand, workerTalk, workerIdOf } from './workers.js';
 import { isGateLever, toggleGate, gateTick, gateCommand } from './gate.js';
+import { garrisonTick, garrisonMove, guardCommand } from './garrison.js';
 
 const story = () => !!(S && S.origin); // сюжет идёт (замок поставлен)
 const warn = (what, e) => console.warn(`acastle ${what}: ${e}${e && e.stack ? '\n' + e.stack : ''}`);
@@ -77,6 +79,7 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
     else if (ev.id === 'acastle:jump' && story()) { jump(parseInt(ev.message, 10) || 0, api); flush(); }
     else if (ev.id === 'acastle:work') workCommand(ev.message, ev.sourceEntity);
     else if (ev.id === 'acastle:gate') gateCommand(ev.message, ev.sourceEntity);
+    else if (ev.id === 'acastle:guard') guardCommand(ev.message, ev.sourceEntity);
     else if (ev.id === 'acastle:castle_build' && ev.sourceEntity) beginBuild(ev.sourceEntity.location);
     else if (ev.id === 'acastle:castle_placed' && ev.sourceEntity) placedByCommand(ev.sourceEntity.location);
   } catch (e) { warn(ev.id, e); }
@@ -115,11 +118,12 @@ system.runInterval(() => {
   if (S.build) try { buildTick(); } catch (e) { warn('стройка', e); }
   try { workTick(); } catch (e) { warn('работники', e); }
   try { gateTick(); } catch (e) { warn('ворота', e); }
+  try { garrisonMove(); } catch (e) { warn('гарнизон, шаги', e); }
 }, 1);
 // Общий цикл: путеводитель — дважды в секунду, остальное — раз в секунду, жители — раз в 3 секунды
 let tick = 0;
 const questsTick = () => { for (const q of Object.keys(S.q)) if (S.q[q] === 'active' && QUESTS[q] && QUESTS[q].tick) QUESTS[q].tick(api); };
-const SECOND = [morningTick, contractTick, placesTick, questsTick, () => { if (tick % 6 === 0) ensureNpcs(); }];
+const SECOND = [morningTick, contractTick, placesTick, questsTick, garrisonTick, () => { if (tick % 6 === 0) ensureNpcs(); }];
 system.runInterval(() => {
   if (!S) load();
   if (!S.origin) { if (!S.build) try { findHeart(); } catch (e) { /* позже */ } flush(); return; }

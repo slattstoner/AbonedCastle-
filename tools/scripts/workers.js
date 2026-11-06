@@ -14,13 +14,18 @@ import { ActionFormData } from '@minecraft/server-ui';
 import { S, save, DIM, players, runCmd } from './state.js';
 import { CASTLE } from './castle_data.js';
 import { WORK } from './work_data.js';
-import { show, guarded } from './talk.js';
+import { show, guarded, storyNode, runOption } from './talk.js';
+import { byRank, gearOf, equip, wanted, recruitArrive } from './garrison.js';
 import * as C from './work_core.js';
 
 const KEY = 'acastle:work';
 const WORKERS = {
   kondrat: { name: 'Рудокоп Кондрат', tool: 'minecraft:stone_pickaxe' },
   miron: { name: 'Зодчий Мирон', tool: 'minecraft:iron_axe' },
+  // с 0.9.3: кузня. Они же — жители сюжета (метка acastle_npc_<id>: их разговоры этапа 2 и дальше
+  // встают кнопками в окно кузни)
+  gordey: { name: 'Кузнец Гордей', tool: 'minecraft:mace', story: true },
+  vaska: { name: 'Подмастерье Васька', tool: 'air', story: true },
 };
 export const workerTag = (id) => 'acastle_wk_' + id;
 export function workerIdOf(e) {
@@ -38,6 +43,10 @@ function wfresh(origin) {
     mine: { on: false, st: 'idle', msg: 'Ждёт кирку в бочке у копра', i: 0, h: 0, open: 1, phase: 'shaft', g: 0, n: 0, d: 0, dj: 0, side: 1, b: 0, back: null,
       bag: {}, tool: null, uses: 0, torch: 0, rails: 0, layRails: false, railShaft: 0, veins: [], skip: {}, pos: null, dug: 0, blocked: null },
     build: { st: 'idle', msg: 'Ждёт заказа', order: null, done: {}, cart: {}, scaff: [], pos: null, placed: 0, removed: 0, need: null },
+    // кузнец: очередь заказов q, текущая работа job (prog — сколько тиков сделано)
+    smith: { st: 'idle', msg: 'Ждёт заказа', q: [], job: null, prog: 0, pos: null, made: {}, smelted: {}, used: {} },
+    // подмастерье: что несёт (bag), сколько ходок
+    app: { st: 'forge', msg: 'В кузне', bag: {}, trips: 0, pos: null, moved: {} },
     led: { mined: {}, dep: {}, used: {}, given: {} },
     bled: { took: {}, placed: {}, back: {}, reclaimed: {} },
     errs: [],
@@ -46,6 +55,7 @@ function wfresh(origin) {
 function wload() {
   try { WS = JSON.parse(world.getDynamicProperty(KEY) || 'null'); } catch (e) { WS = null; }
   if (!WS || WS.v !== 1) WS = wfresh(null);
+  const f = wfresh(WS.origin); for (const k of ['smith', 'app']) if (!WS[k]) WS[k] = f[k]; // сохранение до 0.9.3
 }
 const wsave = () => { wdirty = true; };
 function wflush() { if (wdirty && WS) { world.setDynamicProperty(KEY, JSON.stringify(WS)); wdirty = false; } }
@@ -126,8 +136,9 @@ function entOf(id) {
   ents[id] = undefined;
   return undefined;
 }
-const posOf = (id) => (id === 'kondrat' ? WS.mine : WS.build).pos;
-const homeOf = (id) => (id === 'kondrat' ? CASTLE.works.mine.home : CASTLE.works.yard.home);
+const ST = (id) => (id === 'kondrat' ? WS.mine : id === 'miron' ? WS.build : id === 'gordey' ? WS.smith : WS.app);
+const posOf = (id) => ST(id).pos;
+const homeOf = (id) => (id === 'kondrat' ? CASTLE.works.mine.home : id === 'miron' ? CASTLE.works.yard.home : id === 'gordey' ? CASTLE.works.forge.anvilStand : CASTLE.works.forge.apprentice);
 function ensureWorkers() {
   let all = [];
   try { all = DIM().getEntities({ type: 'acastle:worker' }); } catch (e) { all = []; }
@@ -143,8 +154,8 @@ function ensureWorkers() {
     if (!blk(p)) continue; // место не прогружено — позже
     try {
       const e = DIM().spawnEntity('acastle:worker', { x: p[0] + 0.5, y: p[1], z: p[2] + 0.5 }, { spawnEvent: 'acastle:as_' + id, initialPersistence: true });
-      e.addTag(workerTag(id)); e.nameTag = WORKERS[id].name; ents[id] = e;
-      if (id === 'kondrat') WS.mine.pos = p; else WS.build.pos = p;
+      e.addTag(workerTag(id)); if (WORKERS[id].story) e.addTag('acastle_npc_' + id); e.nameTag = WORKERS[id].name; ents[id] = e;
+      ST(id).pos = p;
       hold(id, id === 'kondrat' ? (WS.mine.tool ? `minecraft:${WS.mine.tool}_pickaxe` : 'air') : WORKERS[id].tool, true);
       wsave();
     } catch (err) { report(WORKERS[id].name, 'не получается поставить', err); }
@@ -174,9 +185,9 @@ const movers = {};
 function walk(id, path, done, { speedBpt = 0.2, ride = false } = {}) {
   if (!path || path.length < 2) { if (path && path.length) setPos(id, path[path.length - 1]); done(); return; }
   movers[id] = { path, i: 0, t: 0, v: speedBpt, done, ride, cart: null };
-  (id === 'kondrat' ? WS.mine : WS.build).walking = true;
+  ST(id).walking = true;
 }
-function setPos(id, p) { if (id === 'kondrat') WS.mine.pos = p; else WS.build.pos = p; wsave(); }
+function setPos(id, p) { ST(id).pos = p; wsave(); }
 function moveTick(id, dt) {
   const m = movers[id];
   if (!m) return false;
@@ -198,7 +209,7 @@ function moveTick(id, dt) {
   if (last) {
     if (m.cart) try { m.cart.remove(); } catch (err) { /* нет */ }
     delete movers[id];
-    (id === 'kondrat' ? WS.mine : WS.build).walking = false;
+    ST(id).walking = false;
     setPos(id, a);
     act(id, 0);
     m.done();
@@ -956,6 +967,205 @@ function walkTo(to, then) {
   walk('miron', path, () => { if (then) then(); }, { speedBpt: 0.2 });
 }
 
+
+// ======================= КУЗНЯ =======================
+// Кузнец Гордей плавит руду в печи и куёт у наковальни по заказам игрока (окно кузни): броню и
+// мечи страже по званию, мечи новобранцам (их просит капитан), кирки шахтёру, рельсы. Всё берёт
+// из сундука кузни; готовое — сразу на стражника (garrison.equip) или в сундук. Что он куёт,
+// видно в рамке на верстаке, а рядом с кузней внизу экрана — сколько осталось.
+// Подмастерье Васька носит добычу: из сундуков у копра руду, уголь и алмазы — в кузню, камень —
+// на склад строителя; из кузни в бочку у копра — кирки, рельсы и факелы.
+const FG = () => CASTLE.forge;
+const ARMOR = { head: ['helmet', 5, 'шлем', 'ый'], chest: ['chestplate', 8, 'нагрудник', 'ый'], legs: ['leggings', 7, 'поножи', 'ые'], feet: ['boots', 4, 'сапоги', 'ые'] };
+const MAT = { iron: 'minecraft:iron_ingot', diamond: 'minecraft:diamond' };
+const MAT_RU = { 'minecraft:iron_ingot': 'железо', 'minecraft:diamond': 'алмазы' };
+const TIER_RU = { iron: 'железн', diamond: 'алмазн' };
+const TIER_N = (item) => (!item ? 0 : /diamond|netherite/.test(item) ? 3 : /iron|chainmail/.test(item) ? 2 : 1);
+const SMELT = { 'minecraft:raw_iron': 'minecraft:iron_ingot', 'minecraft:raw_gold': 'minecraft:gold_ingot', 'minecraft:raw_copper': 'minecraft:copper_ingot' };
+const FUEL = ['minecraft:coal', 'minecraft:charcoal'];
+const guardName = (id) => { const g = byRank().find((q) => q.id === id); return g ? g.name : id; };
+function makeOrder(kind, tier, guard, slot, recruit) {
+  if (kind === 'armor') { const a = ARMOR[slot]; return { kind, tier, guard, slot, item: `minecraft:${tier}_${a[0]}`, n: 1, cost: { [MAT[tier]]: a[1] }, title: `${TIER_RU[tier]}${a[3]} ${a[2]} — ${guardName(guard)}` }; }
+  if (kind === 'sword') return { kind, tier, guard, slot: 'hand', recruit: !!recruit, item: `minecraft:${tier}_sword`, n: 1, cost: { [MAT[tier]]: 2 }, title: `${TIER_RU[tier]}ый меч — ${recruit ? 'новобранцу ' : ''}${guardName(guard)}` };
+  if (kind === 'pick') return { kind, tier, item: `minecraft:${tier}_pickaxe`, n: 1, cost: { [MAT[tier]]: 3 }, title: `${TIER_RU[tier]}ая кирка — Кондрату` };
+  return { kind: 'rails', tier: 'iron', item: 'minecraft:rail', n: 16, cost: { [MAT.iron]: 6 }, title: 'рельсы для шахты, 16 шт.' };
+}
+const forgeChests = () => containers(CASTLE.works.forge.chests);
+function forgeStock() { const out = {}, ch = forgeChests(); if (!ch) return null; for (const inv of ch) for (let i = 0; i < inv.size; i++) { const it = inv.getItem(i); if (it) add(out, it.typeId, it.amount); } return out; }
+function takeForge(id, n) { const ch = forgeChests(); if (!ch) return n; for (const inv of ch) n = takeOut(inv, id, n); return n; }
+function putForge(id, n) { const ch = forgeChests(); if (!ch) return n; for (const inv of ch) n = putItems(inv, id, n); return n; }
+function showFrame(item) {
+  const f = CASTLE.works.forge.frame, w = Wc(f);
+  const name = item && FG().show.includes(item.replace('minecraft:', '')) ? item.replace('minecraft:', '') : 'empty';
+  if (WS.smith.frame === name) return;
+  if (runCmd(`structure load acastle:forge_show_${name} ${w.x} ${w.y} ${w.z}`)) WS.smith.frame = name;
+}
+function furnaceLit(on) {
+  const b = blk(Wc(CASTLE.works.forge.furnace));
+  if (!b || !/furnace/.test(b.typeId)) return;
+  const want = on ? 'minecraft:lit_furnace' : 'minecraft:furnace';
+  if (b.typeId === want) return;
+  try { b.setPermutation(BlockPermutation.resolve(want, b.permutation.getAllStates())); } catch (e) { try { b.setType(want); } catch (err) { /* нет */ } }
+}
+const sm = { until: 0 };
+const forgeAt = (c) => A(Wc(c));
+function smithTick(now) {
+  const M = WS.smith;
+  if (moveTick('gordey', 1)) return;
+  if (now < sm.until) return;
+  const e = entOf('gordey');
+  if (!e) return;
+  try {
+    const stock = forgeStock();
+    if (!stock) { sm.until = now + 40; return; }
+    if (!M.job) {
+      const queued = new Set([...M.q.map((o) => o.kind + o.guard), ...(M.job ? [M.job.kind + M.job.guard] : [])]);
+      const w = wanted().find((id) => !queued.has('sword' + id));
+      M.job = w ? makeOrder('sword', 'iron', w, 'hand', true) : M.q.shift() || null;
+      M.prog = 0; M.said = null;
+      if (!M.job) {
+        // без заказов — переплавляет сырую руду про запас
+        const raw = Object.keys(SMELT).find((r) => (stock[r] || 0) >= 8);
+        if (raw && FUEL.some((f) => stock[f] > 0)) { M.job = { kind: 'smelt', raw, item: SMELT[raw], n: 8, cost: {}, title: 'переплавка руды' }; }
+        else { if (M.st !== 'idle') { M.st = 'idle'; M.msg = 'Ждёт заказа'; showFrame(null); act('gordey', 0); hold('gordey', WORKERS.gordey.tool); wsave(); } sm.until = now + 40; return; }
+      }
+      wsave();
+    }
+    const J = M.job;
+    // переплавка: сырая руда + уголь → слитки (1 уголь на 8)
+    if (J.kind === 'smelt' || M.st === 'smelt') return smeltStep(now, J, stock);
+    const [mat, need] = Object.entries(J.cost)[0];
+    if (M.st !== 'forge') {
+      if ((stock[mat] || 0) < need) {
+        const raw = Object.keys(SMELT).find((r) => SMELT[r] === mat && stock[r] > 0);
+        if (raw && FUEL.some((f) => stock[f] > 0)) { M.st = 'smelt'; M.smeltFor = { raw, item: mat, n: Math.min(need - (stock[mat] || 0), stock[raw], 8 * FUEL.reduce((a, f) => a + (stock[f] || 0), 0)) }; wsave(); return; }
+        M.st = 'wait'; M.msg = `Не хватает: ${MAT_RU[mat]} ${stock[mat] || 0} из ${need} (${J.title})`;
+        if (M.said !== J.title) { M.said = J.title; say('gordey', `Для «${J.title}» нужно ${MAT_RU[mat]}: ${need}, а в сундуке кузни ${stock[mat] || 0}${mat === MAT.iron ? '. Сырое железо и уголь тоже переплавлю' : ''}.`); }
+        act('gordey', 0); sm.until = now + 60; wsave(); return;
+      }
+      // к наковальне, забрать материал, положить заготовку в рамку
+      if (!M.pos || keyOf(M.pos) !== keyOf(forgeAt(CASTLE.works.forge.anvilStand))) { walk('gordey', line(M.pos || forgeAt(CASTLE.works.forge.anvilStand), forgeAt(CASTLE.works.forge.anvilStand)), () => {}); return; }
+      const left = takeForge(mat, need);
+      if (left) { putForge(mat, need - left); sm.until = now + 20; return; } // кто-то забрал из сундука
+      add(M.used, mat, need);
+      M.st = 'forge'; M.prog = 0; M.total = need * 30; M.msg = 'Куёт: ' + J.title;
+      showFrame(J.item); hold('gordey', WORKERS.gordey.tool);
+      try { e.teleport(e.location, { facingLocation: { ...Wc(CASTLE.works.forge.anvil), y: Wc(CASTLE.works.forge.anvil).y + 0.5 } }); } catch (err) { /* нет */ }
+      wsave(); return;
+    }
+    // ковка: удары молотом
+    act('gordey', 2);
+    M.prog += 5 * speed(); sm.until = now + 5;
+    if (now % 15 < 5) sound('random.anvil_use', A(Wc(CASTLE.works.forge.anvil)));
+    if (M.prog < M.total) return;
+    // готово
+    act('gordey', 0); showFrame(null);
+    if (J.kind === 'armor' || J.kind === 'sword') {
+      if (J.recruit) recruitArrive(J.guard);
+      equip(J.guard, J.slot, J.item);
+      say('gordey', `Готово: ${J.title}. Надел на ${guardName(J.guard).split(' ').pop()}.`);
+    } else {
+      const lost = putForge(J.item, J.n);
+      if (lost) { try { DIM().spawnItem(new ItemStack(J.item, lost), Wc(CASTLE.works.forge.anvilStand)); } catch (err) { /* нет */ } }
+      say('gordey', `Готово: ${J.title}. В сундуке кузни — Васька отнесёт к копру.`);
+    }
+    add(M.made, J.item, J.n);
+    M.job = null; M.st = 'idle'; M.msg = 'Готово: ' + J.title; wsave();
+  } catch (err) { report('Гордей', 'шаг работы', err); sm.until = now + 100; }
+}
+function smeltStep(now, J, stock) {
+  const M = WS.smith, sf = J.kind === 'smelt' ? { raw: J.raw, item: J.item, n: J.n } : M.smeltFor;
+  const fs = forgeAt(CASTLE.works.forge.furnaceStand);
+  if (!M.pos || keyOf(M.pos) !== keyOf(fs)) { walk('gordey', line(M.pos || fs, fs), () => {}); return; }
+  if (!M.smelting) {
+    const n = Math.min(sf.n, stock[sf.raw] || 0, 8 * FUEL.reduce((a, f) => a + (stock[f] || 0), 0));
+    if (n <= 0) { M.st = 'idle'; if (J.kind === 'smelt') M.job = null; wsave(); return; }
+    const fuelN = Math.ceil(n / 8);
+    let fleft = fuelN;
+    for (const f of FUEL) { const t = Math.min(fleft, stock[f] || 0); if (t) { takeForge(f, t); add(M.used, f, t); fleft -= t; } }
+    takeForge(sf.raw, n); add(M.used, sf.raw, n);
+    M.smelting = { item: sf.item, n, until: now + Math.max(5, Math.round(n * 20 / speed())) };
+    M.msg = `Плавит: ${n} шт.`; furnaceLit(true); showFrame('minecraft:iron_ingot'); act('gordey', 2);
+    try { const e = entOf('gordey'); e.teleport(e.location, { facingLocation: { ...Wc(CASTLE.works.forge.furnace), y: Wc(CASTLE.works.forge.furnace).y + 0.5 } }); } catch (err) { /* нет */ }
+    wsave(); sm.until = now + 10; return;
+  }
+  if (now < M.smelting.until) { sm.until = now + 10; if (now % 40 < 10) sound('fire.fire', A(Wc(CASTLE.works.forge.furnace))); return; }
+  const lost = putForge(M.smelting.item, M.smelting.n);
+  add(M.smelted, M.smelting.item, M.smelting.n - lost);
+  M.smelting = null; furnaceLit(false); showFrame(null); act('gordey', 0);
+  M.st = 'idle'; if (J.kind === 'smelt') M.job = null;
+  wsave();
+}
+// ---------- Подмастерье ----------
+const FORGE_GOODS = /raw_(iron|gold|copper)$|:coal$|charcoal$|:diamond$|:emerald$|:redstone$|lapis_lazuli$|flint$/;
+const STONE_GOODS = /^minecraft:(cobblestone|cobbled_deepslate|andesite|diorite|granite|tuff|stone)$/;
+const MINE_GOODS = /_pickaxe$|^minecraft:rail$|^minecraft:torch$/;
+const BAG_STACKS = 8;
+const ap = { until: 0 };
+const flatPath = (flat) => { const out = []; for (let k = 0; k < (flat || []).length; k += 3) out.push(A(Wc([flat[k], flat[k + 1], flat[k + 2]]))); return out; };
+function bagStacks(bag) { return Object.entries(bag).reduce((a, [, n]) => a + Math.ceil(n / 64), 0); }
+function grab(invs, test, bag, limit) {
+  let got = 0;
+  for (const inv of invs) for (let i = 0; i < inv.size; i++) {
+    const it = inv.getItem(i);
+    if (!it || !test(it.typeId) || bagStacks(bag) >= limit) continue;
+    add(bag, it.typeId, it.amount); got += it.amount; inv.setItem(i);
+  }
+  return got;
+}
+const freeSlots = (invs) => invs.reduce((a, inv) => { let n = 0; for (let i = 0; i < inv.size; i++) if (!inv.getItem(i)) n++; return a + n; }, 0);
+function drop(invs, test, bag, cap) {
+  for (const [id, n] of Object.entries({ ...bag })) {
+    if (!test(id)) continue;
+    let left = n;
+    // cap — сколько ячеек оставить свободными (на складе строителя — под дерево и стекло)
+    if (cap !== undefined) { const room = Math.max(0, (freeSlots(invs) - cap) * 64); left = Math.min(n, room); const keep = n - left; for (const inv of invs) left = putItems(inv, id, left); left += keep; }
+    else for (const inv of invs) left = putItems(inv, id, left);
+    add(bag, id, -(n - left)); add(WS.app.moved, id, n - left);
+  }
+}
+function appTick(now) {
+  const A2 = WS.app;
+  if (moveTick('vaska', 1)) return;
+  if (now < ap.until) return;
+  if (!entOf('vaska')) return;
+  try {
+    const go = (flat, rev, st, msg) => { let p = flatPath(flat); if (rev) p = p.reverse(); if (!p.length) { p = [A2.pos || A(Wc(CASTLE.works.forge.apprentice))]; } A2.st = st; A2.msg = msg; wsave(); walk('vaska', dedupe([A2.pos || p[0], ...p]), () => { ap.until = system.currentTick + 10; }, { speedBpt: 0.18 }); };
+    if (A2.st === 'forge') {
+      const fch = forgeChests(); if (!fch) { ap.until = now + 40; return; }
+      drop(fch, (id) => FORGE_GOODS.test(id), A2.bag);
+      if (!A2.storeFull && Object.keys(A2.bag).some((id) => STONE_GOODS.test(id))) return go(FG().toYard, false, 'toYard', 'Несёт камень на склад строителя');
+      if (A2.rest && now < A2.rest) { act('vaska', 0); ap.until = now + 20; return; }
+      grab(fch, (id) => MINE_GOODS.test(id), A2.bag, BAG_STACKS);
+      return go(FG().toMine, false, 'toMine', 'Идёт к шахте');
+    }
+    if (A2.st === 'toMine') {
+      const barrel = containers([CASTLE.works.mine.barrel], 'minecraft:barrel'), mch = containers(CASTLE.works.mine.chests);
+      if (!barrel || !mch) { ap.until = now + 40; return; }
+      drop(barrel, (id) => MINE_GOODS.test(id), A2.bag);
+      // склад строителя полон — камень, что не влез, возвращаем к копру и пока не носим
+      if (A2.storeFull && now > A2.storeFull) A2.storeFull = 0;
+      if (A2.storeFull) { for (const [id, n] of Object.entries({ ...A2.bag })) if (STONE_GOODS.test(id)) { let left = n; for (const inv of mch) left = putItems(inv, id, left); add(A2.bag, id, -(n - left)); add(WS.app.fromMine = WS.app.fromMine || {}, id, -(n - left)); } }
+      const before = { ...A2.bag };
+      grab(mch, (id) => FORGE_GOODS.test(id), A2.bag, BAG_STACKS / 2);
+      if (!A2.storeFull) grab(mch, (id) => STONE_GOODS.test(id), A2.bag, BAG_STACKS);
+      for (const [id, n] of Object.entries(A2.bag)) { const d = n - (before[id] || 0); if (d > 0) add(WS.app.fromMine = WS.app.fromMine || {}, id, d); }
+      A2.trips++;
+      const empty = !Object.keys(A2.bag).length;
+      if (empty) A2.rest = now + 600; // у копра пусто — передохнуть полминуты
+      return go(FG().toMine, true, 'forge', empty ? 'У копра пусто, возвращается в кузню' : 'Несёт добычу в кузню');
+    }
+    if (A2.st === 'toYard') {
+      const store = containers(CASTLE.works.yard.store);
+      if (!store) { ap.until = now + 40; return; }
+      drop(store, (id) => STONE_GOODS.test(id), A2.bag, 10);
+      if (Object.keys(A2.bag).some((id) => STONE_GOODS.test(id))) { A2.storeFull = now + 12000; A2.msg = 'Склад строителя полон'; say('vaska', 'У Мирона на складе камня под завязку — остальное верну к копру. Пусть строит!'); }
+      return go(FG().toYard, true, 'forge', 'Возвращается в кузню');
+    }
+    A2.st = 'forge';
+  } catch (err) { report('Васька', 'шаг работы', err); ap.until = now + 100; }
+}
+
 // ---------- Тикающие участки ----------
 function keepArea(what, o) {
   const name = 'acastle_' + what;
@@ -1037,7 +1247,92 @@ async function builderTalk(pl) {
   say('miron', err || 'Добро. Беру материал и иду размечать.');
   wflush();
 }
-export const workerTalk = guarded(async (pl, id) => { if (!WS) wload(); if (id === 'kondrat') await minerTalk(pl); else await builderTalk(pl); });
+
+// Кнопки сюжета в окне работника (кузнец, подмастерье): всё, кроме «прощай»
+function storyButtons(pl, id) {
+  const node = storyNode(pl, id);
+  if (!node) return { text: null, opts: [] };
+  const opts = (node.options || []).filter((o) => o.run || o.next);
+  return { text: opts.length ? node.text : null, opts };
+}
+const forgeLines = () => {
+  const M = WS.smith, st = forgeStock() || {};
+  const show2 = (id) => `${({ 'minecraft:iron_ingot': 'железо', 'minecraft:raw_iron': 'сырое железо', 'minecraft:coal': 'уголь', 'minecraft:diamond': 'алмазы', 'minecraft:gold_ingot': 'золото', 'minecraft:raw_gold': 'сырое золото' })[id]} ${st[id] || 0}`;
+  return [
+    `§7Сейчас:§r ${M.job ? (M.st === 'forge' ? `куёт ${M.job.title} — ${Math.min(99, Math.floor(100 * M.prog / (M.total || 1)))}%` : M.st === 'smelt' ? 'плавит руду' : M.msg) : 'ждёт заказа'}`,
+    `§7Очередь (${M.q.length}):§r ${M.q.map((o) => o.title).slice(0, 6).join('; ') || 'пусто'}${wanted().length ? `\n§7Мечи новобранцам (просит капитан):§r ${wanted().map(guardName).join(', ')}` : ''}`,
+    `§7В сундуке кузни:§r ${['minecraft:iron_ingot', 'minecraft:raw_iron', 'minecraft:coal', 'minecraft:diamond', 'minecraft:gold_ingot', 'minecraft:raw_gold'].map(show2).join(', ')}`,
+  ].join('\n');
+};
+const queued = (guard, slot, tier) => [WS.smith.job, ...WS.smith.q].some((o) => o && o.guard === guard && o.slot === slot && o.tier === tier);
+// Следующие куски брони по званию (не больше 4 за раз)
+function byRankOrders(tier) {
+  const out = [];
+  for (const g of byRank()) for (const slot of ['head', 'chest', 'legs', 'feet']) {
+    if (out.length >= 4) return out;
+    if (TIER_N(gearOf(g.id)[slot]) >= TIER_N(tier) || queued(g.id, slot, tier)) continue;
+    out.push(makeOrder('armor', tier, g.id, slot));
+  }
+  return out;
+}
+async function forgeTalk(pl) {
+  const M = WS.smith, sb = storyButtons(pl, 'gordey');
+  const f = new ActionFormData().title(WORKERS.gordey.name + ' — кузня')
+    .body((sb.text ? `§e${sb.text}§r\n\n` : 'Кузнец я. Железо и уголь — в сундук кузни, остальное Васька от шахты принесёт. Что ковать?\n\n') + forgeLines());
+  const btn = [];
+  const full = M.q.length >= 12;
+  if (!full) {
+    btn.push(['Железная броня страже — по званию', () => { const o = byRankOrders('iron'); M.q.push(...o); return o.length ? `В очередь: ${o.map((q) => q.title).join('; ')}.` : 'Все уже в железе (или очередь занята).'; }]);
+    btn.push(['Алмазная броня страже — по званию', () => { const o = byRankOrders('diamond'); M.q.push(...o); return o.length ? `В очередь: ${o.map((q) => q.title).join('; ')}.` : 'Все уже в алмазах.'; }]);
+    btn.push(['Снарядить одного…', 'one']);
+    btn.push(['Железная кирка — Кондрату (3 железа)', () => { M.q.push(makeOrder('pick', 'iron')); return 'Скую кирку, Васька отнесёт к копру.'; }]);
+    btn.push(['Алмазная кирка — Кондрату (3 алмаза)', () => { M.q.push(makeOrder('pick', 'diamond')); return 'Алмазная — добро. Скую.'; }]);
+    btn.push(['Рельсы для шахты — 16 шт. (6 железа)', () => { M.q.push(makeOrder('rails')); return 'Рельсы скую, Васька отнесёт.'; }]);
+  }
+  if (M.q.length) btn.push([`Очистить очередь (${M.q.length})`, () => { M.q = []; return 'Очередь пуста.'; }]);
+  for (const o of sb.opts) btn.push([o.text, { story: o }]);
+  btn.push(['Пока', null]);
+  for (const [t] of btn) f.button(t);
+  const r = await show(pl, f);
+  if (r.canceled || !btn[r.selection][1]) return;
+  const act2 = btn[r.selection][1];
+  if (act2.story) return runOption(pl, 'gordey', act2.story);
+  if (act2 === 'one') return forgeOne(pl);
+  say('gordey', act2()); wsave(); wflush();
+}
+async function forgeOne(pl) {
+  const M = WS.smith, list = byRank();
+  const f = new ActionFormData().title('Кого снарядить').body('Стражники по званию. В скобках — что на нём сейчас.');
+  for (const g of list) f.button(`${g.name}\n§8${['head', 'chest', 'legs', 'feet', 'hand'].map((k) => (gearOf(g.id)[k] ? gearOf(g.id)[k].replace('minecraft:', '').replace(/_.*/, '') : '—')).join(' ')}`);
+  f.button('Назад');
+  const r = await show(pl, f);
+  if (r.canceled || r.selection >= list.length) return;
+  const g = list[r.selection], opts = [];
+  for (const tier of ['iron', 'diamond']) {
+    for (const slot of ['head', 'chest', 'legs', 'feet']) if (TIER_N(gearOf(g.id)[slot]) < TIER_N(tier)) opts.push(makeOrder('armor', tier, g.id, slot));
+    if (TIER_N(gearOf(g.id).hand) < TIER_N(tier)) opts.push(makeOrder('sword', tier, g.id, 'hand'));
+  }
+  const f2 = new ActionFormData().title(g.name).body(opts.length ? 'Что ковать?' : 'На нём уже всё лучшее.');
+  for (const o of opts) f2.button(`${o.title.split(' — ')[0]}\n§8${Object.entries(o.cost).map(([m, n]) => MAT_RU[m] + ' ' + n).join(', ')}`);
+  f2.button('Назад');
+  const r2 = await show(pl, f2);
+  if (r2.canceled || r2.selection >= opts.length) return;
+  M.q.push(opts[r2.selection]); say('gordey', 'В очередь: ' + opts[r2.selection].title + '.'); wsave(); wflush();
+}
+async function appTalk(pl) {
+  const A2 = WS.app, sb = storyButtons(pl, 'vaska');
+  const moved = Object.entries(A2.moved).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, n]) => k.replace('minecraft:', '') + ' ' + n).join(', ') || 'пока ничего';
+  const f = new ActionFormData().title(WORKERS.vaska.name)
+    .body((sb.text ? `§e${sb.text}§r\n\n` : 'Я ношу! От копра — руду и уголь в кузню, камень — Мирону на склад, а из кузни Кондрату — кирки и рельсы.\n\n') +
+      `§7Сейчас:§r ${A2.msg}. §7Ходок к шахте:§r ${A2.trips}.\n§7В руках:§r ${Object.entries(A2.bag).map(([k, n]) => k.replace('minecraft:', '') + ' ' + n).join(', ') || 'пусто'}\n§7Всего перенёс:§r ${moved}`);
+  const btn = sb.opts.map((o) => [o.text, o]);
+  btn.push(['Пока', null]);
+  for (const [t] of btn) f.button(t);
+  const r = await show(pl, f);
+  if (r.canceled || !btn[r.selection][1]) return;
+  return runOption(pl, 'vaska', btn[r.selection][1]);
+}
+export const workerTalk = guarded(async (pl, id) => { if (!WS) wload(); if (id === 'kondrat') await minerTalk(pl); else if (id === 'miron') await builderTalk(pl); else if (id === 'gordey') await forgeTalk(pl); else await appTalk(pl); });
 
 // ======================= КОМАНДЫ ОТЛАДКИ =======================
 export function workCommand(msg, src) {
@@ -1054,6 +1349,8 @@ export function workCommand(msg, src) {
     out.push(`Кондрат: ${M.on ? 'работает' : 'отдыхает'}, сост. ${M.st}, фаза ${M.phase}, шаг ствола ${M.i}, горизонт ${M.h + 1}/${M.open}, двор ${M.g}, коридор ${M.n + 1}: ${M.d}, ветка ${M.side > 0 ? 'вправо' : 'влево'} ${M.b}; ${M.msg}`);
     out.push(mineReport());
     out.push(`Мирон: сост. ${B.st}, заказ ${B.order || 'нет'}, осталось ${bt.jobs ? bt.jobs.length : '?'}, поставлено ${B.placed}, разобрано ${B.removed}, лесов ${B.scaff.length}, переходов напрямик ${WS.dbgDirect || 0}; ${B.msg}`);
+    out.push(`Гордей: ${WS.smith.st}, ${WS.smith.msg}; очередь ${WS.smith.q.length}; сделано: ${Object.entries(WS.smith.made).map(([k, n]) => k.replace('minecraft:', '') + ' ' + n).join(', ') || 'ничего'}`);
+    out.push(`Васька: ${WS.app.st}, ${WS.app.msg}; ходок ${WS.app.trips}; в руках ${Object.entries(WS.app.bag).map(([k, n]) => k.replace('minecraft:', '') + ' ' + n).join(', ') || 'пусто'}`);
     out.push(`Тележка Мирона: ${Object.entries(B.cart).map(([c, n]) => C.CAT_NAME[c] + ' ' + n).join(', ') || 'пусто'}`);
     if (WS.errs.length) out.push('§cОшибки:§r ' + WS.errs.join(' | '));
   } else if (cmd === 'fast') { WS.fast = Math.max(1, Math.min(50, parseInt(arg, 10) || 1)); out.push('Скорость работы ×' + WS.fast); }
@@ -1073,7 +1370,8 @@ export function workCommand(msg, src) {
     const st = containers(YW().store), br = containers([MW().barrel], 'minecraft:barrel');
     if (st) { for (const inv of st) { putItems(inv, 'minecraft:cobblestone', 1280); putItems(inv, 'minecraft:spruce_log', 256); putItems(inv, 'minecraft:glass', 64); putItems(inv, 'minecraft:iron_ingot', 32); } }
     if (br) { putItems(br[0], 'minecraft:iron_pickaxe', 3); putItems(br[0], 'minecraft:rail', 64); putItems(br[0], 'minecraft:torch', 64); }
-    out.push('Положил на склад строителя камень, брёвна, стекло, железо; в бочку у копра — 3 железные кирки, рельсы и факелы.');
+    const fc = forgeChests(); if (fc) { putItems(fc[0], 'minecraft:iron_ingot', 64); putItems(fc[0], 'minecraft:raw_iron', 32); putItems(fc[0], 'minecraft:coal', 16); putItems(fc[0], 'minecraft:diamond', 24); }
+    out.push('Положил на склад строителя камень, брёвна, стекло, железо; в бочку у копра — 3 железные кирки, рельсы и факелы; в сундук кузни — железо, сырое железо, уголь, алмазы.');
   } else if (cmd === 'orders') out.push(ORDERS().map((o) => `${WS.build.done[o.id] ? '✓' : orderOpen(o) ? '•' : '·'} ${o.id}: ${o.title}`).join('\n'));
   else if (cmd === 'order') { const err = startOrder(arg); out.push(err || 'Заказ начат: ' + arg); }
   else if (cmd === 'reset') {
@@ -1105,11 +1403,21 @@ export function workTick() {
     const t = now - dt + 1 + k;
     try { mineTick(t); } catch (e) { report('Кондрат', 'цикл', e); }
     try { buildTick(t); } catch (e) { report('Мирон', 'цикл', e); }
+    try { smithTick(t); } catch (e) { report('Гордей', 'цикл', e); }
+    try { appTick(t); } catch (e) { report('Васька', 'цикл', e); }
   }
   if (WS.label && every % 20 === 0) {
     const M = WS.mine, B = WS.build;
     const ek = entOf('kondrat'); if (ek) ek.nameTag = `${WORKERS.kondrat.name}\n§7${M.on ? (M.st === 'work' ? workMsg() : M.msg) : 'отдыхает'}`;
     const em = entOf('miron'); if (em) em.nameTag = `${WORKERS.miron.name}\n§7${B.msg}`;
+    const eg = entOf('gordey'); if (eg) eg.nameTag = `${WORKERS.gordey.name}\n§7${WS.smith.msg}`;
+    const ev = entOf('vaska'); if (ev) ev.nameTag = `${WORKERS.vaska.name}\n§7${WS.app.msg}`;
+  }
+  // рядом с кузней — ход работы кузнеца внизу экрана
+  if (every % 20 === 0 && WS.smith.job && CASTLE.works.forge) {
+    const a = Wc(CASTLE.works.forge.anvil), M = WS.smith;
+    const text = M.st === 'forge' ? `§6Гордей куёт: ${M.job.title} — ${Math.min(99, Math.floor(100 * M.prog / (M.total || 1)))}%` : M.st === 'smelt' ? '§6Гордей плавит руду' : `§7Гордей: ${M.msg}`;
+    for (const pl of players()) if (Math.hypot(pl.location.x - a.x, pl.location.z - a.z) < 10 && Math.abs(pl.location.y - a.y) < 6) pl.onScreenDisplay.setActionBar(text);
   }
   if (every % 40 === 0) wflush();
 }

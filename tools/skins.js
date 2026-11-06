@@ -871,6 +871,35 @@ const NPC = [
     W.sprinkle(K, 'jacket', '#b8b8b0', 0.06); // каменная пыль
     return K;
   } },
+  // ===== Гарнизон (с 0.9.3): стражники смен, дозорные башен, второй лучник. Дневная смена —
+  // в красном (как Остап), ночная — в синем, дозорные башен — в зелёном =====
+  ...[
+    ['bogdan', 'Стражник Богдан', 'дневная смена, дозор по двору', { skin: SKIN.ruddy, hair: '#6a4a2a', hairStyle: 'short', beard: 'short', beardColor: '#5a3a22', eyes: '#4a3a2a' }, 'day'],
+    ['eryoma', 'Стражник Ерёма', 'дневная смена, обход донжона', { skin: SKIN.light, hair: '#3a2a1e', hairStyle: 'shaggy', beard: 'stubble', eyes: '#3a5a3a' }, 'day'],
+    ['vlas', 'Десятник Влас', 'старший ночной смены', { skin: SKIN.weather, hair: '#2a2420', hairStyle: 'short', beard: 'full', beardColor: '#2a2420', eyes: '#3a3020', age: 1, scar: 'cheek' }, 'night'],
+    ['gleb', 'Стражник Глеб', 'ночная смена, ворота', { skin: SKIN.fair, hair: '#a07040', hairStyle: 'parted', beard: 'mustache', beardColor: '#8a5a30', eyes: '#4a6a9a' }, 'night'],
+    ['foma', 'Стражник Фома', 'ночная смена, вход в донжон', { skin: SKIN.tan, hair: '#1e1a18', hairStyle: 'bald', beard: 'goatee', beardColor: '#1e1a18', eyes: '#3a2a1a' }, 'night'],
+    ['prokop', 'Стражник Прокоп', 'ночная смена, вход в донжон', { skin: SKIN.old, hair: '#9a9a94', hairStyle: 'short', beard: 'droop', beardColor: '#b8b8b0', eyes: '#5a5a6a', age: 1 }, 'night'],
+    ['stepan', 'Стражник Степан', 'ночная смена, дозор по двору', { skin: SKIN.light, hair: '#c08040', hairStyle: 'curly', freckles: 1, eyes: '#4a7a4a' }, 'night'],
+    ['yakov', 'Стражник Яков', 'ночная смена, дозор по двору', { skin: SKIN.dark, hair: '#141210', hairStyle: 'short', beard: 'short', beardColor: '#141210', eyes: '#2a1e14' }, 'night'],
+    ['nestor', 'Стражник Нестор', 'ночная смена, обход донжона', { skin: SKIN.pale, hair: '#5a4a3a', hairStyle: 'slick', beard: 'stubble', eyes: '#4a4a5a' }, 'night'],
+    ['arkhip', 'Дозорный Архип', 'башня за амбаром', { skin: SKIN.weather, hair: '#7a7a74', hairStyle: 'short', beard: 'long', beardColor: '#9a9a94', eyes: '#4a5a5a', age: 1 }, 'tower'],
+    ['semyon', 'Дозорный Семён', 'башня за домом управителя', { skin: SKIN.ruddy, hair: '#4a3020', hairStyle: 'bowl', beard: 'stubble', eyes: '#5a4a2a' }, 'tower'],
+    ['kirill', 'Дозорный Кирилл', 'башня у шахты', { skin: SKIN.fair, hair: '#d0a860', hairStyle: 'short', blush: 1, eyes: '#4a7ab0' }, 'tower'],
+    ['khariton', 'Дозорный Харитон', 'башня у двора строителя', { skin: SKIN.tan, hair: '#2a2018', hairStyle: 'shaggy', beard: 'full', beardColor: '#2a2018', eyes: '#3a2a1a' }, 'tower'],
+  ].map(([id, name, role, face, kind]) => ({ id, group: 'castle', name, stage: 1, role, draw: (s) => {
+    const K = person(face, s);
+    GUARD(K, kind === 'night' ? { field: '#2a3a6a', trim: '#c8c8d0', steel: '#9aa0a8' } : kind === 'tower' ? { field: '#3a5a30', trim: '#c8a040' } : {});
+    return K;
+  } })),
+  { id: 'lyubim', group: 'castle', name: 'Лучник Любим', stage: 1, role: 'второй стрелок, правая надвратная башня', draw: (s) => {
+    const K = person({ skin: SKIN.fair, hair: '#8a6a3a', hairStyle: 'parted', beard: 'stubble', eyes: '#4a6a4a' }, s);
+    W.shirt(K, '#5a4a38', { slit: false }); W.trousers(K, '#3a4a2c'); W.boots(K, '#4a3020', 5, { cuff: '#6a4a2a' });
+    W.vest(K, '#6a4a2e', { len: 11 }); W.belt(K, '#3a2a1a', { y: 8, buckle: '#8a8a8a', part: 'jacket' });
+    W.bracer(K, '#5a3a20', 'lArm'); W.gloves(K, '#6a4a2a', 11);
+    W.hood(K, '#4a3a2a'); W.strap(K, '#5a3a20'); W.quiver(K);
+    return K;
+  } },
 ];
 
 const skinPng = (id) => { const i = NPC.findIndex((n) => n.id === id); if (i < 0) throw new Error('нет скина ' + id); return NPC[i].draw(1000 + i * 7919).png(); };
