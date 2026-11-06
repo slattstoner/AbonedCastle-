@@ -2,6 +2,8 @@
 // снаружи и у лебёдки в каждой надвратной башне. Повернул любой — решётка идёт вниз или вверх
 // по одному ряду (видно и слышно, как она опускается), за ~1 секунду. Если в проёме стоит
 // игрок или существо, ряд ждёт, пока проход освободится (решётка никого не придавит).
+// С 0.9.4 решёткой ведает и стража (garrison.js): на закате опускает, на рассвете поднимает,
+// ночью поднимает перед игроком. Рычаг игрока главнее — до следующей смены стража его не трогает.
 // Проверка: /scriptevent acastle:gate open | close | status
 import { world, system } from '@minecraft/server';
 import { S, DIM, players } from './state.js';
@@ -28,9 +30,14 @@ function blocked(row) {
   near = [...near, ...players()]; // игроков — отдельно, наверняка
   return near.some((e) => row.some((r) => { const w = Wc(r); return Math.floor(e.location.x) === w.x && Math.floor(e.location.z) === w.z && e.location.y > w.y - 1.8 && e.location.y < w.y + 1; }));
 }
-export function toggleGate(want) {
+export const gateClosed = () => { if (!G) load(); return !!G.closed; };
+export const gateMoving = () => !!anim;
+export const gateManual = () => { if (!G) load(); return !!G.manual; };
+export function clearManual() { if (!G) load(); if (G.manual) { G.manual = 0; save(); } }
+export function toggleGate(want, auto = false) {
   if (!S || !S.origin || !CASTLE.portcullis) return 'Замок ещё не поставлен.';
   if (!G) load();
+  if (!auto) G.manual = 1;
   const close = want === undefined ? !G.closed : want;
   if (close === G.closed && !anim) return close ? 'Решётка уже опущена.' : 'Решётка уже поднята.';
   const rows = CASTLE.portcullis.rows;

@@ -104,7 +104,12 @@ export const api = {
     S.st[npcId] = st || null; save();
     const e = findNpc(npcId); if (e) try { e.triggerEvent('acastle:' + (st || 'peaceful')); } catch (err) { /* ничего */ }
   },
-  stageGuards(stage) { for (const p of CASTLE.posts) if (p.stage === stage && !p.archer) S.npcs[p.guard] = 'post'; save(); },
+  stageGuards(stage) {
+    for (const p of CASTLE.posts) if (p.stage === stage && !p.archer) S.npcs[p.guard] = 'post';
+    // гарнизон, который приходит по сюжету на этом этапе (гридень Ратибор — с отрядом из острога)
+    for (const g of (CASTLE.garrison ? CASTLE.garrison.roster : [])) if (g.from === 'story' && g.stage === stage) S.npcs[g.id] = 'post';
+    save();
+  },
   tagOf, npcIdOf, findNpc: (id) => findNpc(id),
   // ---------- Места и точки ----------
   // Места тайги: выбрать точку для задания в стороне от замка

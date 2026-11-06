@@ -900,6 +900,17 @@ const NPC = [
     W.hood(K, '#4a3a2a'); W.strap(K, '#5a3a20'); W.quiver(K);
     return K;
   } },
+  // ===== Гридни (с 0.9.4): личная стража короля у двери опочивальни — цвета королевского
+  // рода (тёмно-вишнёвый с золотом, как у короля), плащ, шлем с золотым ободом =====
+  ...[
+    ['ratibor', 'Гридень Ратибор', 'личная стража короля, днём', { skin: SKIN.weather, hair: '#3a2a1e', hairStyle: 'short', beard: 'full', beardColor: '#3a2a1e', eyes: '#3a3a2a', age: 1, scar: 'cheek' }],
+    ['tverdyata', 'Гридень Твердята', 'личная стража короля, ночью', { skin: SKIN.light, hair: '#8a6a40', hairStyle: 'parted', beard: 'short', beardColor: '#7a5a34', eyes: '#4a5a7a' }],
+  ].map(([id, name, role, face]) => ({ id, group: 'castle', name, stage: 1, role, draw: (s) => {
+    const K = person(face, s);
+    GUARD(K, { field: '#6a1f3a', trim: '#e0b33a', steel: '#b8bcc2', rim: '#e0b33a', plume: '#c0283a' });
+    W.cloak(K, '#4a1428', { clasp: '#e0b33a', len: 10 });
+    return K;
+  } })),
 ];
 
 const skinPng = (id) => { const i = NPC.findIndex((n) => n.id === id); if (i < 0) throw new Error('нет скина ' + id); return NPC[i].draw(1000 + i * 7919).png(); };

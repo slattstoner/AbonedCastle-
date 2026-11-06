@@ -957,7 +957,7 @@ export function jumpLate(n, api, base) {
   for (const [k, ids] of Object.entries(ARRIVALS)) for (const id of ids) { if (+k < n) S.npcs[id] = 'home'; else delete S.npcs[id]; }
   S.arrive = [];
   for (let k = n; k <= 9; k++) delete S.f[`stage${k}_done`];
-  if (n >= 2) { for (const p of api.castle.posts) S.npcs[p.guard] = 'post'; }
+  if (n >= 2) { for (const p of api.castle.posts) S.npcs[p.guard] = 'post'; for (const g of (api.castle.garrison ? api.castle.garrison.roster : [])) if (g.from === 'story') S.npcs[g.id] = 'post'; }
   for (let k = 1; k < n; k++) S.f[`stage${k}_done`] = 1;
   Object.assign(S.f, { s1_talked: n > 1 ? 1 : S.f.s1_talked, seal: n > 1 ? 1 : S.f.seal, copy: n > 1 ? 1 : S.f.copy, farm_supply: n > 3 ? 1 : 0, lullaby: n > 5 ? 1 : 0, heard_song: n > 5 ? 1 : 0, king_up: n > 6 ? 1 : 0, camp_empty: n > 7 ? 1 : 0, vault_read: n > 5 ? 1 : 0 });
   if (n > 3) S.npcs.trader = n > 5 ? null : 'home';

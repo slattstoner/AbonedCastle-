@@ -807,9 +807,27 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
     console.log(`Гарнизон днём: на постах ${present(day).length} из ${day.length}, ночная смена спит: ${night.length - present(night).length} из ${night.length}`);
     expect(present(day).length === day.length, 'днём на постах вся дневная смена, дозорные и лучники: нет ' + day.filter((id) => !guard(id)).join(', '));
     expect(!present(night).length, 'ночная смена днём спит в казарме: не спят ' + present(night).join(', '));
-    // обход: дозорный идёт по петле
-    const luka = guard('luka'), l0 = { ...luka.location }; ticks(30);
-    expect(Math.hypot(luka.location.x - l0.x, luka.location.z - l0.z) > 3, 'дозорный Лука идёт по обходу');
+    // обход: не без конца — дозор стоит на месте и раз в несколько минут идёт по петле
+    const luka = guard('luka'), at0 = W(CASTLE.garrison.posts.patrol_yard);
+    expect(Math.hypot(luka.location.x - at0.x - 0.5, luka.location.z - at0.z - 0.5) < 2, 'дозорный Лука ждёт обхода на своём месте');
+    let l0 = { ...luka.location }; ticks(30);
+    expect(Math.hypot(luka.location.x - l0.x, luka.location.z - l0.z) < 1, 'до своего часа дозор стоит, а не мельтешит');
+    time += 6100; ticks(30); // через пять минут (раньше в прогоне время уже уходило вперёд)
+    expect(Math.hypot(luka.location.x - l0.x, luka.location.z - l0.z) > 3, 'в свой час дозорный Лука идёт по обходу');
+    const bog = guard('bogdan');
+    expect(bog && Math.hypot(bog.location.x - luka.location.x, bog.location.z - luka.location.z) < 6, 'второй в паре (Богдан) идёт следом');
+    { const n0 = CASTLE.garrison.routes.patrol_yard.path.length / 3; ticks(Math.ceil(n0 * 2.2) + 40); }
+    expect(!g0().pr.luka.on && Math.hypot(luka.location.x - at0.x - 0.5, luka.location.z - at0.z - 0.5) < 2, 'круг пройден — дозор снова на своём месте, следующий обход позже');
+    // гридень у двери опочивальни
+    { const r = guard('ratibor'), k = W(CASTLE.garrison.posts.king);
+      expect(r && Math.hypot(r.location.x - k.x - 0.5, r.location.z - k.z - 0.5) < 1.5 && Math.abs(r.location.y - k.y) < 1, 'гридень Ратибор стоит у двери опочивальни короля'); }
+    // нарушители: монстр на стене и под землёй — нет, во дворе у ворот — да, ближний стражник выходит
+    { const wall = makeEntity('minecraft:skeleton', W([58, 9, 120])), deep = makeEntity('minecraft:zombie', W([63, -20, 112]));
+      const yard = makeEntity('minecraft:zombie', W([62, 0, 122])); ticks(4);
+      expect(!wall.hasTag('acastle_intruder') && !deep.hasTag('acastle_intruder'), 'монстр на стене и под землёй — не нарушитель, за ним стража не тянется');
+      expect(yard.hasTag('acastle_intruder') && guard('ostap').events.includes('acastle:alert'), 'нежить во дворе у ворот — Остап по тревоге');
+      wall.remove(); deep.remove(); yard.remove(); ticks(8);
+      expect(guard('ostap').events.at(-1) === 'acastle:calm', 'нежити нет — Остап спокоен и вернётся на пост'); }
     // ночь: ночная смена встаёт с коек и идёт на посты, дневная — спать
     time = 13000; ticks(2);
     const vlas = guard('vlas'), bed = CASTLE.garrison.beds[R.find((g) => g.id === 'vlas').bed];
@@ -819,12 +837,19 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
     expect(present(night).length === night.length && night.every((id) => g0().st[id] === 'duty'), 'ночью на постах ночная смена: ' + night.map((id) => id + ':' + g0().st[id]).join(' '));
     expect(R.filter((g) => g.shift === 'day').every((g) => !guard(g.id) && g0().st[g.id] === 'rest'), 'дневная смена ушла спать: ' + R.filter((g) => g.shift === 'day').map((g) => g.id + ':' + g0().st[g.id]).join(' '));
     expect(guard('arkhip') && guard('savva'), 'дозорные башен и лучники — без смен, на месте');
-    const post = W(CASTLE.garrison.posts.gate_l);
-    expect(Math.hypot(vlas.location.x - post.x - 0.5, vlas.location.z - post.z - 0.5) < 2.5, 'Влас дошёл до ворот');
+    const post = W(CASTLE.garrison.posts.gate_l_night);
+    expect(Math.hypot(vlas.location.x - post.x - 0.5, vlas.location.z - post.z - 0.5) < 2.5, 'Влас дошёл до караулки надвратной башни');
+    const PC = CASTLE.portcullis, barsDown = () => PC.rows.every((row) => row.every((c) => blockAt(W(c)).typeId === 'minecraft:iron_bars'));
+    expect(barsDown(), 'на ночь решётка опущена');
+    { const was = { ...player.location }; goTo([63, 0, 133]); ticks(4);
+      expect(!PC.rows[0].some((c) => blockAt(W(c)).typeId === 'minecraft:iron_bars'), 'ночью перед игроком решётку поднимают');
+      player.location = was; ticks(20);
+      expect(barsDown(), 'за игроком решётку опускают'); }
     msgs.length = 0; for (const h of handlers.script) h({ id: 'acastle:guard', message: 'status', sourceEntity: player });
     expect(msgs.some((m) => /Гарнизон/.test(m)), 'acastle:guard status отвечает');
     time = 1000; ticks(240);
     expect(R.filter((g) => g.shift === 'day').every((g) => guard(g.id)) && R.filter((g) => g.shift === 'night').every((g) => !guard(g.id)), 'утром дневная смена снова на постах, ночная спит');
+    expect(PC.rows.every((row) => row.every((c) => blockAt(W(c)).typeId !== 'minecraft:iron_bars')), 'на рассвете решётку подняли');
   }
   // --- Решётка ворот ---
   {
