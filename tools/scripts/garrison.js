@@ -176,6 +176,9 @@ function walk(id, path, done, v = 0.15) {
   if (!path || path.length < 2) { done && done(); return; }
   movers[id] = { path, i: 0, t: 0, v, done };
 }
+// Поворот: 0 — лицом на юг (+z), 90 — на запад (−x); x — наклон головы (0 — прямо)
+const yawOf = (a, b) => Math.atan2(-(b.x - a.x), b.z - a.z) * 180 / Math.PI;
+const yaws = {}; // id → куда смотрит, когда стоит
 const nearPlayer = (p, r) => players().some((pl) => Math.abs(pl.location.x - p.x) < r && Math.abs(pl.location.z - p.z) < r);
 // Двери на пути: открыть, когда стражник входит, закрыть, когда отошёл
 const opened = []; // { p, by }
@@ -211,7 +214,9 @@ function moveTick(id, dt) {
   if (m.i !== i0 || !m.dk) { m.dk = 1; for (const c of [a, b]) if (door(c, true) && !opened.some((o) => o.p.x === c.x && o.p.y === c.y && o.p.z === c.z)) opened.push({ p: c, by: id }); }
   // далеко от игроков переносим реже: так дешевле для игры
   if (last || m.i !== i0 || nearPlayer(e.location, 48) || system.currentTick % 10 === 0) {
-    try { e.teleport({ x: a.x + (b.x - a.x) * t + 0.5, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t + 0.5 }, { facingLocation: { x: b.x + 0.5, y: b.y + 1.6, z: b.z + 0.5 } }); } catch (err) { /* нет */ }
+    // взгляд — ровно по ходу (раньше смотрел в точку над следующей клеткой и задирал голову)
+    if (b.x !== a.x || b.z !== a.z) yaws[id] = yawOf(a, b);
+    try { e.teleport({ x: a.x + (b.x - a.x) * t + 0.5, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t + 0.5 }, { rotation: { x: 0, y: yaws[id] || 0 } }); } catch (err) { /* нет */ }
   }
   if (last) { delete movers[id]; if (m.done) m.done(); }
   return true;
@@ -374,7 +379,7 @@ function patrolStep(g, e, dt, scan) {
   }
   const t = G.pt[g.id];
   door(nx, true);
-  if (nearPlayer(here, 48) || system.currentTick % 10 === 0) try { e.teleport({ x: at.x + (nx.x - at.x) * t + 0.5, y: at.y + (nx.y - at.y) * t, z: at.z + (nx.z - at.z) * t + 0.5 }, { facingLocation: { x: nx.x + 0.5, y: nx.y + 1.6, z: nx.z + 0.5 } }); } catch (err) { /* нет */ }
+  if (nearPlayer(here, 48) || system.currentTick % 10 === 0) try { e.teleport({ x: at.x + (nx.x - at.x) * t + 0.5, y: at.y + (nx.y - at.y) * t, z: at.z + (nx.z - at.z) * t + 0.5 }, { rotation: { x: 0, y: (yaws[g.id] = nx.x !== at.x || nx.z !== at.z ? yawOf(at, nx) : yaws[g.id] || 0) } }); } catch (err) { /* нет */ }
 }
 
 // ---------- Ворота: решётка по распорядку ----------
@@ -443,7 +448,12 @@ export function garrisonMove() {
     if (!scan && !seek[g.id]) continue;
     const at = postAt(g), here = e.location;
     const d = Math.hypot(here.x - at.x - 0.5, here.z - at.z - 0.5);
-    if (d > 1.2 || Math.abs(here.y - at.y) > 1.5) goTo(g.id, e, at);
+    if (d > 1.2 || Math.abs(here.y - at.y) > 1.5) { goTo(g.id, e, at); continue; }
+    // стоит на посту: смотрит прямо, туда, куда пришёл (у ворот — в поле); рядом игрок — пусть глядит на него
+    if (scan && !nearPlayer(here, 6)) {
+      const want = g.post.startsWith('gate_') && !(gateNight() && g.shift === 'night') ? 0 : (yaws[g.id] || 0);
+      try { const r = e.getRotation(); if (Math.abs(r.x) > 10 || Math.abs(((r.y - want + 540) % 360) - 180) > 15) e.setRotation({ x: 0, y: want }); } catch (err) { /* нет */ }
+    }
   }
 }
 

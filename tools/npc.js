@@ -168,7 +168,8 @@ function guardEntity() {
     [`${NS}:alert`]: targeting([hasTag(`${NS}_intruder`)], 20),
     [`${NS}:alert_keep`]: targeting([hasTag(`${NS}_intruder_keep`)], 16),
     // из яйца призыва (без поста и скриптов): бьёт монстров рядом сам
-    [`${NS}:free`]: { ...targeting([monster], 12), 'minecraft:behavior.random_stroll': { priority: 7, speed_multiplier: 0.6, xz_dist: 2, y_dist: 1, interval: 400 } },
+    [`${NS}:free`]: { ...targeting([monster], 12), 'minecraft:home': { restriction_type: 'random_movement', restriction_radius: 12 },
+      'minecraft:behavior.move_towards_home_restriction': { priority: 4 }, 'minecraft:behavior.random_stroll': { priority: 7, speed_multiplier: 0.6, xz_dist: 2, y_dist: 1, interval: 400 } },
   };
   const events = {
     // Из яйца призыва — один из стражников гарнизона
@@ -182,8 +183,10 @@ function guardEntity() {
   skinGroups(GUARDS.map((g) => g.id), groups, events);
   events[`${NS}:as_savva`].add.component_groups.push(`${NS}:archer`);
   events[`${NS}:as_lyubim`].add.component_groups.push(`${NS}:archer`);
-  // Гарнизон: стражника водят скрипты (пост, обход, пересменка) — привязка к месту появления ему мешает
-  groups[`${NS}:patrol`] = { 'minecraft:home': { restriction_type: 'none' } };
+  // Гарнизон: стражника водят скрипты (пост, обход, пересменка). Своего «дома» у него нет вовсе:
+  // в 0.9.3 домом считалась койка, где он появился, игра тянула его туда, скрипт — на пост,
+  // и стражник топтался между двумя клетками. Группа осталась меткой «ведут скрипты».
+  groups[`${NS}:patrol`] = {};
   events[`${NS}:patrol`] = { add: { component_groups: [`${NS}:patrol`] } };
   return {
     format_version: '1.21.0',
@@ -201,7 +204,6 @@ function guardEntity() {
         'minecraft:annotation.open_door': {},
         'minecraft:knockback_resistance': { value: 0.4 },
         'minecraft:follow_range': { value: 24, max: 24 },
-        'minecraft:home': { restriction_type: 'random_movement', restriction_radius: 2 },
         'minecraft:equipment': {
           table: `loot_tables/${NS}/npc/guard_gear.json`,
           slot_drop_chance: [{ slot: 'slot.weapon.mainhand', drop_chance: 0 }],
@@ -216,7 +218,8 @@ function guardEntity() {
             { on_damage: { filters: { test: 'is_family', subject: 'other', value: `${NS}_npc` } }, deals_damage: 'no' },
           ],
         },
-        'minecraft:behavior.move_towards_home_restriction': { priority: 4 },
+        // не толкается: на посту стоит, пока его не поведут скрипты
+        'minecraft:pushable': { is_pushable: false, is_pushable_by_piston: true },
       },
       events,
     },

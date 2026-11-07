@@ -807,6 +807,10 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
     console.log(`Гарнизон днём: на постах ${present(day).length} из ${day.length}, ночная смена спит: ${night.length - present(night).length} из ${night.length}`);
     expect(present(day).length === day.length, 'днём на постах вся дневная смена, дозорные и лучники: нет ' + day.filter((id) => !guard(id)).join(', '));
     expect(!present(night).length, 'ночная смена днём спит в казарме: не спят ' + present(night).join(', '));
+    // на посту стоит, а не топчется: скрипт его не двигает (в 0.9.3 — тянул туда-сюда)
+    { const o = guard('ostap'), p0 = W(CASTLE.garrison.posts.gate_l); let n = 0; const tp = o.teleport; o.teleport = function (l, opt) { n++; return tp.call(this, l, opt); };
+      ticks(40); o.teleport = tp;
+      expect(Math.hypot(o.location.x - p0.x - 0.5, o.location.z - p0.z - 0.5) < 0.3 && n === 0, `Остап стоит на посту и не дёргается (переносов ${n})`); }
     // обход: не без конца — дозор стоит на месте и раз в несколько минут идёт по петле
     const luka = guard('luka'), at0 = W(CASTLE.garrison.posts.patrol_yard);
     expect(Math.hypot(luka.location.x - at0.x - 0.5, luka.location.z - at0.z - 0.5) < 2, 'дозорный Лука ждёт обхода на своём месте');

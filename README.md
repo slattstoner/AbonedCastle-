@@ -2,7 +2,7 @@
 
 Замок из замшелого камня в упадке, который игрок восстанавливает вместе с работниками и стражей. Вокруг — тайга с постройками, тайниками и историями.
 
-Готовый аддон: [`dist/AbandonedCastle_Taiga.mcaddon`](dist/AbandonedCastle_Taiga.mcaddon) — **версия 0.9.4**.
+Готовый аддон: [`dist/AbandonedCastle_Taiga.mcaddon`](dist/AbandonedCastle_Taiga.mcaddon) — **версия 0.9.5**.
 Для разработки (и нового чата с ИИ) — начинать с [`CLAUDE.md`](CLAUDE.md). Указатель по документам — [`docs/README.md`](docs/README.md).
 
 ## Что в аддоне
