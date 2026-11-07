@@ -886,10 +886,29 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
   await talkW('miron', O2.title, 'Берись');
   n = runUntil(() => ws().build.done[O2.id], 60000, 'каменный пролёт сложен');
   [bad, all] = match(O2);
-  console.log(`Строитель, ${O2.title}: ${n} шагов прогона, поставлено ${ws().build.placed}, разобрано ${ws().build.removed}, клеток ${all}, не совпало ${bad}, лесов поставлено ${ws().build.scaffTotal || 0}, переходов напрямик ${ws().dbgDirect || 0}`);
-  console.log('  напрямик (последние): ' + (ws().dbgLast || []).map((t) => t.split(' → ').map((q) => q.split(' ').map(Number).map((v, i) => v - [O.x - CASTLE.origin[0], O.y, O.z - CASTLE.origin[2]][i]).join(',')).join(' → ')).join(' | '));
+  console.log(`Строитель, ${O2.title}: ${n} шагов прогона, поставлено ${ws().build.placed}, разобрано ${ws().build.removed}, клеток ${all}, не совпало ${bad}, лесов поставлено ${ws().build.scaffTotal || 0}, путь не найден ${ws().dbgNoPath || 0} раз, шагов сквозь стену ${ws().dbgWall || 0}, по воздуху ${ws().dbgFly || 0}`);
+  expect(!ws().dbgWall && !ws().dbgFly, `Мирон не ходит сквозь стены и по воздуху (сквозь стену ${ws().dbgWall || 0}, по воздуху ${ws().dbgFly || 0})`);
+  expect((ws().build.scaffTotal || 0) > 0, 'на высоте Мирон ставит леса');
+  console.log('  путь не найден (последние): ' + (ws().dbgLast || []).map((t) => t.split(' → ').map((q) => q.split(' ').map(Number).map((v, i) => v - [O.x - CASTLE.origin[0], O.y, O.z - CASTLE.origin[2]][i]).join(',')).join(' → ')).join(' | '));
   expect(!bad, `каменный пролёт совпадает с заплаткой (${bad} из ${all} не так)`);
   expect(![...blocks.values()].some((b) => b.typeId === 'minecraft:scaffolding'), 'леса разобраны');
+  // угловая башня (высокая: у башни у шахты стена рухнула до середины) — тоже с лесов
+  {
+    work('fill');
+    const OT = CASTLE.orders.find((o) => o.id === 'tower_sw:stone'), w0 = ws().dbgWall || 0, f0 = ws().dbgFly || 0, sc0 = ws().build.scaffTotal || 0;
+    // в макете нет уцелевшего низа башни: лестница внутри — от пола до пролома (как в игре)
+    for (let y = 0; y <= 6; y++) blockAt(W([1, y, 125])).setType('minecraft:ladder');
+    work('order ' + OT.id);
+    const T0 = Date.now();
+    n = runUntil(() => { if (Date.now() - T0 > 240000) return true; return ws().build.done[OT.id]; }, 40000, 'башня сложена');
+    if (!ws().build.done[OT.id]) console.log('Башня: не закончена, ' + ws().build.st + ' ' + ws().build.msg + ' | ' + (ws().dbgWhy || []).slice(0, 4).join(' | '));
+    [bad, all] = match(OT);
+
+    console.log(`Строитель, ${OT.title}: ${n} шагов прогона, клеток ${all}, не совпало ${bad}, лесов поставлено ${(ws().build.scaffTotal || 0) - sc0}, сквозь стену ${(ws().dbgWall || 0) - w0}, по воздуху ${(ws().dbgFly || 0) - f0}`);
+    expect(!bad, `башня совпадает с заплаткой (${bad} из ${all} не так)`);
+    expect((ws().dbgWall || 0) === w0 && (ws().dbgFly || 0) === f0, 'на башне Мирон не ходит сквозь стены и по воздуху');
+    expect(![...blocks.values()].some((b) => b.typeId === 'minecraft:scaffolding'), 'леса у башни разобраны');
+  }
   msgs.length = 0; work('ledger');
   expect(msgs.some((m) => /Счёт сходится/.test(m)), 'счёт строителя сходится: ' + msgs.join(' / ').slice(0, 300));
   msgs.length = 0; work('status');

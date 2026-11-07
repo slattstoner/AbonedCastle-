@@ -71,8 +71,11 @@ const keyOf = (p) => p[0] + ',' + p[1] + ',' + p[2];
 function blk(p) { try { return DIM().getBlock(Array.isArray(p) ? V(p) : p); } catch (e) { return undefined; } }
 const idAt = (p) => { const b = blk(p); return b ? b.typeId : null; };
 const PASS = /(^|:)(air|cave_air|short_grass|tall_grass|fern|large_fern|poppy|dandelion|cornflower|allium|azure_bluet|oxeye_daisy|lily_of_the_valley|.*tulip|blue_orchid|deadbush|sweet_berry_bush|torch|wall_torch|rail|golden_rail|.*carpet|snow_layer|vine|.*sapling|.*button|lever|.*_sign|.*pressure_plate|light_block.*|brown_mushroom|red_mushroom)$/;
-const passable = (p) => { const id = idAt(p); return id !== null && PASS.test(id); };
-const solidAt = (p) => { const id = idAt(p); return id !== null && !PASS.test(id) && !C.LIQUID.test(id); };
+const DOOR = /(_door|fence_gate)$/;
+// дверь проходима (работник её открывает), но на ней не стоят и леса в неё не ставят
+const passable = (p) => { const id = idAt(p); return id !== null && (PASS.test(id) || DOOR.test(id)); };
+const freeCell = (p) => { const id = idAt(p); return id !== null && PASS.test(id); };
+const solidAt = (p) => { const id = idAt(p); return id !== null && !PASS.test(id) && !DOOR.test(id) && !C.LIQUID.test(id); };
 function standable(x, y, z) { return solidAt([x, y - 1, z]) && passable([x, y, z]) && passable([x, y + 1, z]); }
 standable.headroom = (x, y, z) => passable([x, y, z]) || /scaffolding|ladder/.test(idAt([x, y, z]) || '');
 standable.climb = (x, y, z) => /scaffolding|ladder/.test(idAt([x, y, z]) || '') && (passable([x, y + 1, z]) || /scaffolding|ladder/.test(idAt([x, y + 1, z]) || ''));
@@ -188,6 +191,14 @@ function walk(id, path, done, { speedBpt = 0.2, ride = false } = {}) {
   ST(id).walking = true;
 }
 function setPos(id, p) { ST(id).pos = p; wsave(); }
+function setDoor(p, open) {
+  const b = blk(p);
+  if (!b || !DOOR.test(b.typeId)) return;
+  try {
+    const low = b.permutation.getState('upper_block_bit') ? blk([p[0], p[1] - 1, p[2]]) : b;
+    if (!!low.permutation.getState('open_bit') !== open) { low.setPermutation(low.permutation.withState('open_bit', open)); sound(open ? 'random.door_open' : 'random.door_close', p); }
+  } catch (e) { /* нет состояния */ }
+}
 function moveTick(id, dt) {
   const m = movers[id];
   if (!m) return false;
@@ -198,6 +209,18 @@ function moveTick(id, dt) {
   const last = m.i >= m.path.length - 1;
   const a = m.path[Math.min(m.i, m.path.length - 1)], b = m.path[Math.min(m.i + 1, m.path.length - 1)];
   const t = last ? 0 : m.t;
+  if (m.seen !== m.i) {
+    m.seen = m.i;
+    // двери на пути открывает, за собой закрывает
+    for (const c of [a, b]) if (DOOR.test(idAt(c) || '')) { setDoor(c, true); if (!m.doors) m.doors = []; if (!m.doors.some((d) => keyOf(d) === keyOf(c))) m.doors.push(c); }
+    if (m.doors) for (let k = m.doors.length - 1; k >= 0; k--) { const d = m.doors[k]; if (Math.abs(d[0] - a[0]) + Math.abs(d[2] - a[2]) >= 2) { setDoor(d, false); m.doors.splice(k, 1); } }
+    // самопроверка: не в стене и не в воздухе (на лесах и лестнице — можно)
+    if (id === 'miron' && !m.ride) {
+      const inOk = (c) => passable(c) || /scaffolding|ladder/.test(idAt(c) || '');
+      if (!inOk(a) || !inOk([a[0], a[1] + 1, a[2]])) { WS.dbgWall = (WS.dbgWall || 0) + 1; WS.dbgWallAt = toC({ x: a[0], y: a[1], z: a[2] }).join(',') + ' ' + idAt(a) + '/' + idAt([a[0], a[1] + 1, a[2]]); }
+      else if (!solidAt([a[0], a[1] - 1, a[2]]) && !standable.climb(...a) && !/scaffolding|ladder/.test(idAt([a[0], a[1] - 1, a[2]]) || '') && !(m.path[m.i - 1] && m.path[m.i - 1][1] > a[1])) WS.dbgFly = (WS.dbgFly || 0) + 1;
+    }
+  }
   const p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
   act(id, m.ride ? 3 : 1);
   if (m.ride && !m.cart) { try { m.cart = DIM().spawnEntity('minecraft:minecart', { x: p[0] + 0.5, y: p[1], z: p[2] + 0.5 }); } catch (err) { m.cart = null; } }
@@ -207,6 +230,7 @@ function moveTick(id, dt) {
     if (m.cart) try { m.cart.teleport({ x: p[0] + 0.5, y: p[1], z: p[2] + 0.5 }); } catch (err) { /* нет */ }
   }
   if (last) {
+    if (m.doors) for (const d of m.doors) setDoor(d, false);
     if (m.cart) try { m.cart.remove(); } catch (err) { /* нет */ }
     delete movers[id];
     ST(id).walking = false;
@@ -786,17 +810,26 @@ function sortJobs(o, jobs) {
   const along = o.unit.startsWith('wall_') ? (/^wall_[ns]/.test(o.unit) ? 0 : 2) : -1;
   const c = Wc(o.at);
   const key = (j) => (along >= 0 ? j.p[along] : Math.atan2(j.p[2] - c.z, j.p[0] - c.x));
-  const rm = jobs.filter((j) => j.rm).sort((a, b) => b.p[1] - a.p[1] || key(a) - key(b));
-  const put = jobs.filter((j) => !j.rm).sort((a, b) => (a.att - b.att) || a.p[1] - b.p[1] || key(a) - key(b));
+  // Захватками, как живой каменщик: участок стены в 5 блоков (у башни — восьмая часть круга)
+  // кладёт снизу доверху с одних лесов, потом переходит к следующему. Нижние 3 ряда — сначала
+  // по всей длине с земли (лесов для них не нужно).
+  const seg = (j) => (along >= 0 ? Math.floor(j.p[along] / 5) : Math.floor((key(j) + Math.PI) / (Math.PI / 4)));
+  const low = (j) => (j.p[1] - S.origin[1] < 3 ? 0 : 1);
+  const rm = jobs.filter((j) => j.rm).sort((a, b) => low(b) - low(a) || seg(a) - seg(b) || b.p[1] - a.p[1] || key(a) - key(b));
+  // Лестницы — вместе с кладкой (сразу за рядом стены, к которому крепятся): по ним Мирон
+  // поднимается внутри башни. Прочее навесное (фонари, факелы) — в самом конце.
+  const lad = (j) => (/ladder/.test(j.perm.type.id) ? 1 : 0), hang = (j) => (j.att && !lad(j) ? 1 : 0);
+  const put = jobs.filter((j) => !j.rm).sort((a, b) => hang(a) - hang(b) || low(a) - low(b) || (low(a) ? seg(a) - seg(b) : 0) || a.p[1] - b.p[1] || lad(a) - lad(b) || key(a) - key(b));
   return [...rm, ...put];
 }
 const REACH = 4.5;
-const reachOk = (stand, p) => Math.hypot(stand[0] - p[0], stand[1] + 1.6 - (p[1] + 0.5), stand[2] - p[2]) <= REACH;
+let reachNow = REACH;
+const reachOk = (stand, p) => Math.hypot(stand[0] - p[0], stand[1] + 1.6 - (p[1] + 0.5), stand[2] - p[2]) <= reachNow;
 function pendingSet() { const s = new Set(); for (const j of bt.jobs || []) if (!j.rm && !j.att) s.add(keyOf(j.p)); return s; }
 // Где встать, чтобы дотянуться до клетки
 function findStand(p, from) {
   const pend = pendingSet(), cand = [];
-  for (let dx = -3; dx <= 3; dx++) for (let dz = -3; dz <= 3; dz++) for (let dy = -3; dy <= 1; dy++) {
+  for (let dx = -3; dx <= 3; dx++) for (let dz = -3; dz <= 3; dz++) for (let dy = -4; dy <= 1; dy++) {
     const s = [p[0] + dx, p[1] + dy, p[2] + dz];
     if (!reachOk(s, p) || (dx === 0 && dz === 0 && (dy === 0 || dy === -1))) continue;
     cand.push(s);
@@ -808,31 +841,53 @@ function findStand(p, from) {
   }
   return null;
 }
-// Леса: столбик лесов рядом, наверху — место, откуда достать
-function findScaffold(p) {
-  const pend = pendingSet();
-  let best = null;
+// Леса: столбик лесов рядом, наверху — место, откуда достать. Места — по порядку: сначала
+// с земли (там, где Мирон сейчас ходит), ниже столб — лучше. У подножия — клетка, откуда
+// подойти.
+function findScaffolds(p, from) {
+  const pend = pendingSet(), out = [];
   for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) {
-    if (!dx && !dz) continue;
     const x = p[0] + dx, z = p[2] + dz, feet = p[1] - 2;
     let g = null;
-    for (let y = feet + 1; y >= feet - 16; y--) { if (solidAt([x, y, z])) { g = y; break; } if (!passable([x, y, z]) || pend.has(keyOf([x, y, z]))) { g = undefined; break; } }
+    for (let y = feet + 1; y >= feet - 30; y--) { if (solidAt([x, y, z])) { g = y; break; } if (!freeCell([x, y, z]) || pend.has(keyOf([x, y, z]))) { g = undefined; break; } }
     if (g === null || g === undefined || g >= feet - 1) continue;
-    if (!passable([x, feet, z]) || !passable([x, feet + 1, z]) || pend.has(keyOf([x, feet, z])) || pend.has(keyOf([x, feet + 1, z]))) continue;
+    if (!freeCell([x, feet, z]) || !freeCell([x, feet + 1, z]) || pend.has(keyOf([x, feet, z])) || pend.has(keyOf([x, feet + 1, z]))) continue;
     if (!reachOk([x, feet, z], p)) continue;
-    const n = feet - 1 - g;
-    if (!best || n < best.n) best = { n, x, z, g, feet };
+    const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([ex, ez]) => [x + ex, g + 1, z + ez]).find((c) => standable(...c) && !pend.has(keyOf(c)));
+    if (!side) continue;
+    const cells = [];
+    for (let y = g + 1; y < feet; y++) cells.push([x, y, z]);
+    out.push({ cells, stand: [x, feet, z], side, n: cells.length, dy: Math.abs(side[1] - from[1]) });
   }
-  if (!best) return null;
-  const cells = [];
-  for (let y = best.g + 1; y < best.feet; y++) cells.push([best.x, y, best.z]);
-  return { cells, stand: [best.x, best.feet, best.z] };
+  return out.sort((a, b) => a.dy - b.dy || a.n - b.n).slice(0, 4);
+}
+// Подход по лесам: столб рядом с местом s (на кладке, на скате крыши), верх столба — на высоте s,
+// оттуда Мирон шагает на кладку и работает уже с неё
+function accessScaffolds(s, from, toGround = false) {
+  const pend = pendingSet(), out = [];
+  for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) {
+    if (Math.abs(dx) + Math.abs(dz) !== 1) continue; // вплотную: с верха лесов — шаг на кладку
+    const x = s[0] + dx, z = s[2] + dz;
+    for (const feet of [s[1], s[1] + 1]) {
+      let g = null;
+      for (let y = feet - 1; y >= feet - 30; y--) { if (solidAt([x, y, z])) { g = y; break; } if (!freeCell([x, y, z]) || pend.has(keyOf([x, y, z]))) { g = undefined; break; } }
+      if (g === null || g === undefined || g >= feet - 1) continue;
+      if (toGround && g + 1 - S.origin[1] > 1) continue; // спуститься — так до земли
+      if (!freeCell([x, feet, z]) || !freeCell([x, feet + 1, z]) || pend.has(keyOf([x, feet, z])) || pend.has(keyOf([x, feet + 1, z]))) continue;
+      const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([ex, ez]) => [x + ex, g + 1, z + ez]).find((c) => standable(...c) && !pend.has(keyOf(c)) && keyOf(c) !== keyOf(s));
+      if (!side) continue;
+      const cells = [];
+      for (let y = g + 1; y < feet; y++) cells.push([x, y, z]);
+      out.push({ cells, stand: [x, feet, z], side, n: cells.length, dy: Math.abs(side[1] - from[1]), access: true, to: s });
+    }
+  }
+  return out.sort((a, b) => a.dy - b.dy || a.n - b.n).slice(0, 4);
 }
 function buildTick(now) {
   const B = WS.build;
   if (!B.order) { if (B.st !== 'idle') { B.st = 'idle'; wsave(); } return; }
   if (moveTick('miron', 1)) return;
-  if (bt.search) { walkTo(bt.goal.to, bt.goal.then); return; } // путь ещё ищется
+  if (bt.search) { walkTo(bt.goal.to, bt.goal.then, bt.goal.fail); return; } // путь ещё ищется
   if (now < bt.until) return;
   const o = orderOf(B.order);
   if (!o) { B.order = null; return; }
@@ -851,40 +906,59 @@ function buildTick(now) {
     }
     if (!bt.jobs) { B.st = 'scan'; return; } // после перезапуска — разметить заново
     if (B.st === 'need') {
-      if (!atHome()) return walkTo(A(Wc(YW().home)));
+      if (!atHome()) return walkTo(A(Wc(YW().home)), null, () => { if (!near(B.pos, 32)) { setPos('miron', A(Wc(YW().home))); place('miron', B.pos); } bt.until = now + 200; });
       const cat = B.need, got = takeUnits(cat, 64);
       if (!got) { B.msg = `Жду ${C.CAT_NAME[cat]} на складе`; if (now % 1200 < 20) say('miron', `Кончился ${C.CAT_NAME[cat]}. Положи на склад у двора строителя.`); bt.until = now + 100; wsave(); return; }
       B.need = null; B.st = 'work'; wsave(); return;
     }
+    // Леса: столб у места работы. Мирон ставит ярус, залезает в него, ставит следующий над
+    // головой — и так до верха; наверху встаёт на леса и работает. Уходя, спускается по ярусам
+    // и разбирает их над собой, последний — уже с земли.
     if (B.st === 'scaff') {
-      const sc = bt.scaff;
-      if (sc && sc.cells.length) {
-        const c = sc.cells.shift(), b = blk(c);
-        if (b && passable(c)) { b.setType('minecraft:scaffolding'); B.scaff.push(c); B.scaffTotal = (B.scaffTotal || 0) + 1; sound('block.scaffold.place', c); }
-        act('miron', 2); bt.until = now + Math.max(1, Math.round(6 / speed())); wsave(); return;
+      const col = B.col;
+      if (!col) { B.st = 'work'; return; }
+      if (col.k < col.cells.length) {
+        const c = col.cells[col.k], b = blk(c);
+        if (b && freeCell(c)) { b.setType('minecraft:scaffolding'); B.scaff.push(c); B.scaffTotal = (B.scaffTotal || 0) + 1; sound('block.scaffold.place', c); }
+        col.k++; act('miron', 2); hold('miron', 'minecraft:scaffolding');
+        walk('miron', [B.pos, c], () => {}, { speedBpt: 0.12 }); // залез в новый ярус
+        bt.until = now + Math.max(1, Math.round(10 / speed())); wsave(); return;
       }
-      // залезть наверх
-      const s = sc.stand; bt.scaff = null; B.st = 'work';
-      walk('miron', [B.pos, [s[0], B.pos[1], s[2]], s].filter((p, i, r) => !i || keyOf(p) !== keyOf(r[i - 1])), () => { bt.stand = s; }, { speedBpt: 0.15 });
+      walk('miron', [B.pos, col.stand], () => { B.st = 'work'; wsave(); }, { speedBpt: 0.12 }); // встал наверх
       return;
     }
-    if (B.st === 'clean') {
-      if (B.scaff.length) {
-        if (!bt.down) { // сначала спуститься на землю
-          bt.down = true;
-          const base = B.scaff[0];
-          let g = base[1];
-          for (let y = base[1]; y > base[1] - 20; y--) if (solidAt([base[0], y - 1, base[2]]) && idAt([base[0], y - 1, base[2]]) !== 'minecraft:scaffolding') { g = y; break; }
-          const s = findStand([base[0], g, base[2]], [base[0], g, base[2]]) || [base[0] + 1, g, base[2]];
-          walk('miron', [B.pos, s], () => {}, { speedBpt: 0.15 });
+    if (B.st === 'down') {
+      const col = B.col;
+      if (!col) { B.st = B.after || 'work'; return; }
+      if (col.d === undefined || col.d === null) {
+        // сначала дойти до верха лесов (с кладки или крыши — по ним же)
+        if (B.pos && keyOf(B.pos) !== keyOf(col.stand) && !col.cells.some((c) => keyOf(c) === keyOf(B.pos))) {
+          walkTo(col.stand, null, () => { if (!near(col.stand, 32)) { for (const c of col.cells) { const b = blk(c); if (b && b.typeId === 'minecraft:scaffolding') b.setType('minecraft:air'); } B.scaff = B.scaff.filter((q) => !col.cells.some((c) => keyOf(c) === keyOf(q))); setPos('miron', col.side); place('miron', col.side); B.col = null; B.st = B.after || 'work'; } bt.until = now + 100; });
           return;
         }
-        const c = B.scaff.pop(), b = blk(c);
-        if (b && b.typeId === 'minecraft:scaffolding') b.setType('minecraft:air');
-        act('miron', 2); bt.until = now + Math.max(1, Math.round(4 / speed())); wsave(); return;
+        const i = B.pos ? col.cells.findIndex((c) => keyOf(c) === keyOf(B.pos)) : -1;
+        col.d = i >= 0 ? i : col.cells.length; // стоит на верху лесов (или уже внутри)
       }
-      bt.down = false;
-      if (!atHome()) return walkTo(A(Wc(YW().home)));
+      const rmCell = (c) => { const b = blk(c); if (b && b.typeId === 'minecraft:scaffolding') { b.setType('minecraft:air'); sound('block.scaffold.break', c); } const i = B.scaff.findIndex((q) => keyOf(q) === keyOf(c)); if (i >= 0) B.scaff.splice(i, 1); };
+      act('miron', 2); hold('miron', WORKERS.miron.tool);
+      bt.until = now + Math.max(1, Math.round(8 / speed()));
+      if (col.d >= 1) { const above = col.cells[col.d], to = col.cells[col.d - 1]; col.d--; walk('miron', [B.pos, to], () => { if (above) rmCell(above); }, { speedBpt: 0.12 }); wsave(); return; }
+      if (col.d === 0) { col.d = -1; walk('miron', [B.pos, col.side], () => { rmCell(col.cells[0]); }, { speedBpt: 0.12 }); wsave(); return; }
+      B.col = null; B.st = B.after || 'work'; B.after = null; hold('miron', WORKERS.miron.tool); wsave(); return;
+    }
+    if (B.st === 'clean') {
+      if (B.col) { B.st = 'down'; B.after = 'clean'; return; }
+      if (B.scaff.length) {
+        // леса, оставшиеся от прежней работы: подойти, залезть наверх, разобрать, спускаясь
+        const c0 = B.scaff[0], cells = B.scaff.filter((q) => q[0] === c0[0] && q[2] === c0[2]).sort((p2, q2) => p2[1] - q2[1]);
+        const base = cells[0], side = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dz]) => [base[0] + dx, base[1], base[2] + dz]).find((q) => standable(...q));
+        if (!side) { for (const q of cells) { const b = blk(q); if (b && b.typeId === 'minecraft:scaffolding') b.setType('minecraft:air'); } B.scaff = B.scaff.filter((q) => !cells.includes(q)); wsave(); return; }
+        const top = cells[cells.length - 1], stand = [top[0], top[1] + 1, top[2]];
+        walkTo(side, () => { B.col = { cells, side, stand, k: cells.length }; walk('miron', [side, ...cells, stand], () => { B.st = 'down'; B.after = 'clean'; wsave(); }, { speedBpt: 0.12 }); },
+          () => { if (!near(side, 32)) { for (const q of cells) { const b = blk(q); if (b && b.typeId === 'minecraft:scaffolding') b.setType('minecraft:air'); } B.scaff = B.scaff.filter((q) => !cells.includes(q)); } bt.until = now + 200; });
+        return;
+      }
+      if (!atHome()) return walkTo(A(Wc(YW().home)), null, () => { if (!near(B.pos, 32)) { setPos('miron', A(Wc(YW().home))); place('miron', B.pos); } bt.until = now + 200; });
       if (!returnCart()) return;
       B.done[o.id] = 1;
       if (o.step === 'stone' && S.rep) { S.rep[o.unit] = { st: 'done' }; save(); }
@@ -904,18 +978,47 @@ function buildTick(now) {
       bt.jobs.push(bt.jobs.shift()); bt.until = now + 10; return;
     }
     const here = B.pos;
+    reachNow = j.far ? 7 : REACH;
     if (!here || !reachOk(here, j.p) || keyOf(here) === keyOf(j.p) || keyOf([here[0], here[1] + 1, here[2]]) === keyOf(j.p)) {
-      const s = findStand(j.p, here || j.p);
-      if (s) { walkTo(s); return; }
-      const sc = findScaffold(j.p);
-      if (sc) {
-        const base = [sc.stand[0], sc.cells.length ? sc.cells[0][1] : sc.stand[1], sc.stand[2]];
-        const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dz]) => [base[0] + dx, base[1], base[2] + dz]).find((c) => standable(...c) && !pendingSet().has(keyOf(c)));
-        bt.scaff = sc; walkTo(side || base, () => { B.st = 'scaff'; }); return;
+      // Порядок: дойти до места, откуда достать (по земле, кладке, лесам); нет пути — поставить
+      // леса у самой работы; нельзя — поставить леса-подход к месту на кладке или крыше. Леса у
+      // работы, уходя, разбирает сразу; леса-подход — когда больше не нужны.
+      const col = B.col;
+      if (col && !col.access) { B.st = 'down'; B.after = 'work'; wsave(); return; }
+      // Застрял наверху (ни один путь вниз не находится): поставить рядом леса и спуститься по ним
+      if ((B.nf || 0) >= 4 && here && here[1] - S.origin[1] > 1) {
+        B.nf = 0;
+        if (col) { B.st = 'down'; B.after = 'work'; wsave(); return; }
+        const L = accessScaffolds(here, here, true);
+        if (!WS.dbgStuckAt) WS.dbgStuckAt = toC({ x: here[0], y: here[1], z: here[2] }).join(',') + ' вариантов лесов ' + L.length + ' ' + JSON.stringify(L[0] && { side: toC({ x: L[0].side[0], y: L[0].side[1], z: L[0].side[2] }), n: L[0].n });
+        if (L.length) { const sc = L[0]; B.col = { cells: sc.cells, side: sc.side, stand: sc.stand, k: sc.cells.length, access: true, d: null }; for (const c of sc.cells) { const b = blk(c); if (b && freeCell(c)) { b.setType('minecraft:scaffolding'); B.scaff.push(c); B.scaffTotal = (B.scaffTotal || 0) + 1; } } walk('miron', [here, sc.stand], () => { B.st = 'down'; B.after = 'work'; wsave(); }, { speedBpt: 0.12 }); WS.dbgStuck = (WS.dbgStuck || 0) + 1; return; }
+        if (!near(here, 32)) { const h = A(Wc(YW().home)); setPos('miron', h); place('miron', h); WS.dbgStuck = (WS.dbgStuck || 0) + 1; return; }
       }
-      const f = (bt.fails[keyOf(j.p)] = (bt.fails[keyOf(j.p)] || 0) + 1);
-      if (f > 3) { report('Мирон', `не достать блок (${j.p.join(' ')}), пропускаю`); bt.jobs.shift(); return; }
-      bt.jobs.push(bt.jobs.shift()); return;
+      const fail = (why) => {
+        WS.dbgWhy = [String(why) + ' ' + toC({ x: j.p[0], y: j.p[1], z: j.p[2] }).join(','), ...(WS.dbgWhy || [])].slice(0, 8);
+        const f = (bt.fails[keyOf(j.p)] = (bt.fails[keyOf(j.p)] || 0) + 1);
+        // самая макушка (шпиль, конёк), куда не встать: дотягивается с ближнего места длинным шестом
+        if (f > 3 && !j.far) { j.far = true; bt.fails[keyOf(j.p)] = 0; bt.jobs.push(bt.jobs.shift()); return; }
+        if (f > 3) { report('Мирон', `не дойти до блока (${toC({ x: j.p[0], y: j.p[1], z: j.p[2] }).join(' ')}), пропускаю`); bt.jobs.shift(); return; }
+        bt.jobs.push(bt.jobs.shift());
+      };
+      const startCol = (sc, then) => { bt.cols = bt.cols || {}; bt.cols[keyOf(j.p)] = (bt.cols[keyOf(j.p)] || 0) + 1; B.col = { cells: sc.cells, side: sc.side, stand: sc.stand, k: 0, access: !!sc.access, to: sc.to }; B.st = 'scaff'; B.msg = `${o.title}: ставлю леса`; bt.afterCol = then || null; wsave(); };
+      const tryList = (L, k, then, onFail) => {
+        const sc = L[k];
+        if (!sc) { onFail(); return; }
+        // уже ставил леса ради этого блока дважды, а дотянуться не вышло — отложить
+        const jk = keyOf(j.p);
+        if (!bt.cols) bt.cols = {};
+        if ((bt.cols[jk] || 0) >= 3) { fail('леса не помогли'); return; }
+        // прежние леса-подход мешают поставить новые — сначала их разобрать
+        if (B.col) { B.st = 'down'; B.after = 'work'; wsave(); return; }
+        walkTo(sc.side, () => startCol(sc, then), () => tryList(L, k + 1, then, onFail));
+      };
+      const s = findStand(j.p, here || j.p);
+      const viaAccess = () => { if (!s) { fail('некуда встать'); return; } tryList(accessScaffolds(s, here || s), 0, null, () => fail('не подойти и по лесам')); };
+      const viaScaffold = () => tryList(findScaffolds(j.p, here || j.p), 0, null, viaAccess);
+      if (s) { walkTo(s, null, viaScaffold); return; }
+      viaScaffold(); return;
     }
     // Хватает ли материала
     if (!j.rm && j.cat !== 'other' && (B.cart[j.cat] || 0) <= 0) { B.need = j.cat; B.st = 'need'; B.msg = `Не хватило: ${C.CAT_NAME[j.cat]}, иду на склад`; wsave(); return; }
@@ -943,27 +1046,19 @@ function buildTick(now) {
   } catch (err) { report('Мирон', 'шаг работы', err); bt.until = now + 100; }
 }
 const atHome = () => WS.build.pos && keyOf(WS.build.pos) === keyOf(A(Wc(YW().home)));
-// Дойти до клетки: путь ищет A* понемногу каждый тик; не нашёл — идёт напрямик
-function walkTo(to, then) {
+// Дойти до клетки: путь ищет A* понемногу каждый тик (по земле, ступеням, лестницам и лесам,
+// через двери). Сквозь стены и по воздуху не ходит: нет пути — fail (поставить леса или отложить).
+function walkTo(to, then, fail) {
   const B = WS.build, from = B.pos || to;
   if (keyOf(from) === keyOf(to)) { if (then) then(); return; }
-  if (!bt.search || bt.searchTo !== keyOf(to)) { bt.search = C.makeSearch(from, to, standable, { maxNodes: 3000, near: 0 }); bt.searchTo = keyOf(to); bt.goal = { to, then }; }
-  const r = bt.search.step(tickMs > 75 ? 30 : 120);
+  if (!bt.search || bt.searchTo !== keyOf(to)) { bt.search = C.makeSearch(from, to, standable, { maxNodes: 6000, near: 0 }); bt.searchTo = keyOf(to); bt.goal = { to, then, fail }; }
+  const r = bt.search.step(tickMs > 75 ? 30 : 150);
   if (r === undefined) return; // ещё ищем
   bt.search = null;
-  let path = r;
-  if (!path) {
-    // напрямик: по прямой, по клеткам
-    WS.dbgDirect = (WS.dbgDirect || 0) + 1;
-    WS.dbgLast = [from.join(' ') + ' → ' + to.join(' '), ...(WS.dbgLast || [])].slice(0, 6);
-    // вверх — сначала лезет, потом идёт; вниз — сначала идёт, потом слезает (как по лесам)
-    const n = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[2] - from[2])));
-    const up = to[1] > from[1], y0 = up ? to[1] : from[1];
-    path = [];
-    if (up) for (let y = from[1]; y < to[1]; y++) path.push([from[0], y, from[2]]);
-    for (let k = 0; k <= n; k++) path.push([Math.round(from[0] + (to[0] - from[0]) * k / n), y0, Math.round(from[2] + (to[2] - from[2]) * k / n)]);
-    if (!up) for (let y = from[1] - 1; y >= to[1]; y--) path.push([to[0], y, to[2]]);
-  } else if (keyOf(path[path.length - 1]) !== keyOf(to)) path.push(to);
+  if (r) B.nf = 0;
+  if (!r) { B.nf = (B.nf || 0) + 1; WS.dbgNoPath = (WS.dbgNoPath || 0) + 1; WS.dbgLast = [from.join(' ') + ' → ' + to.join(' '), ...(WS.dbgLast || [])].slice(0, 6); if (fail) fail(); return; }
+  const path = r;
+  if (keyOf(path[path.length - 1]) !== keyOf(to)) path.push(to);
   walk('miron', path, () => { if (then) then(); }, { speedBpt: 0.2 });
 }
 
