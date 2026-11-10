@@ -1602,9 +1602,15 @@
     for (let x = g1; x <= g2; x++) { b.set(x, 5, GZ2 - 1, 'iron_bars'); b.set(x, 4, GZ2 - 1, 'iron_bars'); }
     box(g1, 14, GZ1, g2, 14, GZ2, (x, y, z) => { if (z === GZ1 || z === GZ2) b.set(x, y, z, STONE); });
     box(g1, 15, GZ1, g2, 15, GZ2, (x, y, z) => { if ((z === GZ1 || z === GZ2) && (x + z) % 2 === 0) b.set(x, y, z, STONE); });
-    b.door(g1, 0, GZ1 + 1, 'w', 'dark_oak_door', true); b.door(g2, 0, GZ1 + 1, 'e', 'dark_oak_door', true);
+    // Опускная решётка: висит под аркой (два ряда сверху), рычагом опускается до земли.
+    // Ряды ставят и убирают скрипты (tools/scripts/gate.js), по одному — видно, как она идёт.
+    // Рычаги: у ворот со стороны двора, снаружи и у лебёдки в каждой надвратной башне.
+    const gateLevers = [[g1 - 1, 0, GZ1 - 1], [g2 + 1, 0, GZ2 + 1]];
+    for (const c of gateLevers) b.set(...c, 'lever');
+    // ряды решётки снизу вверх (y 0…3); верхние два ряда (y 4, 5) висят всегда
+    b.gate = { rows: [0, 1, 2, 3].map((y) => [...Array(g2 - g1 + 1).keys()].map((k) => [g1 + k, y, GZ2 - 1])), levers: gateLevers };
     for (const x of [g1 - 1, g2 + 1]) { lamp(b, x, 4, GZ2 + 1); lamp(b, x, 4, GZ1 - 1); b.set(x, 6, GZ2 + 1, 'red_banner', { f: 'n' }); }
-    b.mark('room', CX, 0, SZ, 'Ворота', 'Проезд между двух надвратных башен, поднятая решётка, тяжёлые створки. Над аркой — каменный переход.');
+    b.mark('room', CX, 0, SZ, 'Ворота', 'Проезд между двух надвратных башен. Опускная решётка: рычаг у ворот со двора, снаружи и у лебёдки в надвратных башнях. Над аркой — каменный переход.');
     for (let k = 0; k <= 8; k++) {
       b.set(CX - 21 + k, k, SZ - 1, 'stone_brick_stairs', { f: 'e' }); solid(b, CX - 21 + k, -1, SZ - 1, CX - 21 + k, k - 1, SZ - 1, MOSSY);
       b.set(CX + 21 - k, k, SZ - 1, 'stone_brick_stairs', { f: 'w' }); solid(b, CX + 21 - k, -1, SZ - 1, CX + 21 - k, k - 1, SZ - 1, MOSSY);
@@ -1939,6 +1945,7 @@
       K.stand(x1 + 3, 0, SZ); K.chair(x1 + 2, 0, SZ, 'e'); K.chair(x1 + 4, 0, SZ, 'w');
       const wx = west ? x1 + 5 : x1 + 1; // ближе к проезду
       put(wx, 0, SZ - 1, 'grindstone'); for (let y = 1; y <= 7; y++) put(wx, y, SZ - 1, 'iron_chain');
+      put(wx, 0, SZ, 'lever'); if (b.gate) b.gate.levers.push([wx, 0, SZ]); // лебёдка решётки
       put(wx, 0, SZ - 2, 'chest', { f: west ? 'w' : 'e', ...(west ? { slot: 'gatehouse' } : { theme: 'soldier' }) });
       put(west ? x1 + 5 : x1 + 1, 0, SZ + 2, 'barrel', { f: 'u' });
       arms(x1 + 2, 2, SZ + 2, 's', 'iron_spear'); arms(x1 + 4, 2, SZ + 2, 's', 'crossbow');
@@ -1968,6 +1975,28 @@
   // Помещения, до которых игрок должен дойти и в упадке (живут люди этапа 0)
   const START_ROOMS = ['Кухня', 'Опочивальня хозяина', 'Гардеробная', 'Конюшня', 'Ворота', 'Большой зал', 'Горница', 'Парадная лестница'];
 
+  // Проломы от катапульт: каждый участок стены — чередой проломов длиной 8–15 с огрызками
+  // в 2–4 блока между ними. Генератор свой, поэтому упадок всегда одинаковый.
+  function siegeBreaches(X2, Z2, CX) {
+    let a = 911;
+    const r = () => { a = (a * 1103515245 + 12345) & 0x7fffffff; return a / 0x7fffffff; };
+    const out = [];
+    const run = (from, to, mk) => {
+      let p = from + Math.floor(r() * 3);
+      while (p < to - 3) {
+        const len = 8 + Math.floor(r() * 8), end = Math.min(to, p + len);
+        out.push([...mk(p, end), r() < 0.65 ? 0 : 1 + Math.floor(r() * 2), 0.5 + r() * 0.4]);
+        p = end + 2 + Math.floor(r() * 3);
+      }
+    };
+    run(9, X2 - 9, (p, e) => [p, 3, e, 4]); // за амбаром, донжоном и домом управителя
+    run(9, Z2 - 9, (p, e) => [3, p, 4, e]); // у огорода, казармы и кузни
+    run(9, Z2 - 9, (p, e) => [X2 - 4, p, X2 - 3, e]); // у ристалища, часовни и двора строителя
+    run(9, CX - 10, (p, e) => [p, Z2 - 4, e, Z2 - 3]); // у ворот со стороны кузни
+    run(CX + 10, X2 - 9, (p, e) => [p, Z2 - 4, e, Z2 - 3]); // у ворот со стороны часовни
+    return out;
+  }
+
   function ruinZones(KX, KZ, X2, Z2, CX) {
     const ST = [0, 6, 12, 18, 24, 30];
     const kb = (i1, y1, j1, i2, y2, j2) => [KX + i1, y1, KZ + j1, KX + i2, y2, KZ + j2];
@@ -1989,15 +2018,22 @@
       Z(0, 'Пристройка со входом', 'lock', [kb(15, -1, 39, 23, 14, 48)]),
       Z(0, 'Конюшня', 'lock', [[26, -1, 86, 38, 12, 100]]),
       Z(0, 'Ворота', 'lock', [[CX - 9, -1, 123, CX + 9, 16, 131]]),
+      // Работники (docs/workers.md): шахта у кузни и двор строителя с самого начала в порядке
+      Z(0, 'Шахта', 'lock', [[9, -1, 104, 19, 6, 116]]),
+      Z(0, 'Двор строителя', 'lock', [[99, -1, 108, 113, 4, 119]]),
       // Этап 9 — знамёна и трон (раньше прочих, чтобы их клетки достались этому этапу)
       Z(9, 'Знамёна на башнях', 'strip', [banner(KX, 43, KZ, 44), banner(KX + 38, 38, KZ, 40), banner(KX, 38, KZ + 38, 40), banner(KX + 38, 38, KZ + 38, 40),
         banner(KX + 19, 40, KZ - 3, 42), banner(4, 26, 4, 28), banner(X2 - 4, 26, 4, 28), banner(4, 26, Z2 - 4, 28), banner(X2 - 4, 26, Z2 - 4, 28)], { re: /banner|fence/ }),
       Z(9, 'Трон', 'room', [mid(5, 16)], { strips: [[kb(19, 8, -5, 19, 8, -5), /gold_block/]] }),
       Z(9, 'Колокольня', 'room', [mid(29, 42)]),
       // Этап 1 — стража: стены, башни, казармы
+      // Стены разбиты катапультами (10 лет назад): почти по всей длине проломы до земли,
+      // между ними — огрызки стены. Чинит их строитель по пролётам (docs/workers.md).
       Z(1, 'Крепостные стены', 'wall', [wallTop(9, 3, X2 - 9, 4), wallTop(3, 9, 4, Z2 - 9), wallTop(X2 - 4, 9, X2 - 3, Z2 - 9), wallTop(9, Z2 - 4, CX - 10, Z2 - 3), wallTop(CX + 10, Z2 - 4, X2 - 9, Z2 - 3)],
-        { breaches: [[30, 3, 36, 4, 2], [3, 96, 4, 101, 2], [X2 - 4, 58, X2 - 3, 63, 3]] }),
-      Z(1, 'Угловые башни стены', 'wall', [ctower(0, 0), ctower(X2 - 8, 0), ctower(0, Z2 - 8), ctower(X2 - 8, Z2 - 8)], { holes: [[X2 - 4, 15, 4, 2.5, 9]], erode: 16 }),
+        { breaches: siegeBreaches(X2, Z2, CX) }),
+      // Угловые башни: верхи обрушены, у башни у шахты стена рухнула до середины
+      Z(1, 'Угловые башни стены', 'wall', [ctower(0, 0), ctower(X2 - 8, 0), ctower(0, Z2 - 8), ctower(X2 - 8, Z2 - 8)],
+        { holes: [[X2 - 4, 13, 4, 4.6, 16], [4, 14, 4, 4.6, 15], [4, 7, Z2 - 4, 4.6, 22], [X2 - 4, 16, Z2 - 4, 4.6, 13]], erode: 8 }),
       Z(1, 'Казарма', 'room', [[10, -1, 70, 34, 17, 80]], { holes: [[18, 10, 77, 2, 6]] }),
       Z(1, 'Казарма донжона', 'room', [room(4, 2, 2, 36, 20)]),
       Z(1, 'Комната капитана', 'room', [room(4, 2, 20, 14, 36)]),
@@ -2182,11 +2218,11 @@
       }
     }
     // Брешь в стене: провал клином, у подножия с обеих сторон завалы
-    function breach(r, [x1, z1, x2, z2, yb]) {
+    function breach(r, [x1, z1, x2, z2, yb, slope = 1.6]) {
       const alongX = x2 - x1 >= z2 - z1, a1 = alongX ? x1 : z1, a2 = alongX ? x2 : z2, c = (a1 + a2) / 2;
       for (let x = x1; x <= x2; x++) for (let zz = z1; zz <= z2; zz++) {
         const t = Math.abs((alongX ? x : zz) - c);
-        for (let y = Math.round(yb + t * 1.6 + r()); y <= 12; y++) { const v = get(x, y, zz); if (has(v)) set(x, y, zz, 'air'); }
+        for (let y = Math.round(yb + t * slope + r()); y <= 12; y++) { const v = get(x, y, zz); if (has(v)) set(x, y, zz, 'air'); }
       }
       for (let a = a1 - 2; a <= a2 + 2; a++) for (const side of [-1, 1]) for (let d = 1; d <= 3; d++) {
         const x = alongX ? a : (side < 0 ? x1 - d : x2 + d), zz = alongX ? (side < 0 ? z1 - d : z2 + d) : a;
@@ -2227,6 +2263,14 @@
       for (const f of z.fills || []) eachBox(f, (x, y, zz) => { const v = get(x, y, zz); if (!v || !PROTECT.test(v.id)) set(x, y, zz, CATA_PICK(r, CAVE)); });
       for (const c of z.cuts || []) eachBox(c, (x, y, zz) => { const v = get(x, y, zz); if (has(v) && !v.slot && !v.theme && !PROTECT.test(v.id) && (c[6] === undefined || r() < c[6])) set(x, y, zz, 'air'); });
       for (const b of z.breaches || []) breach(r, b);
+      // Тесовая кровля над боевым ходом падает вместе со стеной: где под ней не осталось
+      // парапета, кровли и стоек нет (вернутся, когда зодчий сложит пролёт)
+      if (z.title === 'Крепостные стены') for (const [x1, , z1, x2, , z2] of z.boxes) for (let x = x1 - 2; x <= x2 + 2; x++) for (let zz = z1 - 2; zz <= z2 + 2; zz++) {
+        let held = false;
+        for (let dx = -2; dx <= 2 && !held; dx++) for (let dz = -2; dz <= 2 && !held; dz++) if (has(get(x + dx, 9, zz + dz)) && !/spruce/.test(get(x + dx, 9, zz + dz).id)) held = true;
+        if (held) continue;
+        for (let y = 10; y <= 12; y++) { const v = get(x, y, zz); if (v && /^spruce_(slab|planks|fence)$/.test(v.id)) set(x, y, zz, 'air'); }
+      }
       for (const hl of z.holes || []) hole(r, hl);
       for (const [x, y, zz, id, p] of z.place || []) set(x, y, zz, id, p);
       if (z.kind === 'yard') yardOps(z, r);
@@ -2331,24 +2375,44 @@
   const CONTRACTS = {
     'Казарма': 'barracks', 'Кузница': 'forge', 'Ристалище': 'tiltyard', 'Дом управителя': 'steward', 'Амбар': 'barn',
     'Площадь у ворот': 'square', 'Двор': 'yard', 'Часовня, склеп и кладбище': 'chapel', 'Огород': 'garden', 'Катакомбы': 'catacombs',
-    'Угловые башни стены': 'walls',
   };
   const STRUCTURAL = /glass|pane|bars|stone|brick|planks|slab|stairs|_wall$|log$|wood$|tuff|cobble|andesite|deepslate|tiles|polished|calcite/;
+  // Пролёты крепостной стены для строителя: участок — по ближайшей стене, вдоль неё — на части.
+  // Названия по приметам двора (стороны света в игре путают). side — какая стена, outer —
+  // наружный ряд кладки (для частокола), along — ось вдоль стены.
+  const SECTIONS_INFO = { X2: 127, Z2: 131, CX: 63 };
+  function wallSection(x, z, X2, Z2, CX) {
+    if (z <= 8) { const i = x < 46 ? 1 : x < 82 ? 2 : 3; return { id: 'wall_n' + i, title: ['Стена за амбаром', 'Стена за донжоном', 'Стена за домом управителя'][i - 1] }; }
+    if (z >= Z2 - 8) return x < CX ? { id: 'wall_s1', title: 'Стена у ворот, со стороны кузни' } : { id: 'wall_s2', title: 'Стена у ворот, со стороны часовни' };
+    if (x <= 8) { const i = z < 50 ? 1 : z < 86 ? 2 : 3; return { id: 'wall_w' + i, title: ['Стена у огорода', 'Стена у казармы', 'Стена у кузни и шахты'][i - 1] }; }
+    const i = z < 50 ? 1 : z < 86 ? 2 : 3;
+    return { id: 'wall_e' + i, title: ['Стена у ристалища', 'Стена у часовни', 'Стена у двора строителя'][i - 1] };
+  }
+  function towerOf(x, z, X2, Z2) {
+    const e = x > X2 / 2, s = z > Z2 / 2;
+    return s ? (e ? { id: 'tower_se', title: 'Башня у двора строителя' } : { id: 'tower_sw', title: 'Башня у шахты' })
+      : (e ? { id: 'tower_ne', title: 'Башня за домом управителя' } : { id: 'tower_nw', title: 'Башня за амбаром' });
+  }
+  // Ряды кладки пролёта: наружный ряд и ось вдоль стены (для временного частокола)
+  function wallRows(id, X2, Z2) {
+    const side = id.slice(5, 6);
+    return { n: { outer: (x, y, z) => z === 3, along: (x, y, z) => x }, s: { outer: (x, y, z) => z === Z2 - 3, along: (x, y, z) => x },
+      w: { outer: (x, y, z) => x === 3, along: (x, y, z) => z }, e: { outer: (x, y, z) => x === X2 - 3, along: (x, y, z) => z } }[side];
+  }
   function repairUnits(full, R, KX, KZ) {
     const units = new Map();
     const unit = (id, title, kind, stage) => { if (!units.has(id)) units.set(id, { id, title, kind, stage, zones: new Set(), cells: 0, sum: [0, 0, 0] }); return units.get(id); };
     const inKeep = (x, z) => { const i = x - KX, j = z - KZ; return i >= -6 && i <= 58 && j >= -7 && j <= 48; };
-    const breaches = (R.zones.find((z) => z.title === 'Крепостные стены') || {}).breaches || [];
     const owner = new Map();
+    const { X2, Z2, CX } = SECTIONS_INFO;
     for (const [k, zi] of R.owner) {
       const z = R.zones[zi];
       const [x, y, zz] = k.split(',').map(Number);
       let u;
       if (z.stage === 9) u = unit('heritage', 'Наследие: трон, колокольня, знамёна', 'contract', 9);
-      else if (z.title === 'Крепостные стены') {
-        const bi = breaches.findIndex(([x1, z1, x2, z2]) => x >= x1 - 5 && x <= x2 + 5 && zz >= z1 - 5 && zz <= z2 + 5);
-        u = bi >= 0 ? unit('breach_' + (bi + 1), 'Брешь в стене ' + (bi + 1), 'contract', z.stage) : unit('walls', 'Зубцы стен и угловые башни', 'contract', z.stage);
-      } else if (CONTRACTS[z.title]) u = unit(CONTRACTS[z.title], z.title === 'Угловые башни стены' ? 'Зубцы стен и угловые башни' : z.title, 'contract', z.stage);
+      else if (z.title === 'Крепостные стены') { const sc = wallSection(x, zz, X2, Z2, CX); u = unit(sc.id, sc.title, 'build', z.stage); }
+      else if (z.title === 'Угловые башни стены') { const t = towerOf(x, zz, X2, Z2); u = unit(t.id, t.title, 'build', z.stage); }
+      else if (CONTRACTS[z.title]) u = unit(CONTRACTS[z.title], z.title, 'contract', z.stage);
       else if (inKeep(x, zz) && z.kind !== 'yard' && z.kind !== 'crypt') {
         const f = full.blocks.get(k);
         const structural = f && STRUCTURAL.test(f.id) && !f.fur && !f.slot && !f.theme;
@@ -2359,6 +2423,61 @@
     }
     const list = [...units.values()].map((u) => ({ ...u, zones: [...u.zones], center: u.sum.map((s) => Math.round(s / u.cells)) }));
     return { units: list, owner };
+  }
+
+  // ======================= РАБОТНИКИ: ШАХТА И ДВОР СТРОИТЕЛЯ =======================
+  // Новое ядро (docs/workers.md). Шахта — у кузни: надшахтный копёр над будущим стволом,
+  // сундуки для добычи и бочка для кирок. Ствол копает сам рудокоп Кондрат: винтовой спуск
+  // вокруг каменного столба 3×3 (кольцо 5×5). Двор строителя — у ворот, напротив кузни:
+  // склад (сундуки), бочка с инструментом, верстак, камнерез, брёвна, козлы.
+  // Координаты — в b.works, сборщик кладёт их в castle_data.js.
+  function works(b) {
+    const R = { x1: 12, z1: 109, x2: 16, z2: 113 }; // кольцо ствола
+    // Копёр: столбы по углам, балки поверху, ворот с цепью над стволом
+    const F = { x1: R.x1 - 1, z1: R.z1 - 1, x2: R.x2 + 1, z2: R.z2 + 1 };
+    for (const [x, z] of [[F.x1, F.z1], [F.x2, F.z1], [F.x1, F.z2], [F.x2, F.z2]]) b.fill(x, 0, z, x, 4, z, 'spruce_log', { a: 'y' });
+    for (let x = F.x1 + 1; x < F.x2; x++) { b.set(x, 4, F.z1, 'spruce_log', { a: 'x' }); b.set(x, 4, F.z2, 'spruce_log', { a: 'x' }); }
+    for (let z = F.z1 + 1; z < F.z2; z++) { b.set(F.x1, 4, z, 'spruce_log', { a: 'z' }); b.set(F.x2, 4, z, 'spruce_log', { a: 'z' }); }
+    const cz = (R.z1 + R.z2) / 2;
+    for (let x = F.x1 + 1; x < F.x2; x++) b.set(x, 4, cz, 'spruce_log', { a: 'x' });
+    b.set((R.x1 + R.x2) / 2, 3, cz, 'iron_chain');
+    // Ограда вокруг ствола; проход — у первого угла спуска, со стороны сундуков
+    const gap = [R.x1, F.z1];
+    for (let x = F.x1 + 1; x < F.x2; x++) for (const z of [F.z1, F.z2]) if (!(x === gap[0] && z === gap[1])) b.set(x, 0, z, 'spruce_fence');
+    for (let z = F.z1 + 1; z < F.z2; z++) for (const x of [F.x1, F.x2]) b.set(x, 0, z, 'spruce_fence');
+    // Свет: фонари под балками
+    for (const [x, z] of [[F.x1 + 2, F.z1], [F.x2 - 2, F.z2], [F.x1, F.z2 - 2], [F.x2, F.z1 + 2]]) b.set(x, 3, z, 'lantern', { hang: 1 });
+    // Сундуки для добычи (двойной сундук) и бочка для кирок — у прохода
+    const chests = [[R.x1 + 1, 0, F.z1 - 2], [R.x1 + 2, 0, F.z1 - 2]];
+    for (const [x, y, z] of chests) b.set(x, y, z, 'chest', { f: 's' });
+    const barrel = [R.x1 + 4, 0, F.z1 - 2];
+    b.set(...barrel, 'barrel', { f: 's' });
+    b.set(R.x1 + 5, 0, F.z1 - 2, 'grindstone');
+    b.fill(R.x1 - 2, 0, F.z1 - 3, R.x1 - 2, 1, F.z1 - 3, 'spruce_log', { a: 'y' }); b.set(R.x1 - 2, 2, F.z1 - 3, 'lantern');
+    b.mark('room', R.x1 + 2, 0, F.z1 - 1, 'Шахта', 'Копёр над стволом, сундуки для добычи, бочка с кирками. Ствол копает рудокоп Кондрат.');
+    // Двор строителя
+    const Y = { x1: 99, z1: 108, x2: 113, z2: 119 };
+    const store = [[102, 0, 110], [103, 0, 110]];
+    for (const [x, y, z] of store) b.set(x, y, z, 'chest', { f: 's' });
+    const tools = [105, 0, 110];
+    b.set(...tools, 'barrel', { f: 's' });
+    b.set(107, 0, 110, 'crafting_table'); b.set(108, 0, 110, 'stonecutter', { f: 's' });
+    for (let x = 101; x <= 104; x++) { b.set(x, 0, 117, 'spruce_log', { a: 'x' }); b.set(x, 1, 117, 'spruce_log', { a: 'x' }); }
+    for (const [x, y, z] of [[107, 0, 117], [108, 0, 117], [107, 1, 117], [110, 0, 116]]) b.set(x, y, z, y ? 'cobblestone_slab' : 'cobblestone');
+    for (const x of [106, 109]) b.set(x, 0, 114, 'spruce_fence');
+    for (let x = 106; x <= 109; x++) b.set(x, 1, 114, 'spruce_slab');
+    b.fill(Y.x2 - 1, 0, Y.z1 + 1, Y.x2 - 1, 1, Y.z1 + 1, 'spruce_log', { a: 'y' }); b.set(Y.x2 - 1, 2, Y.z1 + 1, 'lantern');
+    b.mark('room', 104, 0, 112, 'Двор строителя', 'Склад камня и дерева, бочка с инструментом, верстак и камнерез. Здесь живёт зодчий Мирон.');
+    // Кузня (с 0.9.3): двойной сундук «сырьё и готовое» у стены, рамка на верстаке — в ней видно,
+    // что кузнец сейчас куёт (ставят скрипты), места у наковальни и у печи
+    const forgeChests = [[19, 0, 89], [19, 0, 90]];
+    for (const [x, y, z] of forgeChests) b.set(x, y, z, 'chest', { f: 'w' });
+    b.set(16, 1, 94, 'item_frame', { f: 'u' });
+    b.works = {
+      forge: { chests: forgeChests, frame: [16, 1, 94], anvil: [15, 0, 91], anvilStand: [16, 0, 91], furnace: [15, 0, 87], furnaceStand: [15, 0, 88], apprentice: [18, 0, 89] },
+      mine: { ring: [R.x1, R.z1, R.x2, R.z2], entry: [R.x1, 0, F.z1 - 1], home: [R.x1, 0, F.z1 - 1], chests, barrel, frame: [F.x1, F.z1, F.x2, F.z2], apprentice: [R.x1 + 2, 0, F.z1 - 1] },
+      yard: { home: [104, 0, 112], store, tools, box: [Y.x1, Y.z1, Y.x2, Y.z2], apprentice: [103, 0, 111] },
+    };
   }
 
   // Вид замка после этапа s: клетки зон с этапом больше s — в упадке
@@ -2461,6 +2580,7 @@
     // Кнопки в просмотрщике: замок в упадке, после каждого этапа и восстановленный
     states: STAGES.map((st) => ({ id: String(st.n), label: st.n === 0 ? 'Упадок' : st.n === 9 ? 'Всё' : String(st.n) })),
     // Без state — восстановленный замок с подсветкой и картой запустения (b.ruin) для сборщика
+    wallRows: (id) => wallRows(id, SECTIONS_INFO.X2, SECTIONS_INFO.Z2),
     build(state) {
       if (!this.cache) this.cache = fullCastle();
       if (state === undefined) return this.cache;
@@ -2484,6 +2604,7 @@
       curtain(b, X2, Z2, CX);
       yard(b, CX, Z2 - 4);
       yardLife(b, CX, Z2 - 4);
+      works(b);
       secrets(b, KX, KZ);
       northStyle(b, KX, KZ, X2, Z2, CX);
       if (window.CastlePhysics) { furnishKeep(b, KX, KZ); dungeon(b, KX, KZ); }

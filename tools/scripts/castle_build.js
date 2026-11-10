@@ -121,7 +121,7 @@ export function status() {
 // Предмет вместо команды /function castle: замок встаёт там, где стоит игрок (площадь у ворот),
 // донжон — к северу. Работает в выживании, читы не нужны.
 export function clearOld() {
-  for (const t of ['acastle:guard', 'acastle:npc', 'acastle:bandit']) {
+  for (const t of ['acastle:guard', 'acastle:npc', 'acastle:bandit', 'acastle:worker']) {
     let list = []; try { list = DIM().getEntities({ type: t }); } catch (e) { list = []; }
     for (const e of list) try { e.triggerEvent('acastle:despawn'); } catch (err) { /* уже нет */ }
   }

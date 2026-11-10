@@ -570,6 +570,8 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
       return best;
     };
     const units = {};
+    const woodState = {};
+    const SIM_DUMP = {}; // заплатки строителя для проверочного прогона (tools/test/sim.mjs), в аддон не идут
     const HINT = { shell: [info.KX + 19, 0, info.KZ + 50], catacombs: [info.KX + 19, 0, info.KZ + 40], walls: [info.CX + 5, 0, info.Z2 - 14] };
     for (const u of RU.units) {
       // заплатки единицы: клетки в восстановленном виде, куски по сетке 64×64
@@ -595,11 +597,12 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
         }
         const name = `castle_u_${u.id}_${k++}`;
         write(`structures/${NS}/${name}.mcstructure`, mcstructure([mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells));
+        if (u.kind === 'build') SIM_DUMP[name] = { size: [mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells: cells.map((c) => [c.x, c.y, c.z, c.block.name, c.block.states]) };
         pieces.push([name, ...mn, ...mx]);
       }
       // сундук-подряд и табличка рядом: свободный пол внутри стен, не на клетках ремонта
       let chest = null, sign = null;
-      if (u.kind !== 'rooms') {
+      if (u.kind !== 'rooms' && u.kind !== 'build') {
         const hint = HINT[u.id] || [u.center[0], 0, u.center[2]];
         const okCell = (x, y, z) => free(x, y, z) && free(x, y + 1, z) && solid(x, y - 1, z) && !RU.owner.has(K(x, y, z)) && !RU.owner.has(K(x, y + 1, z));
         const inside = (x, z) => x >= 6 && x <= info.X2 - 6 && z >= 6 && z <= info.Z2 - 6;
@@ -613,7 +616,43 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
           sign = [c[0] + dx, c[1], c[2] + dz];
         }
       }
-      units[u.id] = { title: u.title, kind: u.kind, stage: u.stage, pieces, chest, sign };
+      // Пролёт стены для строителя: ещё и временная заделка деревом (частокол с подпорками):
+      // завал убирается, пустые клетки стены до высоты 5 — брёвна снаружи, подпорки изнутри
+      let wood = null;
+      if (u.kind === 'build' && u.id.startsWith('wall_')) {
+        const rows = castle.wallRows(u.id);
+        const RUBBLE = /^(cobblestone|mossy_cobblestone|gravel|cobblestone_slab|mossy_cobblestone_slab)$/;
+        const groupsW = new Map();
+        for (const [k, id] of RU.owner) {
+          if (id !== u.id) continue;
+          const [x, y, z] = k.split(',').map(Number);
+          const f = mapFull.get(k), r = map.get(k);
+          const fAir = !f || f.env || f.id === 'air' || /grass|fern|flower/.test(f.id) && f.id !== 'grass_block';
+          let t = null;
+          if (r && RUBBLE.test(r.id) && fAir) t = { id: 'air' };
+          else if (!fAir && (!r || r.id === 'air') && y >= 0 && y <= 5) {
+            if (rows.outer(x, y, z)) t = { id: 'spruce_log', a: 'y' };
+            else if (y <= 4 && rows.along(x, y, z) % 3 === 0) t = { id: 'spruce_fence' };
+          }
+          if (!t) continue;
+          const g = Math.floor((x - lo[0]) / PART) + ',' + Math.floor((z - lo[2]) / PART);
+          if (!groupsW.has(g)) groupsW.set(g, []);
+          groupsW.get(g).push([x, y, z, t]);
+          (woodState[u.id] = woodState[u.id] || new Map()).set(k, t);
+        }
+        wood = [];
+        let kw = 0;
+        for (const list of groupsW.values()) {
+          const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+          for (const c of list) for (let q = 0; q < 3; q++) { mn[q] = Math.min(mn[q], c[q]); mx[q] = Math.max(mx[q], c[q]); }
+          const cells = list.map(([x, y, z, t]) => ({ x: x - mn[0], y: y - mn[1], z: z - mn[2], block: t.id === 'air' ? { name: 'minecraft:air', states: {} } : toBedrock({ x, y, z, ...t }, () => undefined, BLOCKS) }));
+          const name = `castle_w_${u.id}_${kw++}`;
+          write(`structures/${NS}/${name}.mcstructure`, mcstructure([mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells));
+          SIM_DUMP[name] = { size: [mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells: cells.map((c) => [c.x, c.y, c.z, c.block.name, c.block.states]) };
+          wood.push([name, ...mn, ...mx]);
+        }
+      }
+      units[u.id] = { title: u.title, kind: u.kind, stage: u.stage, pieces, chest, sign, ...(wood ? { wood } : {}), center: u.center };
     }
     // Дома жителей: свободный пол ближе всего к метке помещения (или к точке near),
     // свободный и в упадке, и после ремонта, не в дверях и не на чужом месте
@@ -674,7 +713,197 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     paths.catacombs = pathTo(lairs.catacombs[0], 'катакомбы');
     paths.throne = pathTo(homes.ryzhy, 'трон');
     for (const k of ['ledger', 'steward_book', 'priest', 'vault', 'master_diary', 'sealed', 'grave']) if (slots[k]) paths['slot_' + k] = pathTo(slots[k], 'тайник ' + k);
-    const data = { version: PACK.version.join('.'), build: bodyPieces, mainPieces, box: [...lo, ...hi], origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
+    // ---------- Работники (docs/workers.md) ----------
+    // Заказы строителя: у пролёта стены — частокол, потом камень; у башни — камень. Стоимость —
+    // по клеткам, которые придётся поставить (точный счёт строитель делает сам, по миру).
+    const CAT = (id) => (/glass/.test(id) ? 'glass' : /bars|chain/.test(id) ? 'iron' : /log|plank|fence|spruce|oak|birch|wood|trapdoor|_door|ladder/.test(id) ? 'wood'
+      : /stone|brick|cobble|andesite|diorite|granite|tuff|deepslate|calcite|polished/.test(id) ? 'stone' : 'other');
+    const costOf = (cells) => { const c = {}; for (const id of cells) { if (!id || id === 'air') continue; const k = CAT(id); c[k] = (c[k] || 0) + 1; } return c; };
+    const orders = [];
+    const gateAt = [info.CX, 0, info.Z2 - 10];
+    const buildUnits = Object.entries(units).filter(([, u]) => u.kind === 'build')
+      .sort((a, c) => Math.hypot(a[1].center[0] - gateAt[0], a[1].center[2] - gateAt[2]) - Math.hypot(c[1].center[0] - gateAt[0], c[1].center[2] - gateAt[2]));
+    for (const [id, u] of buildUnits) {
+      const ws = woodState[id] || new Map();
+      if (u.wood && u.wood.length) orders.push({ id: id + ':wood', unit: id, step: 'wood', title: 'Частокол: ' + u.title.toLowerCase(), pieces: u.wood, needs: [], at: u.center,
+        cost: costOf([...ws.values()].map((t) => t.id)) });
+      const stoneIds = [];
+      for (const [k, uid] of RU.owner) {
+        if (uid !== id) continue;
+        const f = mapFull.get(k), prev = ws.get(k) || map.get(k);
+        const fid = f && !f.env ? f.id : 'air', pid = prev ? prev.id : 'air';
+        if (fid !== pid) stoneIds.push(fid);
+      }
+      orders.push({ id: id + ':stone', unit: id, step: 'stone', title: (id.startsWith('tower_') ? 'Каменная кладка: ' : 'Камень: ') + u.title.toLowerCase(), pieces: u.pieces,
+        needs: u.wood && u.wood.length ? [id + ':wood'] : [], at: u.center, cost: costOf(stoneIds) });
+    }
+    const totalCost = {};
+    for (const o of orders) for (const [k, n] of Object.entries(o.cost)) totalCost[k] = (totalCost[k] || 0) + n;
+    console.log(`Работники: заказов строителя ${orders.length} (${orders.filter((o) => o.step === 'wood').length} частоколов), всего блоков: ${Object.entries(totalCost).map(([k, n]) => k + ' ' + n).join(', ')}`);
+    // Шахтёр не трогает подземелья замка: колонки 8×8 с вырезанными залами (катакомбы, склеп,
+    // камера «сердца») и запас по высоте
+    const protect = {};
+    for (const v of b.blocks.values()) {
+      if (v.y >= -1 || v.id !== 'air') continue;
+      const key = (v.x >> 3) + ',' + (v.z >> 3), p = protect[key] || (protect[key] = [v.y, v.y]);
+      p[0] = Math.min(p[0], v.y); p[1] = Math.max(p[1], v.y);
+    }
+    const works = b.works;
+    if (!works) warn('замок: нет шахты и двора строителя (works)');
+    else {
+      const free = (c) => { const v = map.get(K(...c)), h = map.get(K(c[0], c[1] + 1, c[2])); return (!v || v.id === 'air') && (!h || h.id === 'air'); };
+      if (!free(works.mine.home)) warn('замок: место рудокопа занято');
+      if (!free(works.yard.home)) warn('замок: место строителя занято');
+      for (const [x, z] of [[works.mine.ring[0], works.mine.ring[1]]]) for (const k of Object.keys(protect)) { const [cx, cz] = k.split(',').map(Number); if (Math.abs(cx - (x >> 3)) <= 1 && Math.abs(cz - (z >> 3)) <= 1) warn('замок: шахта рядом с подземельем'); }
+    }
+    // ---------- Кузня и гарнизон (с 0.9.3) ----------
+    // Путь по клеткам, где может стоять игрок (поиск в ширину, как пути от ворот)
+    const snap = (c, what) => { const n = nearest(c, (x, y, z) => standOk(x, y, z) || (x === c[0] && y === c[1] && z === c[2] && W.has(x, y, z)), 4); if (!n) warn(`замок: нет места «${what}» у (${c.join(',')})`); else if (Math.hypot(n[0] - c[0], n[2] - c[2]) > 4 || n[1] !== c[1]) warn(`замок: «${what}» сдвинуто с (${c.join(',')}) на (${n.join(',')})`); return n; };
+    const passFull = (x, y, z) => freeFull(x, y, z) || /_door$|fence_gate|ladder|scaffolding|_sign|torch|lantern|vine|_trapdoor$/.test((mapFull.get(K(x, y, z)) || {}).id || '');
+    // пол под путём есть и после починки (в упадке путь не идёт по кустам и завалам, которые уберут)
+    const floorFull = (x, y, z) => { const v = mapFull.get(K(x, y, z)); return !!v && !/^(air|short_grass|tall_grass|fern|.*_carpet|snow_layer)$/.test(v.id) || /ladder|scaffolding/.test((mapFull.get(K(x, y + 1, z)) || {}).id || ''); };
+    function bfsPath(a, z, what, { doors = true } = {}) {
+      const door = (x, y, zz) => /_door$|fence_gate|ladder/.test((mapFull.get(K(x, y, zz)) || {}).id || '');
+      if (!a || !z) return null;
+      const prev = new Map([[K(...a), null]]), q2 = [a];
+      for (let h = 0; h < q2.length; h++) {
+        const [x, y, zz] = q2[h];
+        if (x === z[0] && y === z[1] && zz === z[2]) break;
+        const nb = [[x, y + 1, zz], [x, y - 1, zz]];
+        for (const [dx, dz] of N4) for (let dy = 1; dy >= -6; dy--) if (W.has(x + dx, y + dy, zz + dz)) { nb.push([x + dx, y + dy, zz + dz]); break; }
+        // клетка проходима и в упадке, и после починки (иначе путь упрётся в восстановленное)
+        for (const n of nb) { const kk = K(...n); if (W.has(...n) && passFull(...n) && passFull(n[0], n[1] + 1, n[2]) && floorFull(n[0], n[1] - 1, n[2]) && (doors || !door(...n)) && !prev.has(kk)) { prev.set(kk, [x, y, zz]); q2.push(n); } }
+      }
+      if (!prev.has(K(...z))) { warn(`замок: нет пути «${what}»`); return null; }
+      const out = [];
+      for (let c = z; c; c = prev.get(K(...c))) out.push(c);
+      return out.reverse().flat();
+    }
+    const WK = b.works;
+    // Кузня: подмастерье ходит от кузни к шахте и к складу строителя
+    const forge = { ...WK.forge, toMine: bfsPath(WK.forge.apprentice, WK.mine.apprentice, 'кузня → шахта'), toYard: bfsPath(WK.forge.apprentice, WK.yard.apprentice, 'кузня → двор строителя') };
+    for (const [c, what] of [[WK.forge.apprentice, 'подмастерье у кузни'], [WK.mine.apprentice, 'подмастерье у шахты'], [WK.yard.apprentice, 'подмастерье у склада'], [WK.forge.anvilStand, 'кузнец у наковальни'], [WK.forge.furnaceStand, 'кузнец у печи']]) if (!(free(...c) && free(c[0], c[1] + 1, c[2]) && freeFull(...c) && freeFull(c[0], c[1] + 1, c[2]))) warn(`замок: место «${what}» (${c.join(',')}) занято`);
+    // Что кузнец куёт — видно в рамке на верстаке: на каждый предмет — шаблон из одной рамки
+    const SHOW = ['iron_helmet', 'iron_chestplate', 'iron_leggings', 'iron_boots', 'iron_sword', 'iron_pickaxe', 'diamond_helmet', 'diamond_chestplate', 'diamond_leggings', 'diamond_boots', 'diamond_sword', 'diamond_pickaxe', 'rail', 'iron_ingot'];
+    for (const it of [...SHOW, null]) {
+      if (it && !VANILLA_ITEMS.has('minecraft:' + it)) warn('рамка кузни: неизвестный предмет ' + it);
+      const blk = { x: 0, y: 0, z: 0, id: 'item_frame', f: 'u', ...(it ? { item: it, keep: 1 } : {}) };
+      write(`structures/${NS}/forge_show_${it || 'empty'}.mcstructure`, mcstructure([1, 1, 1], [{ x: 0, y: 0, z: 0, block: toBedrock(blk, () => ({ id: 'spruce_slab' }), BLOCKS) }]));
+    }
+    forge.show = SHOW;
+    // Гарнизон: койки в казарме, посты, обходы, пути от койки к посту
+    const beds = [...b.blocks.values()].filter((v) => /_bed$/.test(v.id) && !v.head && v.x >= 10 && v.x <= 34 && v.z >= 70 && v.z <= 80).sort((p2, q3) => p2.y - q3.y || p2.x - q3.x);
+    if (beds.length !== 14) warn(`замок: в казарме ${beds.length} коек, а гарнизону нужно 14`);
+    const bedStand = beds.map((v, i) => nearest([v.x, v.y, v.z + 2], (x, y, z) => y === v.y && standOk(x, y, z), 8) || warn(`замок: у койки ${i} нет места`));
+    const info2 = b.castleInfo, X2c = info2.X2, Z2c = info2.Z2, CXc = info2.CX;
+    const posts = {
+      gate_l: npc.POSTS.find((q3) => q3.guard === 'ostap').at, gate_r: npc.POSTS.find((q3) => q3.guard === 'mitka').at,
+      keep_l: snap([CXc - 2, 0, info2.KZ + 50], 'пост у входа в донжон'), keep_r: snap([CXc + 2, 0, info2.KZ + 50], 'пост у входа в донжон'),
+      tower_nw: snap([6, 0, 6], 'дозор башни'), tower_ne: snap([X2c - 6, 0, 6], 'дозор башни'), tower_sw: snap([6, 0, Z2c - 6], 'дозор башни'), tower_se: snap([X2c - 6, 0, Z2c - 6], 'дозор башни'),
+      arch_l: npc.POSTS.find((q3) => q3.guard === 'savva').at, arch_r: [2 * CXc - npc.POSTS.find((q3) => q3.guard === 'savva').at[0], 16, npc.POSTS.find((q3) => q3.guard === 'savva').at[2]],
+    };
+    // Личная стража короля (с 0.9.4): у двери опочивальни, снаружи — в проходе перед дверью
+    {
+      const kh = homes.vsevolod, kr = roomAt('Опочивальня хозяина');
+      const doors = [...b.blocks.values()].filter((v) => /_door$/.test(v.id) && !v.top && kh && v.y === kh[1] && Math.hypot(v.x - kr.x, v.z - kr.z) < 16);
+      let best = null;
+      for (const d of doors) for (const [dx, dz] of N4) {
+        const c = [d.x + dx, d.y, d.z + dz];
+        if (!standOk(...c) || !W.has(...c)) continue;
+        // снаружи покоев: клетка дальше от середины комнаты, чем дверь
+        const out = Math.hypot(c[0] - kr.x, c[2] - kr.z) - Math.hypot(d.x - kr.x, d.z - kr.z);
+        if (out <= 0) continue;
+        // в сторону, а не прямо в дверном проёме: соседняя вдоль стены клетка, если свободна
+        const side = [[dz, dx], [-dz, -dx]].map(([sx, sz]) => [c[0] + sx, c[1], c[2] + sz]).find((q) => standOk(...q) && W.has(...q));
+        const at = side || c;
+        if (!best || out > best.out) best = { at, door: [d.x, d.y, d.z], out };
+      }
+      if (!best) warn('замок: у двери опочивальни короля нет места для гридня');
+      else { posts.king = best.at; posts.kingDoor = best.door; taken.add(K(...best.at)); }
+      // Койки гридней — в казарме донжона (этаж над жилым, y 24)
+      const kb = [...b.blocks.values()].filter((v) => /_bed$/.test(v.id) && !v.head && v.y === 24 && v.x >= info.KX && v.x <= info.KX + 38 && v.z >= info.KZ && v.z <= info.KZ + 20).sort((p2, q3) => p2.x - q3.x || p2.z - q3.z);
+      const kbeds = kb.slice(0, 2).map((v, i) => nearest([v.x, v.y, v.z + 2], (x, y, z) => y === v.y && standOk(x, y, z) && W.has(x, y, z), 6) || warn(`замок: у койки гридня ${i} нет места`));
+      if (kbeds.length < 2) warn('замок: в казарме донжона нет двух коек для гридней');
+      for (const c of kbeds) if (c) taken.add(K(...c));
+      posts.kbeds = kbeds;
+    }
+    // Ворота ночью (с 0.9.4): решётка опущена, ночной караул сидит в караулках надвратных башен
+    // (у лебёдки) и выходит, когда нужно открыть игроку или нежить пролезла во двор
+    posts.gate_l_night = snap([56, 0, 126], 'ночной караул в левой надвратной башне');
+    posts.gate_r_night = snap([70, 0, 126], 'ночной караул в правой надвратной башне');
+    for (const [k, c] of Object.entries(posts)) if (c && c.length === 3 && typeof c[0] === 'number' && k !== 'kingDoor' && !(standOk(...c) || taken.has(K(...c)) || (k.startsWith('arch') && freeFull(...c)))) warn(`замок: пост ${k} (${c.join(',')}) занят`);
+    // Обходы: по точкам двора, путь между точками — по клеткам, где можно пройти; петля
+    const ROUTES = {
+      patrol_yard: { title: 'дозор по двору: площадь — кузня — шахта — казарма', pts: [[63, 0, 112], [46, 0, 100], [24, 0, 102], [20, 0, 106], [22, 0, 84], [36, 0, 76], [44, 0, 90]] },
+      patrol_keep: { title: 'обход донжона: огород — амбар — дом управителя — ристалище — часовня', pts: [[63, 0, 68], [40, 0, 62], [38, 0, 30], [40, 0, 10], [63, 0, 9], [88, 0, 10], [103, 0, 40], [86, 0, 64]] },
+    };
+    const routes = {};
+    for (const [id, r] of Object.entries(ROUTES)) {
+      const pts = r.pts.map((c) => snap(c, r.title));
+      const flat2 = [];
+      for (let k = 0; k < pts.length; k++) { const seg = bfsPath(pts[k], pts[(k + 1) % pts.length], `${r.title} (${pts[k]} → ${pts[(k + 1) % pts.length]})`, { doors: false }); if (seg) flat2.push(...seg.slice(0, -3)); }
+      routes[id] = { title: r.title, path: flat2 };
+      posts[id] = flat2.slice(0, 3);
+    }
+    const roster = npc.GARRISON.map((g) => ({ ...g }));
+    const paths2 = {};
+    const restOf = (g) => (g.bed !== undefined ? bedStand[g.bed] : g.kbed !== undefined ? posts.kbeds[g.kbed] : null);
+    const shiftPost = (g) => posts[g.shift === 'night' && posts[g.post + '_night'] ? g.post + '_night' : g.post];
+    for (const g of roster) if (restOf(g) && shiftPost(g)) paths2[g.id] = bfsPath(restOf(g), shiftPost(g), `${g.name}: от койки на пост`);
+    // ночной караул ворот: из караулки в проезд и обратно (в ночь боя он стоит в проезде)
+    for (const k of ['gate_l', 'gate_r']) paths2[k + '_out'] = bfsPath(posts[k + '_night'], posts[k], `ночной караул: из караулки в проезд (${k})`);
+    // Посты и обходы не должны стоять на том, что в упадке и чинится (стены, башни, комнаты):
+    // там, пока не починят, стоять нельзя. Такой пост — только с needs на эту единицу ремонта.
+    {
+      const unitAt = (x, y, z) => RU.owner.get(K(x, y, z));
+      const unitsUnder = (c) => [...new Set([unitAt(c[0], c[1] - 1, c[2]), unitAt(...c), unitAt(c[0], c[1] + 1, c[2])].filter(Boolean))];
+      const SOFT = /^(short_grass|tall_grass|fern|large_fern|poppy|dandelion|cornflower|allium|azure_bluet|oxeye_daisy|lily_of_the_valley|.*_tulip|blue_orchid|.*_carpet|carpet|snow_layer|torch|wall_torch|.*_sign|vine|air)$/;
+      const solidAt = (m, x, y, z) => { const v = m.get(K(x, y, z)); return !!v && !SOFT.test(v.id); };
+      const standIn = (m, c) => { const f = (x, y, z) => { const v = m.get(K(x, y, z)); return !v || SOFT.test(v.id); }; return solidAt(m, c[0], c[1] - 1, c[2]) && f(...c) && f(c[0], c[1] + 1, c[2]); };
+      const covered = (g, u) => !!g.needs && (g.needs === u || g.needs.startsWith(u + ':'));
+      let nPosts = 0;
+      for (const g of roster) {
+        for (const [what, c] of [['пост', shiftPost(g)], ['койка', restOf(g)], ...(g.post.startsWith('gate_') ? [['проезд ворот', posts[g.post]]] : [])]) {
+          if (!c || c.length !== 3) continue;
+          nPosts++;
+          if (!standIn(mapFull, c) && !(g.archer || g.post.startsWith('arch'))) warn(`замок: ${what} «${g.name}» (${c.join(',')}) после починки занят`);
+          // в упадке стоять нельзя — значит, пост ждёт починки этого места
+          if (!standIn(map, c) && !(g.post.startsWith('arch') && freeFull(...c)) && !unitsUnder(c).some((u) => covered(g, u))) warn(`замок: ${what} «${g.name}» (${c.join(',')}) в упадке: там стоять нельзя, пока не починят ${unitsUnder(c).join(', ') || '?'}, а набор этого не ждёт`);
+        }
+      }
+      // лучники на надвратных башнях: верх башен цел с самого начала (ворота не разрушены)
+      for (const k of ['arch_l', 'arch_r']) { const c = posts[k]; if (unitsUnder(c).length || !solidAt(map, c[0], c[1] - 1, c[2])) warn(`замок: верх надвратной башни под лучником ${k} (${c.join(',')}) разрушен`); }
+      for (const [id, r] of Object.entries(routes)) for (let k = 0; k < r.path.length; k += 3) {
+        const c = [r.path[k], r.path[k + 1], r.path[k + 2]];
+        if (!standIn(mapFull, c) || !W.has(...c)) { warn(`замок: обход «${r.title}» упрётся в (${c.join(',')})`); break; }
+      }
+      for (const p of npc.POSTS) if (!standIn(map, p.at) && !p.archer) warn(`замок: пост сюжета ${p.guard} (${p.at.join(',')}) в упадке — там стоять нельзя`);
+      console.log(`Стража и упадок: проверено мест ${nPosts}, обходов ${Object.keys(routes).length} — на разрушенном и на том, что после починки займут, никто не стоит`);
+    }
+    const garrison = { roster, posts, beds: bedStand, routes, paths: paths2, keep: [info.KX, info.KZ] };
+    console.log(`Гарнизон: ${roster.length} стражников (смены ${roster.filter((g) => g.bed !== undefined).length}, коек ${beds.length}), обходы: ${Object.entries(routes).map(([k, r]) => k + ' ' + r.path.length / 3).join(', ')} клеток; кузня — путей подмастерья ${[forge.toMine, forge.toYard].filter(Boolean).length}/2`);
+    if (!b.gate) warn('замок: нет решётки ворот');
+    else for (const c of b.gate.levers) { const v = map.get(K(...c)); if (!v || v.id !== 'lever') warn(`замок: рычаг решётки (${c.join(',')}) не встал`); }
+    const data = { version: PACK.version.join('.'), build: bodyPieces, mainPieces, box: [...lo, ...hi], works, orders, protect, portcullis: b.gate, forge, garrison, origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
+    fs.mkdirSync(path.join(ROOT, 'build/sim'), { recursive: true });
+    fs.writeFileSync(path.join(ROOT, 'build/sim/structures.json'), JSON.stringify(SIM_DUMP));
+    // Что ставит строитель: клетки заказа в координатах замка и палитра блоков. Строитель
+    // читает это, а не шаблоны (так надёжнее: не зависит от того, видит ли игра шаблоны пакета).
+    {
+      const pal = [], palIdx = new Map(), cells = {};
+      let n = 0;
+      for (const o of orders) {
+        const out = [];
+        for (const [name, x1, y1, z1] of o.pieces) for (const [x, y, z, nm, st] of SIM_DUMP[name].cells) {
+          const key = JSON.stringify([nm, st]);
+          if (!palIdx.has(key)) { palIdx.set(key, pal.length); pal.push([nm, st]); }
+          out.push(x1 + x, y1 + y, z1 + z, palIdx.get(key));
+        }
+        cells[o.id] = out; n += out.length / 4;
+      }
+      write('scripts/work_data.js', '// Собрано tools/build.js — не править руками\nexport const WORK = ' + JSON.stringify({ pal, cells }) + ';\n');
+      console.log(`Заказы строителя: ${n} клеток, палитра ${pal.length} блоков`);
+    }
     write('scripts/castle_data.js', '// Собрано tools/build.js — не править руками\nexport const CASTLE = ' + JSON.stringify(data) + ';\n');
     const contracts = Object.entries(units).filter(([, u]) => u.chest).map(([id]) => id);
     console.log(`Ремонт: ${Object.keys(units).length} единиц, подрядов ${contracts.length}, путей ${Object.values(paths).filter(Boolean).length}, дома: ${Object.entries(homes).map(([k, v]) => k + (v ? '' : '?')).join(', ')}`);

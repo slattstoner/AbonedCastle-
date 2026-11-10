@@ -1,40 +1,27 @@
 // Окна: разговор с жителем (по кнопке «Говорить», касанием или из книги) и книга заданий.
 // У игрока одновременно открыто не больше одного окна: повторное нажатие, пока окно открыто
 // или только что закрылось, ничего не делает (на телефоне одно касание даёт два события).
-import { system } from '@minecraft/server';
 import { ActionFormData } from '@minecraft/server-ui';
+import { show, guarded } from './ui.js';
+import { guardNode } from './garrison.js';
 import { S, save } from './state.js';
 import { NPCS, QUESTS, dialog } from './story.js';
 import { residentsNear } from './people.js';
 import { api } from './api.js';
 import { charterCheck, charterBuild } from './castle_build.js';
 
-const wait = (t) => new Promise((r) => system.runTimeout(r, t));
-// Окно не показывается, пока у игрока открыт другой экран (игра отвечает «занят»):
-// повторяем несколько раз с паузой — так окно откроется сразу после нажатия.
-async function show(pl, form) {
-  for (let i = 0; i < 10; i++) {
-    const r = await form.show(pl);
-    if (!r.canceled || r.cancelationReason !== 'UserBusy') return r;
-    await wait(5);
-  }
-  return { canceled: true };
+export { show, guarded };
+// Разговор: узел сюжета (story.js dialog) и дальше по кнопкам. Стражникам гарнизона к разговору
+// добавляется «Как служба?» (пост, смена, снаряжение и заготовка своей истории — garrison.js).
+async function talkInner(pl, id) { return runNode(pl, id, guardNode(id, dialog(id, api, pl))); }
+// Узел сюжета для окна работника (кузнец, подмастерье): его кнопки встают в окно работника
+export const storyNode = (pl, id) => (NPCS[id] ? dialog(id, api, pl) : null);
+// Нажата кнопка узла: выполнить и продолжить разговор
+export async function runOption(pl, id, o) {
+  if (o.run) o.run(api, pl);
+  return runNode(pl, id, o.next ? (typeof o.next === 'function' ? o.next(api, pl) : o.next) : null);
 }
-
-const busy = new Map(); // игрок → тик, когда окно закрылось (или true, пока открыто)
-function guarded(fn) {
-  return (pl, ...args) => {
-    const b = busy.get(pl.id);
-    if (b === true || (b && system.currentTick - b < 10)) return;
-    busy.set(pl.id, true);
-    system.run(async () => {
-      try { await fn(pl, ...args); } catch (e) { console.warn('acastle окно: ' + e); } finally { busy.set(pl.id, system.currentTick); }
-    });
-  };
-}
-
-async function talkInner(pl, id) {
-  let node = dialog(id, api, pl);
+async function runNode(pl, id, node) {
   for (let step = 0; node && step < 20; step++) {
     const opts = node.options && node.options.length ? node.options : [{ text: 'Прощай' }];
     const form = new ActionFormData().title(node.title || NPCS[id].name).body(node.text);

@@ -24,7 +24,49 @@ const GUARDS = [
   { id: 'gavrila', name: 'Стражник Гаврила' },
   { id: 'luka', name: 'Стражник Лука' },
   { id: 'savva', name: 'Лучник Савва' },
+  // гарнизон (с 0.9.3): набирает капитан, меч куёт кузнец
+  { id: 'bogdan', name: 'Стражник Богдан' }, { id: 'eryoma', name: 'Стражник Ерёма' }, { id: 'vlas', name: 'Десятник Влас' },
+  { id: 'gleb', name: 'Стражник Глеб' }, { id: 'foma', name: 'Стражник Фома' }, { id: 'prokop', name: 'Стражник Прокоп' },
+  { id: 'stepan', name: 'Стражник Степан' }, { id: 'yakov', name: 'Стражник Яков' }, { id: 'nestor', name: 'Стражник Нестор' },
+  { id: 'arkhip', name: 'Дозорный Архип' }, { id: 'semyon', name: 'Дозорный Семён' }, { id: 'kirill', name: 'Дозорный Кирилл' },
+  { id: 'khariton', name: 'Дозорный Харитон' }, { id: 'lyubim', name: 'Лучник Любим' },
+  // личная стража короля (с 0.9.4): у двери опочивальни, днём и ночью
+  { id: 'ratibor', name: 'Гридень Ратибор' }, { id: 'tverdyata', name: 'Гридень Твердята' },
 ];
+// Гарнизон (docs/workers.md, раздел «Стража»). Две смены по 7 человек живут в казарме во дворе —
+// по койке на каждого (в казарме 14 коек). Смена: ворота ×2, вход в донжон ×2, дозор по двору
+// (пара), обход донжона (один). Днём стоит дневная смена, ночью — ночная; на пересменке новый
+// приходит от своей койки на пост, прежний уходит спать. Без смен: дозорные башен (по одному
+// в каждой угловой башне, живут там) и два лучника на надвратных башнях. Капитан — сам по себе.
+// from: 'story' — приходит по сюжету; иначе — набирает капитан (нужен меч от кузнеца).
+// needs: что должно быть готово (barracks — казарма, tower_* — башня у строителя).
+const GARRISON = [
+  { id: 'ostap', rank: 'десятник', post: 'gate_l', shift: 'day', bed: 0, from: 'story' },
+  { id: 'mitka', rank: 'стражник', post: 'gate_r', shift: 'day', bed: 1, from: 'story' },
+  { id: 'zhdan', rank: 'стражник', post: 'keep_l', shift: 'day', bed: 2, from: 'story' },
+  { id: 'gavrila', rank: 'стражник', post: 'keep_r', shift: 'day', bed: 3, from: 'story' },
+  { id: 'luka', rank: 'стражник', post: 'patrol_yard', slot: 0, shift: 'day', bed: 4, from: 'story' },
+  { id: 'bogdan', rank: 'стражник', post: 'patrol_yard', slot: 1, shift: 'day', bed: 5, needs: 'barracks' },
+  { id: 'eryoma', rank: 'стражник', post: 'patrol_keep', slot: 0, shift: 'day', bed: 6, needs: 'barracks' },
+  { id: 'vlas', rank: 'десятник', post: 'gate_l', shift: 'night', bed: 7, needs: 'barracks' },
+  { id: 'gleb', rank: 'стражник', post: 'gate_r', shift: 'night', bed: 8, needs: 'barracks' },
+  { id: 'foma', rank: 'стражник', post: 'keep_l', shift: 'night', bed: 9, needs: 'barracks' },
+  { id: 'prokop', rank: 'стражник', post: 'keep_r', shift: 'night', bed: 10, needs: 'barracks' },
+  { id: 'stepan', rank: 'стражник', post: 'patrol_yard', slot: 0, shift: 'night', bed: 11, needs: 'barracks' },
+  { id: 'yakov', rank: 'стражник', post: 'patrol_yard', slot: 1, shift: 'night', bed: 12, needs: 'barracks' },
+  { id: 'nestor', rank: 'стражник', post: 'patrol_keep', slot: 0, shift: 'night', bed: 13, needs: 'barracks' },
+  { id: 'arkhip', rank: 'дозорный', post: 'tower_nw', needs: 'tower_nw:stone' },
+  { id: 'semyon', rank: 'дозорный', post: 'tower_ne', needs: 'tower_ne:stone' },
+  { id: 'kirill', rank: 'дозорный', post: 'tower_sw', needs: 'tower_sw:stone' },
+  { id: 'khariton', rank: 'дозорный', post: 'tower_se', needs: 'tower_se:stone' },
+  { id: 'savva', rank: 'лучник', post: 'arch_l', from: 'story' },
+  { id: 'lyubim', rank: 'лучник', post: 'arch_r', needs: 'barracks', archer: true },
+  // Гридни — личная стража короля у двери опочивальни. Живут в казарме донжона (своя койка там),
+  // Ратибор приходит с отрядом из острога, Твердяту набирает капитан.
+  { id: 'ratibor', rank: 'гридень', post: 'king', shift: 'day', kbed: 0, from: 'story', stage: 1 },
+  { id: 'tverdyata', rank: 'гридень', post: 'king', shift: 'night', kbed: 1, needs: 'barracks' },
+];
+for (const g of GARRISON) { const n = GUARDS.find((q) => q.id === g.id); if (!n) throw new Error('нет стражника ' + g.id); g.name = n.name; }
 // Посты в координатах замка (как в castle.js): x — восток, z — юг; f — поворот (0 — лицом на юг, наружу).
 // Этап 0: Остап и Митька в проезде ворот по обе стороны, у внешнего края арки.
 // Этап 1: трое стражников гарнизона у ворот со стороны двора и на площади.
@@ -74,7 +116,7 @@ function skinGroups(ids, groups, events) {
     events[`${NS}:as_${id}`] = { remove: { component_groups: ids.filter((o) => o !== id).map((o) => `${NS}:skin_${o}`) }, add: { component_groups: [`${NS}:skin_${id}`] } };
   }
 }
-const common = (family) => ({
+const common = (family, idle = true) => ({
   'minecraft:type_family': { family: [...family, `${NS}_person`] },
   'minecraft:variant': { value: 0 },
   'minecraft:collision_box': { width: 0.6, height: 1.9 },
@@ -89,7 +131,7 @@ const common = (family) => ({
   'minecraft:conditional_bandwidth_optimization': {},
   'minecraft:behavior.float': { priority: 0 },
   'minecraft:behavior.look_at_player': { priority: 8, look_distance: 8, probability: 0.6 },
-  'minecraft:behavior.random_look_around': { priority: 9 },
+  ...(idle ? { 'minecraft:behavior.random_look_around': { priority: 9 } } : {}),
   ...TALK,
 });
 
@@ -104,32 +146,66 @@ const ARCHER = {
     entity_types: [{ filters: { all_of: [monster, { test: 'is_family', subject: 'other', operator: '!=', value: 'creeper' }, { test: 'is_family', subject: 'other', operator: '!=', value: 'enderman' }] }, max_dist: 24 }],
   },
 };
+// Цель стражника — только «нарушитель»: монстр или враждебный разбойник, которого скрипт
+// пометил (tools/scripts/garrison.js, «Нарушители»), потому что тот на земле двора, у ворот или
+// на этаже донжона, где стоит гридень. Монстр на стене, в башне, на крыше, под землёй, в лесу
+// метки не получает — за ним стражник не тянется (в 0.9.3 стража у ворот из-за этого топталась
+// и смотрела вверх). Без тревоги боевых привычек нет вовсе: стоит смирно, ходит, куда ведут скрипты.
+const notCreeper = [
+  { test: 'is_family', subject: 'other', operator: '!=', value: 'creeper' },
+  { test: 'is_family', subject: 'other', operator: '!=', value: 'enderman' },
+];
+const targeting = (filters, r) => ({
+  'minecraft:behavior.nearest_attackable_target': {
+    priority: 1, must_see: true, must_reach: true, reselect_targets: true, within_radius: r, must_see_forget_duration: 3,
+    entity_types: [{ filters: { all_of: [...filters, ...notCreeper] }, max_dist: r }],
+  },
+  'minecraft:behavior.melee_box_attack': { priority: 2, track_target: true, speed_multiplier: 1.2 },
+});
+const hasTag = (t) => ({ test: 'has_tag', subject: 'other', value: t });
 function guardEntity() {
-  const groups = { [`${NS}:despawn`]: { 'minecraft:instant_despawn': {} }, [`${NS}:talked`]: {}, [`${NS}:archer`]: ARCHER };
+  const groups = {
+    [`${NS}:despawn`]: { 'minecraft:instant_despawn': {} }, [`${NS}:talked`]: {}, [`${NS}:archer`]: ARCHER,
+    // тревога: двор и ворота / этаж донжона (гридень)
+    [`${NS}:alert`]: targeting([hasTag(`${NS}_intruder`)], 20),
+    [`${NS}:alert_keep`]: targeting([hasTag(`${NS}_intruder_keep`)], 16),
+    // из яйца призыва (без поста и скриптов): бьёт монстров рядом сам
+    [`${NS}:free`]: { ...targeting([monster], 12), 'minecraft:home': { restriction_type: 'random_movement', restriction_radius: 12 },
+      'minecraft:behavior.move_towards_home_restriction': { priority: 4 }, 'minecraft:behavior.random_stroll': { priority: 7, speed_multiplier: 0.6, xz_dist: 2, y_dist: 1, interval: 400 } },
+  };
   const events = {
     // Из яйца призыва — один из стражников гарнизона
-    'minecraft:entity_spawned': { randomize: GUARDS.slice(2, 5).map((g) => ({ weight: 1, add: { component_groups: [`${NS}:skin_${g.id}`] } })) },
+    'minecraft:entity_spawned': { add: { component_groups: [`${NS}:free`] }, randomize: GUARDS.slice(2, 5).map((g) => ({ weight: 1, add: { component_groups: [`${NS}:skin_${g.id}`] } })) },
     [`${NS}:despawn`]: { add: { component_groups: [`${NS}:despawn`] } },
     [`${NS}:talked`]: { add: { component_groups: [`${NS}:talked`] } },
+    [`${NS}:alert`]: { remove: { component_groups: [`${NS}:alert_keep`] }, add: { component_groups: [`${NS}:alert`] } },
+    [`${NS}:alert_keep`]: { remove: { component_groups: [`${NS}:alert`] }, add: { component_groups: [`${NS}:alert_keep`] } },
+    [`${NS}:calm`]: { remove: { component_groups: [`${NS}:alert`, `${NS}:alert_keep`] } },
   };
   skinGroups(GUARDS.map((g) => g.id), groups, events);
   events[`${NS}:as_savva`].add.component_groups.push(`${NS}:archer`);
+  events[`${NS}:as_lyubim`].add.component_groups.push(`${NS}:archer`);
+  // Гарнизон: стражника водят скрипты (пост, обход, пересменка). Своего «дома» у него нет вовсе:
+  // в 0.9.3 домом считалась койка, где он появился, игра тянула его туда, скрипт — на пост,
+  // и стражник топтался между двумя клетками. Группа осталась меткой «ведут скрипты».
+  groups[`${NS}:patrol`] = {};
+  events[`${NS}:patrol`] = { add: { component_groups: [`${NS}:patrol`] } };
   return {
     format_version: '1.21.0',
     'minecraft:entity': {
       description: { identifier: `${NS}:guard`, is_spawnable: true, is_summonable: true, is_experimental: false },
       component_groups: groups,
       components: {
-        // irongolem — чтобы зомби и скелеты сами шли драться со стражей, как с железным големом
-        ...common([`${NS}_guard`, `${NS}_npc`, 'irongolem', 'mob']),
+        // irongolem — чтобы зомби и скелеты сами шли драться со стражей, как с железным големом.
+        // Без «оглядывания по сторонам» и прогулок: на посту стражник стоит смирно.
+        ...common([`${NS}_guard`, `${NS}_npc`, 'irongolem', 'mob'], false),
         'minecraft:health': { value: 40, max: 40 },
         'minecraft:attack': { damage: 6 },
         'minecraft:movement': { value: 0.3 },
-        'minecraft:navigation.walk': { can_walk: true, avoid_water: true, avoid_damage_blocks: true, can_pass_doors: true, can_open_doors: false },
+        'minecraft:navigation.walk': { can_walk: true, avoid_water: true, avoid_damage_blocks: true, can_pass_doors: true, can_open_doors: true },
+        'minecraft:annotation.open_door': {},
         'minecraft:knockback_resistance': { value: 0.4 },
         'minecraft:follow_range': { value: 24, max: 24 },
-        // Пост: место появления. Дальше 12 блоков сам не уходит, после боя возвращается.
-        'minecraft:home': { restriction_type: 'random_movement', restriction_radius: 12 },
         'minecraft:equipment': {
           table: `loot_tables/${NS}/npc/guard_gear.json`,
           slot_drop_chance: [{ slot: 'slot.weapon.mainhand', drop_chance: 0 }],
@@ -144,20 +220,8 @@ function guardEntity() {
             { on_damage: { filters: { test: 'is_family', subject: 'other', value: `${NS}_npc` } }, deals_damage: 'no' },
           ],
         },
-        'minecraft:behavior.hurt_by_target': { priority: 1, entity_types: { filters: monster } },
-        'minecraft:behavior.melee_box_attack': { priority: 2, track_target: true, speed_multiplier: 1.2 },
-        // must_reach — как у железного голема: не гонится за тем, до кого не дойти (скелет на стене)
-        'minecraft:behavior.nearest_attackable_target': {
-          priority: 3, must_see: true, must_reach: true, reselect_targets: true, within_radius: 20, must_see_forget_duration: 5,
-          entity_types: [{
-            filters: { all_of: [monster,
-              { test: 'is_family', subject: 'other', operator: '!=', value: 'creeper' },
-              { test: 'is_family', subject: 'other', operator: '!=', value: 'enderman' }] },
-            max_dist: 20,
-          }],
-        },
-        'minecraft:behavior.move_towards_home_restriction': { priority: 4 },
-        'minecraft:behavior.random_stroll': { priority: 7, speed_multiplier: 0.6, xz_dist: 2, y_dist: 1, interval: 400 },
+        // не толкается: на посту стоит, пока его не поведут скрипты
+        'minecraft:pushable': { is_pushable: false, is_pushable_by_piston: true },
       },
       events,
     },
@@ -183,6 +247,37 @@ function npcEntity() {
         'minecraft:damage_sensor': { triggers: [{ cause: 'all', deals_damage: 'no' }] },
         'minecraft:behavior.move_towards_home_restriction': { priority: 4 },
         'minecraft:behavior.random_stroll': { priority: 7, speed_multiplier: 0.5, xz_dist: 2, y_dist: 1, interval: 300 },
+      },
+      events,
+    },
+  };
+}
+
+// Работник замка (шахтёр, строитель): сам не ходит — его ведут скрипты (tools/scripts/workers.js),
+// перенося маленькими шагами каждый тик (так игра показывает и анимацию ходьбы). Свойство
+// acastle:act: 0 — стоит, 1 — идёт, 2 — работает (машет киркой или молотком), 3 — едет в вагонетке.
+// Не падает (скрипт сам держит его на полу), его не толкают, урона не получает.
+function workerEntity() {
+  const groups = { [`${NS}:despawn`]: { 'minecraft:instant_despawn': {} }, [`${NS}:talked`]: {} };
+  const events = { [`${NS}:despawn`]: { add: { component_groups: [`${NS}:despawn`] } }, [`${NS}:talked`]: { add: { component_groups: [`${NS}:talked`] } } };
+  skinGroups(SKIN_IDS, groups, events);
+  return {
+    format_version: '1.21.0',
+    'minecraft:entity': {
+      description: {
+        identifier: `${NS}:worker`, is_spawnable: false, is_summonable: true, is_experimental: false,
+        properties: { [`${NS}:act`]: { type: 'int', range: [0, 3], default: 0, client_sync: true } },
+      },
+      component_groups: groups,
+      components: {
+        ...common([`${NS}_worker`, 'mob']),
+        'minecraft:health': { value: 20, max: 20 },
+        'minecraft:movement': { value: 0.25 },
+        'minecraft:physics': { has_gravity: false, has_collision: true },
+        'minecraft:pushable': { is_pushable: false, is_pushable_by_piston: false },
+        'minecraft:knockback_resistance': { value: 1 },
+        'minecraft:damage_sensor': { triggers: [{ cause: 'all', deals_damage: 'no' }] },
+        'minecraft:equipment': { table: `loot_tables/${NS}/npc/empty.json` },
       },
       events,
     },
@@ -290,7 +385,8 @@ function client(id, egg) {
         scripts: {
           initialize: ['v.gliding_speed_value = 1.0;'],
           pre_animation: ['v.tcos0 = Math.cos(query.modified_distance_moved * 38.17) * query.modified_move_speed / v.gliding_speed_value * 57.3;'],
-          animate: ['look_at_target_controller', 'move_controller', 'holding_controller', 'attack_controller', 'bob_controller'],
+          animate: ['look_at_target_controller', 'move_controller', 'holding_controller', 'attack_controller', 'bob_controller',
+            ...(id === 'worker' ? [{ work: `q.property('${NS}:act') == 2` }] : [])],
         },
         // Стандартные анимации человека (как у зомби и игрока)
         animations: {
@@ -306,6 +402,7 @@ function client(id, egg) {
           holding_controller: 'controller.animation.humanoid.holding',
           attack_controller: 'controller.animation.humanoid.attack',
           bob_controller: 'controller.animation.humanoid.bob',
+          ...(id === 'worker' ? { work: `animation.${NS}.work` } : {}),
         },
       },
     },
@@ -343,6 +440,7 @@ function writePacks(writeBP, writeRP, skinPng, checkTable, extra = { textures: {
   writeBP('entities/guard.json', guardEntity());
   writeBP('entities/npc.json', npcEntity());
   writeBP('entities/bandit.json', banditEntity());
+  writeBP('entities/worker.json', workerEntity());
   for (const [name, item, what] of [['guard_gear', 'iron_sword', 'стражника'], ['archer_gear', 'bow', 'лучника'], ['bandit_gear', 'stone_axe', 'разбойника'],
     ['bandit_sword', 'iron_sword', 'атамана'], ['bandit_light', 'stone_sword', 'разведчика'], ['empty', null, 'мирного']]) {
     const gear = { pools: item ? [{ rolls: 1, entries: [{ type: 'item', name: 'minecraft:' + item, weight: 1 }] }] : [] };
@@ -366,6 +464,12 @@ function writePacks(writeBP, writeRP, skinPng, checkTable, extra = { textures: {
   writeRP(`entity/guard.entity.json`, client('guard', { base_color: '#8a1e1e', overlay_color: '#d8b040' }));
   writeRP(`entity/npc.entity.json`, client('npc'));
   writeRP(`entity/bandit.entity.json`, client('bandit'));
+  writeRP(`entity/worker.entity.json`, client('worker'));
+  // Работа: правая рука с инструментом ходит вверх-вниз (удар киркой или молотком)
+  writeRP(`animations/${NS}.animation.json`, {
+    format_version: '1.8.0',
+    animations: { [`animation.${NS}.work`]: { loop: true, bones: { rightArm: { rotation: ['-95 + math.sin(q.life_time * 480) * 40', '0', '0'] } } } },
+  });
   writeRP(`render_controllers/${NS}.render_controllers.json`, {
     format_version: '1.8.0',
     render_controllers: {
@@ -381,6 +485,7 @@ function writePacks(writeBP, writeRP, skinPng, checkTable, extra = { textures: {
     `entity.${NS}:guard.name=Стражник замка`,
     `entity.${NS}:npc.name=Житель замка`,
     `entity.${NS}:bandit.name=Человек Рыжего`,
+    `entity.${NS}:worker.name=Работник замка`,
     `item.spawn_egg.entity.${NS}:guard.name=Призвать стражника замка`,
     `item.${NS}:quest_book=Книга заданий`,
     `action.interact.${NS}_talk=Говорить`,
@@ -403,4 +508,4 @@ function summonLines(stage, pos) {
   return lines;
 }
 
-module.exports = { GUARDS, POSTS, HOMES, GANG, GUARD_SEL, SKIN_IDS, variantOf, writePacks, summonLines };
+module.exports = { GUARDS, GARRISON, POSTS, HOMES, GANG, GUARD_SEL, SKIN_IDS, variantOf, writePacks, summonLines };

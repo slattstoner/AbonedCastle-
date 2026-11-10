@@ -13,7 +13,9 @@
 //   castle_data.js, places_data.js — данные, их собирает tools/build.js.
 //
 // Команды для проверки: /scriptevent acastle:status (что знают скрипты),
-// /scriptevent acastle:jump <этап> (сразу к началу этапа).
+// /scriptevent acastle:jump <этап> (сразу к началу этапа), /scriptevent acastle:work help
+// (работники: шахтёр, строитель, кузнец, подмастерье — workers.js), /scriptevent acastle:guard
+// status (гарнизон, garrison.js), /scriptevent acastle:gate open|close (решётка ворот).
 import { world, system } from '@minecraft/server';
 import { S, load, flush, DIM, players, setS, fresh } from './state.js';
 import { NPCS, QUESTS, onEvent, bark, jump } from './story.js';
@@ -26,6 +28,9 @@ import { placesTick } from './places.js';
 import { guideTick } from './guide.js';
 import { CASTLE } from './castle_data.js';
 import { relicTick, relicHit } from './relics.js';
+import { workTick, workCommand, workerTalk, workerIdOf } from './workers.js';
+import { isGateLever, toggleGate, gateTick, gateCommand } from './gate.js';
+import { garrisonTick, garrisonMove, guardCommand } from './garrison.js';
 
 const story = () => !!(S && S.origin); // сюжет идёт (замок поставлен)
 const warn = (what, e) => console.warn(`acastle ${what}: ${e}${e && e.stack ? '\n' + e.stack : ''}`);
@@ -33,6 +38,8 @@ const warn = (what, e) => console.warn(`acastle ${what}: ${e}${e && e.stack ? '\
 // ---------- Разговор ----------
 world.afterEvents.playerInteractWithEntity.subscribe(({ player, target }) => {
   if (!story()) return;
+  const wid = workerIdOf(target);
+  if (wid) { workerTalk(player, wid); return; }
   const id = npcIdOf(target);
   if (id && NPCS[id]) talk(player, id);
 });
@@ -42,6 +49,8 @@ world.afterEvents.playerInteractWithEntity.subscribe(({ player, target }) => {
 world.afterEvents.entityHitEntity.subscribe(({ damagingEntity, hitEntity }) => {
   if (damagingEntity && damagingEntity.typeId === 'minecraft:player') relicHit(damagingEntity, hitEntity);
   if (!story() || !damagingEntity || damagingEntity.typeId !== 'minecraft:player') return;
+  const wid = workerIdOf(hitEntity);
+  if (wid) { workerTalk(damagingEntity, wid); return; }
   const id = npcIdOf(hitEntity);
   if (!id || !NPCS[id]) return;
   if (NPCS[id].bandit && (!damagingEntity.isSneaking || S.st[id] === 'hostile')) return;
@@ -62,6 +71,7 @@ world.afterEvents.playerInteractWithBlock.subscribe((ev) => {
   // Запасной путь для грамоты и книги: на телефоне — долгое нажатие по земле с предметом в руке
   if (ev.itemStack && ev.itemStack.typeId === 'acastle:charter' && !OWN_ACTION.test(ev.block.typeId)) { openCharter(ev.player); return; }
   if (!story()) return;
+  if (ev.block && ev.block.typeId === 'minecraft:lever' && isGateLever(ev.block)) { toggleGate(); return; } // решётка ворот
   // Запасной путь для книги: на телефоне долгое нажатие по земле с книгой в руке
   if (ev.itemStack && ev.itemStack.typeId === 'acastle:quest_book' && !OWN_ACTION.test(ev.block.typeId)) openBook(ev.player);
   try { onEvent('block', api, ev); } catch (e) { warn('block', e); }
@@ -72,10 +82,14 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
   try {
     if (ev.id === 'acastle:status') status();
     else if (ev.id === 'acastle:jump' && story()) { jump(parseInt(ev.message, 10) || 0, api); flush(); }
+    else if (ev.id === 'acastle:work') workCommand(ev.message, ev.sourceEntity);
+    else if (ev.id === 'acastle:gate') gateCommand(ev.message, ev.sourceEntity);
+    else if (ev.id === 'acastle:guard') guardCommand(ev.message, ev.sourceEntity);
     else if (ev.id === 'acastle:castle_build' && ev.sourceEntity) beginBuild(ev.sourceEntity.location);
     // Забыть замок и вернуть грамоту (для проверки: замок в мире остаётся, сюжет начнётся заново на новом месте)
     else if (ev.id === 'acastle:reset') {
       clearOld(); setS(fresh()); flush();
+      try { workCommand('reset', ev.sourceEntity); } catch (e) { warn('сброс работников', e); }
       if (ev.sourceEntity && ev.sourceEntity.typeId === 'minecraft:player') { api.give(ev.sourceEntity, 'acastle:charter'); ev.sourceEntity.sendMessage('§7[Замок] Прежний замок забыт. Королевская грамота снова у вас.'); }
     }
     else if (ev.id === 'acastle:castle_placed' && ev.sourceEntity) placedByCommand(ev.sourceEntity.location);
@@ -120,11 +134,14 @@ system.runInterval(() => {
   measureTick();
   if (!S) load();
   if (S.build) try { buildTick(); } catch (e) { warn('стройка', e); }
+  try { workTick(); } catch (e) { warn('работники', e); }
+  try { gateTick(); } catch (e) { warn('ворота', e); }
+  try { garrisonMove(); } catch (e) { warn('гарнизон, шаги', e); }
 }, 1);
 // Общий цикл: путеводитель — дважды в секунду, остальное — раз в секунду, жители — раз в 3 секунды
 let tick = 0;
 const questsTick = () => { for (const q of Object.keys(S.q)) if (S.q[q] === 'active' && QUESTS[q] && QUESTS[q].tick) QUESTS[q].tick(api); };
-const SECOND = [morningTick, contractTick, placesTick, questsTick, () => { if (tick % 6 === 0) ensureNpcs(); }];
+const SECOND = [morningTick, contractTick, placesTick, questsTick, garrisonTick, () => { if (tick % 6 === 0) ensureNpcs(); }];
 system.runInterval(() => {
   if (!S) load();
   if (!S.origin) { if (!S.build) try { findHeart(); } catch (e) { /* позже */ } flush(); return; }

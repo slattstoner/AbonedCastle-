@@ -847,6 +847,70 @@ const NPC = [
     W.furHat(K, '#1e1a18', '#2a2024');
     return K;
   } },
+  // ===== Работники замка (новое ядро: docs/workers.md). В конце списка, чтобы номера скинов
+  // прежних жителей не сдвинулись =====
+  { id: 'kondrat', group: 'castle', name: 'Рудокоп Кондрат', stage: 0, role: 'шахта у кузни: копает и носит добычу в сундук', draw: (s) => {
+    const K = person({ skin: SKIN.weather, hair: '#4a3a2a', hairStyle: 'short', beard: 'full', beardColor: '#3a2e22', eyes: '#3a2a1a', soot: 1 }, s);
+    W.shirt(K, '#6a5a44', { sleeves: 'rolled', skin: SKIN.weather });
+    W.trousers(K, '#3a342c'); W.boots(K, '#2a1e14', 7);
+    W.apron(K, '#4a3a28', { top: 4, len: 8, stains: '#1e1a14' });
+    W.belt(K, '#2a1a10', { y: 8, buckle: '#8a8a8a' }); W.pouch(K, '#5a4028', 5, 9);
+    // кожаный колпак рудокопа со свечой спереди
+    W.cap(K, '#5a4028', { brim: '#3a2a18' });
+    K.side('hat', 'front', (x, y) => (x >= 3 && x <= 4 && y <= 1 ? { c: y === 0 ? '#ffd860' : '#e8e0c8', t: 0.6 } : undefined));
+    W.sprinkle(K, 'body', '#2a2620', 0.08); W.sprinkle(K, 'rLeg', '#2a2620', 0.1); W.sprinkle(K, 'lLeg', '#2a2620', 0.1);
+    return K;
+  } },
+  { id: 'miron', group: 'castle', name: 'Зодчий Мирон', stage: 0, role: 'мастер-каменщик: заделывает бреши, кладёт стены и башни', draw: (s) => {
+    const K = person({ skin: SKIN.ruddy, hair: '#8a7050', hairStyle: 'short', beard: 'short', beardColor: '#7a6040', eyes: '#4a5a6a', age: 1 }, s);
+    W.shirt(K, '#c8bca0', { sleeves: 'rolled', skin: SKIN.ruddy, emb: '#7a3a2a' });
+    W.trousers(K, '#4a4440'); W.boots(K, '#3a2a1a', 6);
+    W.apron(K, '#8a7a62', { top: 2, len: 9, stains: '#a8a8a0' });
+    W.belt(K, '#4a3020', { y: 8, buckle: '#a08040' }); W.knife(K, 1, 9); W.pouch(K, '#6a4a2a', 5, 9);
+    W.cap(K, '#6a5a44');
+    W.sprinkle(K, 'jacket', '#b8b8b0', 0.06); // каменная пыль
+    return K;
+  } },
+  // ===== Гарнизон (с 0.9.3): стражники смен, дозорные башен, второй лучник. Дневная смена —
+  // в красном (как Остап), ночная — в синем, дозорные башен — в зелёном =====
+  ...[
+    ['bogdan', 'Стражник Богдан', 'дневная смена, дозор по двору', { skin: SKIN.ruddy, hair: '#6a4a2a', hairStyle: 'short', beard: 'short', beardColor: '#5a3a22', eyes: '#4a3a2a' }, 'day'],
+    ['eryoma', 'Стражник Ерёма', 'дневная смена, обход донжона', { skin: SKIN.light, hair: '#3a2a1e', hairStyle: 'shaggy', beard: 'stubble', eyes: '#3a5a3a' }, 'day'],
+    ['vlas', 'Десятник Влас', 'старший ночной смены', { skin: SKIN.weather, hair: '#2a2420', hairStyle: 'short', beard: 'full', beardColor: '#2a2420', eyes: '#3a3020', age: 1, scar: 'cheek' }, 'night'],
+    ['gleb', 'Стражник Глеб', 'ночная смена, ворота', { skin: SKIN.fair, hair: '#a07040', hairStyle: 'parted', beard: 'mustache', beardColor: '#8a5a30', eyes: '#4a6a9a' }, 'night'],
+    ['foma', 'Стражник Фома', 'ночная смена, вход в донжон', { skin: SKIN.tan, hair: '#1e1a18', hairStyle: 'bald', beard: 'goatee', beardColor: '#1e1a18', eyes: '#3a2a1a' }, 'night'],
+    ['prokop', 'Стражник Прокоп', 'ночная смена, вход в донжон', { skin: SKIN.old, hair: '#9a9a94', hairStyle: 'short', beard: 'droop', beardColor: '#b8b8b0', eyes: '#5a5a6a', age: 1 }, 'night'],
+    ['stepan', 'Стражник Степан', 'ночная смена, дозор по двору', { skin: SKIN.light, hair: '#c08040', hairStyle: 'curly', freckles: 1, eyes: '#4a7a4a' }, 'night'],
+    ['yakov', 'Стражник Яков', 'ночная смена, дозор по двору', { skin: SKIN.dark, hair: '#141210', hairStyle: 'short', beard: 'short', beardColor: '#141210', eyes: '#2a1e14' }, 'night'],
+    ['nestor', 'Стражник Нестор', 'ночная смена, обход донжона', { skin: SKIN.pale, hair: '#5a4a3a', hairStyle: 'slick', beard: 'stubble', eyes: '#4a4a5a' }, 'night'],
+    ['arkhip', 'Дозорный Архип', 'башня за амбаром', { skin: SKIN.weather, hair: '#7a7a74', hairStyle: 'short', beard: 'long', beardColor: '#9a9a94', eyes: '#4a5a5a', age: 1 }, 'tower'],
+    ['semyon', 'Дозорный Семён', 'башня за домом управителя', { skin: SKIN.ruddy, hair: '#4a3020', hairStyle: 'bowl', beard: 'stubble', eyes: '#5a4a2a' }, 'tower'],
+    ['kirill', 'Дозорный Кирилл', 'башня у шахты', { skin: SKIN.fair, hair: '#d0a860', hairStyle: 'short', blush: 1, eyes: '#4a7ab0' }, 'tower'],
+    ['khariton', 'Дозорный Харитон', 'башня у двора строителя', { skin: SKIN.tan, hair: '#2a2018', hairStyle: 'shaggy', beard: 'full', beardColor: '#2a2018', eyes: '#3a2a1a' }, 'tower'],
+  ].map(([id, name, role, face, kind]) => ({ id, group: 'castle', name, stage: 1, role, draw: (s) => {
+    const K = person(face, s);
+    GUARD(K, kind === 'night' ? { field: '#2a3a6a', trim: '#c8c8d0', steel: '#9aa0a8' } : kind === 'tower' ? { field: '#3a5a30', trim: '#c8a040' } : {});
+    return K;
+  } })),
+  { id: 'lyubim', group: 'castle', name: 'Лучник Любим', stage: 1, role: 'второй стрелок, правая надвратная башня', draw: (s) => {
+    const K = person({ skin: SKIN.fair, hair: '#8a6a3a', hairStyle: 'parted', beard: 'stubble', eyes: '#4a6a4a' }, s);
+    W.shirt(K, '#5a4a38', { slit: false }); W.trousers(K, '#3a4a2c'); W.boots(K, '#4a3020', 5, { cuff: '#6a4a2a' });
+    W.vest(K, '#6a4a2e', { len: 11 }); W.belt(K, '#3a2a1a', { y: 8, buckle: '#8a8a8a', part: 'jacket' });
+    W.bracer(K, '#5a3a20', 'lArm'); W.gloves(K, '#6a4a2a', 11);
+    W.hood(K, '#4a3a2a'); W.strap(K, '#5a3a20'); W.quiver(K);
+    return K;
+  } },
+  // ===== Гридни (с 0.9.4): личная стража короля у двери опочивальни — цвета королевского
+  // рода (тёмно-вишнёвый с золотом, как у короля), плащ, шлем с золотым ободом =====
+  ...[
+    ['ratibor', 'Гридень Ратибор', 'личная стража короля, днём', { skin: SKIN.weather, hair: '#3a2a1e', hairStyle: 'short', beard: 'full', beardColor: '#3a2a1e', eyes: '#3a3a2a', age: 1, scar: 'cheek' }],
+    ['tverdyata', 'Гридень Твердята', 'личная стража короля, ночью', { skin: SKIN.light, hair: '#8a6a40', hairStyle: 'parted', beard: 'short', beardColor: '#7a5a34', eyes: '#4a5a7a' }],
+  ].map(([id, name, role, face]) => ({ id, group: 'castle', name, stage: 1, role, draw: (s) => {
+    const K = person(face, s);
+    GUARD(K, { field: '#6a1f3a', trim: '#e0b33a', steel: '#b8bcc2', rim: '#e0b33a', plume: '#c0283a' });
+    W.cloak(K, '#4a1428', { clasp: '#e0b33a', len: 10 });
+    return K;
+  } })),
   // Тени подземелья (0.10.0): бледные, выцветшие, будто из тумана
   { id: 'shade_vseslav', group: 'other', name: 'Тень князя Всеслава', stage: 0, role: 'основатель детинца; стоит в своей палате', draw: (s) => {
     const K = person({ skin: '#b9cdd6', hair: '#e4eef2', hairStyle: 'long', beard: 'long', beardColor: '#eef4f6', eyes: '#8fd8e8', age: 1 }, s);

@@ -12,7 +12,7 @@ const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'acastle-sim-'));
 for (const f of fs.readdirSync(path.join(ROOT, 'build/AbandonedCastle_BP/scripts'))) fs.copyFileSync(path.join(ROOT, 'build/AbandonedCastle_BP/scripts', f), path.join(DIR, f));
 fs.writeFileSync(path.join(DIR, 'package.json'), '{"type":"module"}');
 const mod = (name, code) => { const d = path.join(DIR, 'node_modules', name); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'package.json'), '{"type":"module","main":"index.js"}'); fs.writeFileSync(path.join(d, 'index.js'), code); };
-mod('@minecraft/server', 'const M = globalThis.SIM.server; export const world = M.world, system = M.system, ItemStack = M.ItemStack;');
+mod('@minecraft/server', 'const M = globalThis.SIM.server; export const world = M.world, system = M.system, ItemStack = M.ItemStack, BlockPermutation = M.BlockPermutation;');
 mod('@minecraft/server-ui', 'export const ActionFormData = globalThis.SIM.ActionFormData;');
 
 // ---------- Макет мира ----------
@@ -26,21 +26,58 @@ const intervals = [];
 let tickNo = 0;
 const entities = [];
 let eid = 0;
-class ItemStack { constructor(typeId, amount = 1) { this.typeId = typeId.includes(':') ? typeId : 'minecraft:' + typeId; this.amount = amount; this.nameTag = undefined; } setLore(l) { this.lore = l; } }
+class ItemStack {
+  constructor(typeId, amount = 1) { this.typeId = typeId.includes(':') ? typeId : 'minecraft:' + typeId; this.amount = amount; this.nameTag = undefined; }
+  setLore(l) { this.lore = l; }
+  get maxAmount() { return /_pickaxe|_axe|_sword|_shovel|saddle|bucket|compass|quest_book/.test(this.typeId) ? 1 : 64; }
+}
+// Блок с состояниями (для работников: рельсы, факелы, заплатки строителя)
+const perm = (id, states = {}) => ({ type: { id }, states, getAllStates: () => ({ ...states }), getState: (k) => states[k] });
+const BlockPermutation = { resolve: (id, states = {}) => perm(id.includes(':') ? id : 'minecraft:' + id, { ...states }) };
+// Недра мира ниже y 50 (для шахтёра): камень и глубинный сланец, руда по глубине, гравий,
+// пещеры (иногда с водой, внизу — с лавой), коренная порода на дне. Всё — от координат.
+const hash = (x, y, z, s = 0) => { let h = (x * 374761393 + y * 668265263 + z * 2147483647 + s * 1442695041) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+function underground(x, y, z) {
+  if (y <= -64) return 'minecraft:bedrock';
+  // пещера: шар радиусом 2–3 вокруг центра в ячейке 12×12×12
+  const cx = Math.floor(x / 12), cy = Math.floor(y / 12), cz = Math.floor(z / 12);
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+    const gx = cx + dx, gy = cy + dy, gz = cz + dz;
+    if (hash(gx, gy, gz, 7) > 0.12) continue;
+    const ox = gx * 12 + 6, oy = gy * 12 + 6, oz = gz * 12 + 6, r = 2 + hash(gx, gy, gz, 8) * 1.5;
+    if ((x - ox) ** 2 + (y - oy) ** 2 + (z - oz) ** 2 <= r * r) {
+      if (oy < -45 && y <= oy) return 'minecraft:lava';
+      if (oy > 0 && hash(gx, gy, gz, 9) < 0.3 && y <= oy - 1) return 'minecraft:water';
+      return 'minecraft:air';
+    }
+  }
+  const deep = y < 0, q = hash(x, y, z, 1);
+  const ore = (n) => 'minecraft:' + (deep ? 'deepslate_' : '') + n + '_ore';
+  if (q < 0.012 && y > 0) return ore('coal');
+  if (q < 0.02 && y < 60) return ore('iron');
+  if (q < 0.025 && y > 0 && y < 50) return ore('copper');
+  if (q < 0.0265 && y < 30) return ore('gold');
+  if (q < 0.03 && y < 10) return ore('redstone');
+  if (q < 0.031 && y < 30) return ore('lapis');
+  if (q < 0.0325 && y < -40) return ore('diamond');
+  if (q < 0.04) return 'minecraft:gravel';
+  return deep ? 'minecraft:deepslate' : 'minecraft:stone';
+}
 const container = (size) => {
   const slots = new Array(size).fill(undefined);
   return { size, getItem: (i) => slots[i], setItem: (i, it) => { slots[i] = it; }, addItem: (it) => { const i = slots.findIndex((s) => !s); if (i < 0) return it; slots[i] = it; return undefined; }, clearAll: () => slots.fill(undefined), slots };
 };
 function blockAt(p) {
   const k = K(p);
-  if (!blocks.has(k)) blocks.set(k, { typeId: p.y < 64 ? 'minecraft:stone' : 'minecraft:air', states: {} });
+  if (!blocks.has(k)) blocks.set(k, { typeId: p.y >= 64 ? 'minecraft:air' : p.y >= 50 ? 'minecraft:stone' : underground(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z)), states: {} });
   const b = blocks.get(k);
   return {
     get typeId() { return b.typeId; }, location: { x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) },
     get isLiquid() { return /water|lava/.test(b.typeId); },
     get isAir() { return b.typeId === 'minecraft:air'; },
-    permutation: { getState: (s) => b.states[s] },
-    setType(t) { b.typeId = t; b.states = {}; if (t === 'minecraft:chest') b.inv = container(27); },
+    get permutation() { return perm(b.typeId, b.states); },
+    setType(t) { b.typeId = t.includes(':') ? t : 'minecraft:' + t; b.states = {}; if (/chest|barrel/.test(t)) b.inv = container(27); },
+    setPermutation(pm) { b.typeId = pm.type.id; b.states = { ...pm.states }; if (/chest|barrel/.test(pm.type.id)) b.inv = container(27); },
     getComponent(c) {
       if (c === 'minecraft:inventory') { if (!b.inv) b.inv = container(27); return { container: b.inv }; }
       if (c === 'minecraft:sign') return { setText: (t) => { b.text = t; }, setWaxed() {} };
@@ -55,6 +92,7 @@ function makeEntity(typeId, loc, opts = {}) {
     addTag: (t) => tags.add(t), removeTag: (t) => tags.delete(t), hasTag: (t) => tags.has(t), getTags: () => [...tags],
     triggerEvent(ev) { this.events.push(ev); if (ev === 'acastle:despawn') this.remove(); const m = /^acastle:(hostile|flee|captive|peaceful)$/.exec(ev); if (m) this.state = m[1] === 'peaceful' ? null : m[1]; },
     teleport(l) { this.location = { ...l }; },
+    setProperty(k, v) { (this.props = this.props || {})[k] = v; }, getProperty(k) { return (this.props || {})[k]; },
     remove() { if (!this.isValid) return; this.isValid = false; entities.splice(entities.indexOf(this), 1); },
     getComponent(c) { if (c === 'minecraft:health') return { currentValue: this.hp ?? 60, effectiveMax: 60 }; return undefined; },
   };
@@ -88,6 +126,7 @@ const dim = {
   spawnEntity: (t, loc, o) => makeEntity(t, loc, o),
   spawnItem: (it, loc) => makeEntity('minecraft:item', loc),
   spawnParticle: () => { particles++; },
+  playSound: () => {},
   runCommand: (c) => {
     log.push(c);
     // место тайги встало: в нём лежит метка хозяина (невидимый блок света) рядом с точкой
@@ -97,6 +136,17 @@ const dim = {
   },
 };
 let particles = 0;
+// Заплатки строителя: сборщик выкладывает их в build/sim/structures.json
+const DUMP = JSON.parse(fs.readFileSync(path.join(ROOT, 'build/sim/structures.json'), 'utf8'));
+const structCache = {};
+function simStructure(id) {
+  const name = id.split(':')[1];
+  if (structCache[name]) return structCache[name];
+  const d = DUMP[name];
+  if (!d) return undefined;
+  const cells = new Map(d.cells.map(([x, y, z, n, st]) => [x + ',' + y + ',' + z, perm(n, st)]));
+  return (structCache[name] = { size: { x: d.size[0], y: d.size[1], z: d.size[2] }, getBlockPermutation: ({ x, y, z }) => cells.get(x + ',' + y + ',' + z) });
+}
 // Семейства существ: жители аддона — acastle_person, нежить и враждебные разбойники — monster
 const famOf = (e) => [...(e.typeId.startsWith('acastle:') ? ['acastle_person'] : []), ...(/zombie|skeleton|spider|husk/.test(e.typeId) || e.state === 'hostile' ? ['monster'] : [])];
 const inv = container(36);
@@ -125,12 +175,12 @@ let lastBar = '';
 const ev = (arr) => ({ subscribe: (fn) => arr.push(fn) });
 globalThis.SIM = {
   server: {
-    ItemStack,
+    ItemStack, BlockPermutation,
     world: {
       getDynamicProperty: (k) => props[k], setDynamicProperty: (k, v) => { props[k] = v; },
       getDay: () => day, getTimeOfDay: () => time, getDifficulty: () => difficulty, getAbsoluteTime: () => day * 24000 + time,
       getPlayers: () => [player], getDimension: () => dim, sendMessage: (m) => msgs.push(m),
-      structureManager: { place: (n, d, l) => placeStructure(n, d, l) },
+      structureManager: { place: (n, d, l) => placeStructure(n, d, l), get: (id) => simStructure(id) },
       afterEvents: { playerInteractWithEntity: ev(handlers.interact), itemUse: ev(handlers.itemUse), entityDie: ev(handlers.die), playerInteractWithBlock: ev(handlers.block), entityHurt: ev(handlers.hurt), dataDrivenEntityTrigger: ev(handlers.trigger), entityHitEntity: ev(handlers.hit), playerSpawn: ev(handlers.spawn) },
     },
     system: {
@@ -161,7 +211,7 @@ process.on('unhandledRejection', (e) => { console.log('Ошибка прогон
 await import(pathToFileURL(path.join(DIR, 'main.js')));
 const { CASTLE } = await import(pathToFileURL(path.join(DIR, 'castle_data.js')));
 const state = () => JSON.parse(props['acastle:state']);
-CASTLE_SPOTS = [...Object.values(CASTLE.homes).filter(Boolean), ...CASTLE.posts.map((p) => p.at), ...CASTLE.feast, ...CASTLE.lairs.crypt, ...CASTLE.lairs.catacombs, [63, 0, 121], [63, 0, 118]];
+CASTLE_SPOTS = [...(CASTLE.garrison ? [...Object.values(CASTLE.garrison.posts).filter((p) => p && p.length === 3), ...CASTLE.garrison.beds] : []), ...Object.values(CASTLE.homes).filter(Boolean), ...CASTLE.posts.map((p) => p.at), ...CASTLE.feast, ...CASTLE.lairs.crypt, ...CASTLE.lairs.catacombs, [63, 0, 121], [63, 0, 118]];
 // /function castle: стройка скриптом до конца
 async function buildCastle() {
   placed.length = 0;
@@ -282,22 +332,16 @@ expect(q('s1_captain') === 'active' && npc('demyan'), 'капитан Демья
 expect(npc('zhdan') && npc('gavrila') && npc('luka'), 'стражники этапа 1 на постах');
 // ===== Этап 1 =====
 await talk('demyan', 'защита');
-expect(q('s1_breaches') === 'active' && q('s1_barracks') === 'active' && q('s1_ostrog') === 'active', 'капитан дал задания');
+expect(q('s1_barracks') === 'active' && q('s1_ostrog') === 'active', 'капитан дал задания');
 ticks(4);
-for (const u of ['breach_1', 'breach_2', 'breach_3']) fillChest(u, [['minecraft:cobblestone', 48], ['minecraft:stone_bricks', 16]]);
 fillChest('barracks', [['minecraft:spruce_planks', 32], ['minecraft:spruce_stairs', 16]]);
 ticks(4);
 morning(); ticks(4);
-expect(q('s1_breaches') === 'done' && q('s1_barracks') === 'done', 'бреши и казарма починены');
+expect(q('s1_barracks') === 'done', 'казарма починена');
 expect(state().npcs.demyan === 'home' && state().rep.rooms_1 && state().rep.rooms_1.st === 'done', 'Демьян переехал, его комнаты прибраны');
 ticks(8);
 expect(npc('demyan') && Math.hypot(npc('demyan').location.x - W(CASTLE.homes.demyan).x, npc('demyan').location.z - W(CASTLE.homes.demyan).z) < 2, 'Демьян в своей комнате');
 await talk('demyan', 'Прощай'); // «я тут порядок навёл»
-expect(q('s1_walls') === 'active', 'зубцы и башни');
-ticks(4);
-fillChest('walls', [['minecraft:stone_bricks', 64], ['minecraft:spruce_planks', 24]]);
-ticks(4); morning(); ticks(4);
-expect(q('s1_walls') === 'done', 'зубцы и башни починены');
 // Острог по компасу
 const place = state().places.stockade_hunt;
 expect(place && !place.placed, 'место острога выбрано');
@@ -561,8 +605,8 @@ expect(state().rank === 'Хозяин замка' && q('s9_heritage') === 'activ
 fill('heritage'); ticks(4); morningAt(); ticks(6);
 expect(state().f.king_dead && !npc('vsevolod'), 'король умер на рассвете');
 expect(state().f.stage9_done, 'сюжет пройден');
-expect(Object.values(state().rep).every((r) => r.st === 'done'), 'все единицы ремонта починены: ' + Object.entries(state().rep).filter(([, r]) => r.st !== 'done').map(([k]) => k).join(', '));
-const missing = Object.keys(CASTLE.units).filter((u) => !state().rep[u]);
+expect(Object.entries(state().rep).every(([u, r]) => r.st === 'done' || (CASTLE.units[u] && CASTLE.units[u].kind === 'build')), 'все единицы ремонта починены: ' + Object.entries(state().rep).filter(([, r]) => r.st !== 'done').map(([k]) => k).join(', '));
+const missing = Object.keys(CASTLE.units).filter((u) => CASTLE.units[u].kind !== 'build' && !state().rep[u]);
 expect(!missing.length, 'все единицы ремонта задействованы: не хватает ' + missing.join(', '));
 
 // ===== Книга рядом с жителем: «Говорить» =====
@@ -581,6 +625,313 @@ ticks(6);
 expect(q('s5_carto') === 'active' && q('s4_crypt') === 'done' && state().rank === 'Рыцарь', 'переход к этапу 5');
 morning(); ticks(4);
 expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после перехода починка прежних этапов встала');
+// ===== Работники: рудокоп Кондрат и зодчий Мирон (docs/workers.md) =====
+{
+  const work = (m) => { for (const h of handlers.script) h({ id: 'acastle:work', message: m, sourceEntity: player }); };
+  const ws = () => { for (const h of handlers.script) h({ id: 'acastle:work', message: 'save' }); return JSON.parse(props['acastle:work']); };
+  const wk = (id) => entities.find((e) => e.hasTag('acastle_wk_' + id));
+  async function talkW(id, ...say) {
+    ticks(1); answers.push(...say);
+    for (const h of handlers.interact) h({ player, target: wk(id) });
+    await new Promise((r) => setTimeout(r, 5)); ticks(2);
+    if (answers.length) { problems.push(`${id}: не все ответы использованы: ${answers.join(', ')}`); answers.length = 0; }
+  }
+  // Игрок забирает добычу, когда сундуки у копра полны (Кондрат тогда ждёт)
+  let taken = 0, picks = 0;
+  const takeLoot = () => { for (const c of CASTLE.works.mine.chests) { const ci = blockAt(W(c)).getComponent('minecraft:inventory').container; for (let i = 0; i < ci.size; i++) { const it = ci.getItem(i); if (it) { taken += it.amount; ci.setItem(i); } } } };
+  // Где на самом деле стоит шахтёр: существо должно быть там, где он копает (рядом с клеткой
+  // из своего состояния), а не стоять наверху, пока шахта «копается сама»
+  const follow = { n: 0, ok: 0, minY: Infinity, worst: 0 };
+  const sample = () => {
+    const e = wk('kondrat'), m = ws().mine;
+    if (!e || !m.pos || m.st !== 'work' || m.walking) return;
+    const d = Math.hypot(e.location.x - (m.pos[0] + 0.5), e.location.y - m.pos[1], e.location.z - (m.pos[2] + 0.5));
+    follow.n++; if (d <= 1.6) follow.ok++; follow.worst = Math.max(follow.worst, d); follow.minY = Math.min(follow.minY, e.location.y);
+  };
+  const runUntil = (cond, max, what) => { let n = 0; while (!cond() && n < max) { ticks(1); n++; if (n % 7 === 0) sample(); if (n % 200 === 0) { const m = ws().mine.msg; if (/полны/.test(m)) takeLoot(); if (/Нужна кирка/.test(m)) { picks++; blockAt(W(CASTLE.works.mine.barrel)).getComponent('minecraft:inventory').container.addItem(new ItemStack('minecraft:iron_pickaxe', 1)); } } } if (!cond()) problems.push('не дождались: ' + what + ` (за ${n} шагов)`); return n; };
+  const inv = (c) => blockAt(W(c)).getComponent('minecraft:inventory').container;
+  ticks(25);
+  expect(wk('kondrat') && wk('miron'), 'работники появились у копра и на дворе строителя');
+  // --- Шахтёр ---
+  const M = CASTLE.works.mine;
+  blockAt(W(M.barrel)).setType('minecraft:barrel');
+  inv(M.barrel).addItem(new ItemStack('minecraft:stone_pickaxe', 1));
+  for (let k = 0; k < 4; k++) inv(M.barrel).addItem(new ItemStack('minecraft:iron_pickaxe', 1));
+  work('fast 20');
+  await talkW('kondrat', 'Начинай');
+  expect(ws().mine.on, 'Кондрат взялся за работу');
+  runUntil(() => ws().mine.tool, 200, 'Кондрат взял кирку');
+  expect(ws().mine.tool === 'iron', 'взял лучшую кирку из бочки (железную): ' + ws().mine.tool);
+  const H = (await import(pathToFileURL(path.join(DIR, 'work_core.js')))).horizons(O.y);
+  const C = await import(pathToFileURL(path.join(DIR, 'work_core.js')));
+  expect(H.length === 3 && H[0].y < O.y - 15 && Math.abs(H[1].y - 16) <= 12 && H[2].y >= -60 && H[2].y <= -48 && /Уголь/.test(H[0].title), 'горизонты: ' + H.map((h) => h.title + ' y ' + h.y).join(', '));
+  let n = runUntil(() => ws().mine.phase === 'done', 40000, '1-й горизонт выработан');
+  const st = ws();
+  console.log(`  шахтёр там, где копает: ${follow.ok} из ${follow.n} проверок, глубже всего был на y ${Math.round(follow.minY)} (горизонт y ${H[0].y}), дальше всего от забоя ${follow.worst.toFixed(1)} бл.`);
+  expect(follow.n > 50 && follow.ok / follow.n > 0.9, 'шахтёр стоит у забоя, а не наверху');
+  expect(follow.minY <= H[0].y + 1, 'шахтёр спустился до горизонта сам');
+  { let torches = 0; for (const [k, b] of blocks) if (b.typeId === 'minecraft:torch') { const [x, y, z] = k.split(',').map(Number); if (y < O.y && Math.abs(x - W(CASTLE.works.mine.ring).x) < 60) torches++; }
+    console.log(`  факелов в шахте: ${torches}`); expect(torches >= 30, 'шахта освещена факелами: ' + torches); }
+  console.log(`Шахтёр, 1-й горизонт: ${n} шагов прогона, выкопано ${st.mine.dug}, добыто: ${Object.entries(st.led.mined).map(([k, v]) => k.replace('minecraft:', '') + ' ' + v).join(', ')}; заделано дыр ${st.mine.sealed || 0}`);
+  expect(st.mine.dug > 400, 'выкопано больше 400 блоков: ' + st.mine.dug);
+  // Ствол: в каждой клетке спуска три блока воздуха, столб цел
+  const ring = M.ring;
+  for (let i = 1; i <= H[0].step; i++) {
+    const [x, y, z] = C.shaftCell(ring, i), w = W([x, y, z]);
+    for (let dy = 0; dy < 3; dy++) { const id = blockAt({ ...w, y: w.y + dy }).typeId; if (!/air|torch|rail/.test(id)) { problems.push(`ствол: шаг ${i} занят (${id})`); break; } }
+  }
+  for (let x = ring[0] + 1; x < ring[2]; x++) for (let z = ring[1] + 1; z < ring[3]; z++) if (blockAt(W([x, -5, z])).typeId === 'minecraft:air') problems.push('столб ствола выкопан');
+  // У поверхности ничего лишнего не тронуто: воздух на уровне земли — только в кольце ствола
+  for (const [k, b] of blocks) {
+    const [x, y, z] = k.split(',').map(Number);
+    if (y !== O.y - 1 || b.typeId !== 'minecraft:air') continue;
+    const c = [x - (O.x - CASTLE.origin[0]), z - (O.z - CASTLE.origin[2])];
+    if (!(c[0] >= ring[0] && c[0] <= ring[2] && c[1] >= ring[1] && c[1] <= ring[3])) problems.push(`дыра в земле двора у (${c[0]}, ${c[1]})`);
+  }
+  // Устройство горизонта: двор 9×9 вокруг ствола (3 высотой), 4 коридора, ветки вправо и влево
+  // через каждые 3 клетки. Ходы сухие: у вынутых клеток нет лавы и воды.
+  const horizonCells = (h) => {
+    const y = O.y + C.shaftLevel(H[h].step), out = [];
+    const [ga, gb, gc, gd] = C.galleryBox(ring);
+    for (let x = ga; x <= gc; x++) for (let z = gb; z <= gd; z++) if (C.inGallery(ring, x, z)) for (let dy = 0; dy < 3; dy++) out.push({ ...W([x, 0, z]), y: y + dy, kind: 'двор' });
+    for (const dr of C.drifts(ring)) for (let d = 0; d < C.DRIFT; d++) {
+      const cs = [[C.driftAt(dr, d), 'коридор ' + dr.n]];
+      if (C.hasBranch(d)) for (const side of [1, -1]) for (let bb = 0; bb < C.BRANCH; bb++) cs.push([C.branchAt(dr, d, side, bb), 'ветка ' + dr.n + (side > 0 ? 'п' : 'л')]);
+      for (const [c, kind] of cs) for (let dy = 0; dy < 2; dy++) out.push({ ...W([c[0], 0, c[1]]), y: y + dy, kind });
+    }
+    return out;
+  };
+  const survey = (h) => {
+    const by = {}; let wet = 0, open = 0;
+    for (const p of horizonCells(h)) {
+      const id = blockAt(p).typeId, ok = /air|torch|rail/.test(id);
+      const k = p.kind.replace(/ \d.*$/, ''); by[k] = by[k] || [0, 0]; by[k][1]++; if (ok) { by[k][0]++; open++; }
+      if (ok) for (const [dx, ey, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0]]) if (/water|lava/.test(blockAt({ x: p.x + dx, y: p.y + ey, z: p.z + dz }).typeId)) wet++;
+    }
+    return { by, wet, open };
+  };
+  { const sv = survey(0);
+    console.log(`  устройство 1-го горизонта (вынуто/по плану): ${Object.entries(sv.by).map(([k, [a, b]]) => `${k} ${a}/${b}`).join(', ')}; жидкость у ходов: ${sv.wet}`);
+    expect(sv.by['двор'][0] === sv.by['двор'][1], 'рудничный двор вынут целиком');
+    expect(sv.by['коридор'][0] >= C.DRIFT * 2 * 3 && sv.by['ветка'][0] > 300, 'коридоры и ветки вынуты');
+    expect(!sv.wet, 'ходы сухие'); }
+  // Ветки по обе стороны коридора: справа и слева
+  { const dr = C.drifts(ring)[0], y = O.y + C.shaftLevel(H[0].step);
+    const open = (c) => /air|torch|rail/.test(blockAt({ ...W([c[0], 0, c[1]]), y }).typeId);
+    expect(open(C.branchAt(dr, 2, 1, 5)) && open(C.branchAt(dr, 2, -1, 5)) && !open(C.branchAt(dr, 3, 1, 0)), 'в первом коридоре ветки справа и слева у 3-й клетки, между ветками — камень'); }
+  // Счёт сходится, а в сундуках у копра — ровно сданное
+  msgs.length = 0; work('ledger');
+  expect(msgs.some((m) => /Счёт сходится/.test(m)), 'счёт шахтёра сходится: ' + msgs.join(' / ').slice(0, 300));
+  const chest = {};
+  for (const c of M.chests) { const ci = inv(c); for (let i = 0; i < ci.size; i++) { const it = ci.getItem(i); if (it) chest[it.typeId] = (chest[it.typeId] || 0) + it.amount; } }
+  const dep = ws().led.dep, carried = ws().app.fromMine || {};
+  expect(Object.keys(dep).every((k) => (chest[k] || 0) + (carried[k] || 0) === dep[k]), 'в сундуках у копра ровно сданное (вместе с тем, что унёс Васька): ' + Object.keys(dep).filter((k) => (chest[k] || 0) + (carried[k] || 0) !== dep[k]).map((k) => `${k} ${chest[k]}+${carried[k]}≠${dep[k]}`).join(', '));
+  expect(Object.values(chest).reduce((a, b) => a + b, 0) > 300, 'добыча в сундуках');
+  // Рельсы и вагонетка, второй горизонт
+  for (let k = 0; k < 3; k++) inv(M.barrel).addItem(new ItemStack('minecraft:rail', 64));
+  await talkW('kondrat', 'рельсы');
+  await talkW('kondrat', 'глубже');
+  expect(ws().mine.open === 2, 'открыт 2-й горизонт');
+  n = runUntil(() => ws().mine.h === 1 && ws().mine.phase === 'gallery', 60000, '2-й горизонт: ствол дошёл');
+  const sw = ws().mine;
+  console.log(`Шахтёр, ствол до 2-го горизонта: ${n} шагов прогона, рельсов уложено на ${sw.railShaft} шагов ствола`);
+  expect(sw.railShaft >= 20, 'рельсы уложены в ствол: ' + sw.railShaft);
+  { const [x, y, z] = C.shaftCell(ring, 5), b = blockAt(W([x, y, z])); expect(b.typeId === 'minecraft:rail' && b.permutation.getState('rail_direction') === C.shaftRail(5), 'рельс на 5-м шаге ствола с подъёмом: ' + b.typeId + ' ' + b.permutation.getState('rail_direction')); }
+  expect(!entities.some((e) => e.typeId === 'minecraft:minecart'), 'вагонетки после поездок убраны');
+  // Опасности на 2-м горизонте (подкладываем, пока он рубит двор): лава у коридора, гравий над
+  // ходом, чужой сундук в ветке, алмаз в стене коридора
+  const y2 = O.y + C.shaftLevel(H[1].step), dr0 = C.drifts(ring)[0], R0 = C.rightOf(dr0.v);
+  const at = (c, dy = 0, side = 0) => ({ ...W([c[0] + R0[0] * side, 0, c[1] + R0[1] * side]), y: y2 + dy });
+  const lava = at(C.driftAt(dr0, 4), 0, 1), gravelAt = C.driftAt(dr0, 3), chestAt = C.branchAt(dr0, 5, 1, 5), dia = at(C.driftAt(dr0, 6), 1, -1);
+  expect(ws().mine.phase === 'gallery' || ws().mine.phase === 'shaft', 'опасности подложены до коридоров: ' + ws().mine.phase);
+  blockAt(lava).setType('minecraft:lava');
+  for (let dy = 2; dy <= 4; dy++) blockAt(at(gravelAt, dy)).setType('minecraft:gravel');
+  blockAt(at(gravelAt, 5)).setType('minecraft:stone');
+  blockAt(at(chestAt)).setType('minecraft:chest');
+  blockAt(dia).setType('minecraft:deepslate_diamond_ore');
+  const dia0 = ws().led.mined['minecraft:diamond'] || 0;
+  n = runUntil(() => ws().mine.phase === 'done', 60000, '2-й горизонт выработан');
+  console.log(`Шахтёр, 2-й горизонт: ${n} шагов прогона, всего выкопано ${ws().mine.dug}`);
+  expect(blockAt(lava).typeId !== 'minecraft:lava', 'лава у штрека заложена: ' + blockAt(lava).typeId);
+  expect([2, 3, 4].every((dy) => blockAt(at(gravelAt, dy)).typeId !== 'minecraft:gravel') && blockAt(at(gravelAt, 2)).typeId === 'minecraft:cobblestone' && blockAt(at(gravelAt, 5)).typeId === 'minecraft:stone',
+    'гравий над ходом выбран, потолок заделан булыжником, камень выше цел: ' + [2, 3, 4, 5].map((dy) => blockAt(at(gravelAt, dy)).typeId.replace('minecraft:', '')).join(','));
+  expect(blockAt(at(chestAt)).typeId === 'minecraft:chest' && blockAt(at(C.branchAt(dr0, 5, 1, 4))).typeId === 'minecraft:air', 'чужой сундук не тронут, ветка остановилась перед ним (дальше клетку могла вынуть ветка соседнего коридора): ' + [4, 5, 6].map((bb) => blockAt(at(C.branchAt(dr0, 5, 1, bb))).typeId.replace('minecraft:', '')).join(','));
+  { const sv = survey(1); console.log(`  устройство 2-го горизонта: ${Object.entries(sv.by).map(([k, [a, b]]) => `${k} ${a}/${b}`).join(', ')}; жидкость у ходов: ${sv.wet}`); expect(!sv.wet, 'ходы 2-го горизонта сухие'); }
+  expect((ws().led.mined['minecraft:diamond'] || 0) > dia0 && blockAt(dia).typeId === 'minecraft:air', 'алмаз из стены хода добыт');
+  expect(ws().errs.length === 0, 'без ошибок: ' + ws().errs.join(' | '));
+  msgs.length = 0; work('ledger');
+  expect(msgs.some((m) => /Счёт сходится/.test(m)), 'счёт сходится после второго горизонта');
+  // Глубинный горизонт: глубинный сланец, пещеры с лавой, алмазы
+  await talkW('kondrat', 'глубже');
+  n = runUntil(() => ws().mine.h === 2 && ws().mine.phase === 'done', 120000, 'глубинный горизонт выработан');
+  { const L = ws().led.mined, m = ws().mine;
+    console.log(`Шахтёр, глубинный горизонт (y ${H[2].y}): ${n} шагов прогона, всего выкопано ${m.dug}, заделано дыр ${m.sealed || 0}, алмазов ${L['minecraft:diamond'] || 0}, красной пыли ${L['minecraft:redstone'] || 0}, глубинного булыжника ${L['minecraft:cobbled_deepslate'] || 0}, кирка ${m.tool} (${m.uses}), игрок подложил кирок: ${picks}, забрал добычи: ${taken}`);
+    const sv = survey(2);
+    console.log(`  устройство алмазного горизонта: ${Object.entries(sv.by).map(([k, [a, b]]) => `${k} ${a}/${b}`).join(', ')}; жидкость у ходов: ${sv.wet}`);
+    expect(!sv.wet, 'в ходах алмазного горизонта нет лавы и воды: ' + sv.wet);
+    expect(ws().errs.length === 0, 'глубинный горизонт без ошибок: ' + ws().errs.join(' | '));
+  }
+  msgs.length = 0; work('ledger');
+  expect(msgs.some((m) => /Счёт сходится/.test(m)), 'счёт сходится после глубинного горизонта');
+  await talkW('kondrat', 'Передохни');
+  // --- Подмастерье: носил добычу от копра ---
+  { const a = ws().app, fch = {}; for (const c of CASTLE.works.forge.chests) { const ci = inv(c); for (let i = 0; i < ci.size; i++) { const it = ci.getItem(i); if (it) fch[it.typeId] = (fch[it.typeId] || 0) + it.amount; } }
+    console.log(`Подмастерье: ходок ${a.trips}, перенёс: ${Object.entries(a.moved).map(([k, v]) => k.replace('minecraft:', '') + ' ' + v).join(', ')}`);
+    expect(a.trips > 3 && (a.moved['minecraft:raw_iron'] || 0) > 0 && (a.moved['minecraft:coal'] || 0) > 0, 'Васька носит руду и уголь в кузню');
+    expect((a.moved['minecraft:cobblestone'] || 0) > 0, 'Васька носит камень на склад строителя');
+    expect((fch['minecraft:raw_iron'] || 0) > 0, 'в сундуке кузни сырое железо от шахты'); }
+  // --- Кузнец: броня по званию, переплавка, рамка на верстаке ---
+  {
+    const g0 = () => JSON.parse(props['acastle:garrison'] || '{}');
+    const fc = inv(CASTLE.works.forge.chests[0]);
+    fc.addItem(new ItemStack('minecraft:iron_ingot', 10)); fc.addItem(new ItemStack('minecraft:coal', 8));
+    log.length = 0;
+    await talkW('gordey', 'Железная броня страже');
+    expect(ws().smith.q.length >= 3 || ws().smith.job, 'кузнец взял заказы: ' + ws().smith.q.map((o) => o.title).join('; '));
+    const first = ws().smith.q[0] || ws().smith.job;
+    let n2 = runUntil(() => !ws().smith.job && !ws().smith.q.length, 20000, 'кузнец сковал броню');
+    const gear = g0().gear || {};
+    console.log(`Кузнец: ${n2} шагов, сделано: ${Object.entries(ws().smith.made).map(([k, v]) => k.replace('minecraft:', '') + ' ' + v).join(', ')}, переплавлено: ${Object.entries(ws().smith.smelted).map(([k, v]) => k.replace('minecraft:', '') + ' ' + v).join(', ') || 'ничего'}; на ${first && first.guard}: ${JSON.stringify(gear[first && first.guard])}`);
+    expect(first && gear[first.guard] && gear[first.guard].head === 'minecraft:iron_helmet' && gear[first.guard].chest === 'minecraft:iron_chestplate', 'первый по званию в железном шлеме и нагруднике');
+    expect(first && first.guard === 'demyan', 'первым одет капитан: ' + (first && first.guard));
+    expect((ws().smith.smelted['minecraft:iron_ingot'] || 0) > 0, 'кузнец переплавил сырое железо');
+    expect(log.some((c) => /structure load acastle:forge_show_iron_/.test(c)) && log.some((c) => /structure load acastle:forge_show_empty/.test(c)), 'в рамке на верстаке видно изделие, потом рамка пустеет');
+    expect(log.some((c) => /replaceitem entity @e\[tag=acastle_npc_demyan\] slot\.armor\.head 0 minecraft:iron_helmet/.test(c)), 'шлем надет на капитана');
+    // рельсы: кузнец куёт, Васька несёт в бочку у копра
+    const r0 = (() => { const b = inv(CASTLE.works.mine.barrel); let n3 = 0; for (let i = 0; i < b.size; i++) { const it = b.getItem(i); if (it && it.typeId === 'minecraft:rail') n3 += it.amount; } return n3; })();
+    fc.addItem(new ItemStack('minecraft:iron_ingot', 6));
+    await talkW('gordey', 'Рельсы');
+    runUntil(() => (ws().smith.made['minecraft:rail'] || 0) >= 16, 6000, 'рельсы скованы');
+    runUntil(() => { const b = inv(CASTLE.works.mine.barrel); let n3 = 0; for (let i = 0; i < b.size; i++) { const it = b.getItem(i); if (it && it.typeId === 'minecraft:rail') n3 += it.amount; } return n3 >= r0 + 16; }, 8000, 'Васька отнёс рельсы к копру');
+    // капитан набирает новобранца, кузнец куёт ему меч — новобранец на посту
+    fc.addItem(new ItemStack('minecraft:iron_ingot', 4));
+    await talk('demyan', 'Гарнизон', 'Набрать: Стражник Богдан');
+    expect((g0().want && g0().want.bogdan) || state().npcs.bogdan === 'post', 'капитан ждёт меч для Богдана (или кузнец уже сковал)');
+    runUntil(() => state().npcs.bogdan === 'post', 8000, 'Богдан получил меч и заступил');
+    expect((g0().gear.bogdan || {}).hand === 'minecraft:iron_sword', 'у Богдана меч от кузнеца');
+  }
+  // --- Гарнизон: смены, пересменка от коек, обход ---
+  {
+    const g0 = () => JSON.parse(props['acastle:garrison'] || '{}');
+    const R = CASTLE.garrison.roster, guard = (id) => entities.find((e) => e.hasTag('acastle_npc_' + id) && e.typeId === 'acastle:guard');
+    for (const h of handlers.script) h({ id: 'acastle:guard', message: 'all', sourceEntity: player });
+    time = 1000; ticks(40);
+    const day = R.filter((g) => g.shift !== 'night').map((g) => g.id), night = R.filter((g) => g.shift === 'night').map((g) => g.id);
+    const present = (ids) => ids.filter((id) => guard(id));
+    console.log(`Гарнизон днём: на постах ${present(day).length} из ${day.length}, ночная смена спит: ${night.length - present(night).length} из ${night.length}`);
+    expect(present(day).length === day.length, 'днём на постах вся дневная смена, дозорные и лучники: нет ' + day.filter((id) => !guard(id)).join(', '));
+    expect(!present(night).length, 'ночная смена днём спит в казарме: не спят ' + present(night).join(', '));
+    // на посту стоит, а не топчется: скрипт его не двигает (в 0.9.3 — тянул туда-сюда)
+    { const o = guard('ostap'), p0 = W(CASTLE.garrison.posts.gate_l); let n = 0; const tp = o.teleport; o.teleport = function (l, opt) { n++; return tp.call(this, l, opt); };
+      ticks(40); o.teleport = tp;
+      expect(Math.hypot(o.location.x - p0.x - 0.5, o.location.z - p0.z - 0.5) < 0.3 && n === 0, `Остап стоит на посту и не дёргается (переносов ${n})`); }
+    // обход: не без конца — дозор стоит на месте и раз в несколько минут идёт по петле
+    const luka = guard('luka'), at0 = W(CASTLE.garrison.posts.patrol_yard);
+    expect(Math.hypot(luka.location.x - at0.x - 0.5, luka.location.z - at0.z - 0.5) < 2, 'дозорный Лука ждёт обхода на своём месте');
+    let l0 = { ...luka.location }; ticks(30);
+    expect(Math.hypot(luka.location.x - l0.x, luka.location.z - l0.z) < 1, 'до своего часа дозор стоит, а не мельтешит');
+    time += 6100; ticks(30); // через пять минут (раньше в прогоне время уже уходило вперёд)
+    expect(Math.hypot(luka.location.x - l0.x, luka.location.z - l0.z) > 3, 'в свой час дозорный Лука идёт по обходу');
+    const bog = guard('bogdan');
+    expect(bog && Math.hypot(bog.location.x - luka.location.x, bog.location.z - luka.location.z) < 6, 'второй в паре (Богдан) идёт следом');
+    { const n0 = CASTLE.garrison.routes.patrol_yard.path.length / 3; ticks(Math.ceil(n0 * 2.2) + 40); }
+    expect(!g0().pr.luka.on && Math.hypot(luka.location.x - at0.x - 0.5, luka.location.z - at0.z - 0.5) < 2, 'круг пройден — дозор снова на своём месте, следующий обход позже');
+    // гридень у двери опочивальни
+    { const r = guard('ratibor'), k = W(CASTLE.garrison.posts.king);
+      expect(r && Math.hypot(r.location.x - k.x - 0.5, r.location.z - k.z - 0.5) < 1.5 && Math.abs(r.location.y - k.y) < 1, 'гридень Ратибор стоит у двери опочивальни короля'); }
+    // нарушители: монстр на стене и под землёй — нет, во дворе у ворот — да, ближний стражник выходит
+    { const wall = makeEntity('minecraft:skeleton', W([58, 9, 120])), deep = makeEntity('minecraft:zombie', W([63, -20, 112]));
+      const yard = makeEntity('minecraft:zombie', W([62, 0, 122])); ticks(4);
+      expect(!wall.hasTag('acastle_intruder') && !deep.hasTag('acastle_intruder'), 'монстр на стене и под землёй — не нарушитель, за ним стража не тянется');
+      expect(yard.hasTag('acastle_intruder') && guard('ostap').events.includes('acastle:alert'), 'нежить во дворе у ворот — Остап по тревоге');
+      wall.remove(); deep.remove(); yard.remove(); ticks(8);
+      expect(guard('ostap').events.at(-1) === 'acastle:calm', 'нежити нет — Остап спокоен и вернётся на пост'); }
+    // ночь: ночная смена встаёт с коек и идёт на посты, дневная — спать
+    time = 13000; ticks(2);
+    const vlas = guard('vlas'), bed = CASTLE.garrison.beds[R.find((g) => g.id === 'vlas').bed];
+    expect(vlas && Math.hypot(vlas.location.x - W(bed).x - 0.5, vlas.location.z - W(bed).z - 0.5) < 3, 'десятник Влас встал со своей койки');
+    ticks(240);
+    console.log(`Гарнизон ночью: на постах ${present(night).length} из ${night.length}, дневная смена: на ногах ${present(day.filter((id) => R.find((g) => g.id === id).shift)).length}`);
+    expect(present(night).length === night.length && night.every((id) => g0().st[id] === 'duty'), 'ночью на постах ночная смена: ' + night.map((id) => id + ':' + g0().st[id]).join(' '));
+    expect(R.filter((g) => g.shift === 'day').every((g) => !guard(g.id) && g0().st[g.id] === 'rest'), 'дневная смена ушла спать: ' + R.filter((g) => g.shift === 'day').map((g) => g.id + ':' + g0().st[g.id]).join(' '));
+    expect(guard('arkhip') && guard('savva'), 'дозорные башен и лучники — без смен, на месте');
+    const post = W(CASTLE.garrison.posts.gate_l_night);
+    expect(Math.hypot(vlas.location.x - post.x - 0.5, vlas.location.z - post.z - 0.5) < 2.5, 'Влас дошёл до караулки надвратной башни');
+    const PC = CASTLE.portcullis, barsDown = () => PC.rows.every((row) => row.every((c) => blockAt(W(c)).typeId === 'minecraft:iron_bars'));
+    expect(barsDown(), 'на ночь решётка опущена');
+    { const was = { ...player.location }; goTo([63, 0, 133]); ticks(4);
+      expect(!PC.rows[0].some((c) => blockAt(W(c)).typeId === 'minecraft:iron_bars'), 'ночью перед игроком решётку поднимают');
+      player.location = was; ticks(20);
+      expect(barsDown(), 'за игроком решётку опускают'); }
+    msgs.length = 0; for (const h of handlers.script) h({ id: 'acastle:guard', message: 'status', sourceEntity: player });
+    expect(msgs.some((m) => /Гарнизон/.test(m)), 'acastle:guard status отвечает');
+    time = 1000; ticks(240);
+    expect(R.filter((g) => g.shift === 'day').every((g) => guard(g.id)) && R.filter((g) => g.shift === 'night').every((g) => !guard(g.id)), 'утром дневная смена снова на постах, ночная спит');
+    expect(PC.rows.every((row) => row.every((c) => blockAt(W(c)).typeId !== 'minecraft:iron_bars')), 'на рассвете решётку подняли');
+  }
+  // --- Решётка ворот ---
+  {
+    const G = CASTLE.portcullis, cell = (r, k) => blockAt(W(G.rows[r][k]));
+    for (const c of G.levers) blockAt(W(c)).setType('minecraft:lever'); // в макете блоков замка нет
+    const pull = () => { for (const h of handlers.block) h({ player, block: blockAt(W(G.levers[0])), itemStack: undefined }); };
+    expect(G.rows.every((row) => row.every((c) => blockAt(W(c)).typeId !== 'minecraft:iron_bars')), 'решётка поднята');
+    pull(); ticks(1);
+    expect(cell(3, 0).typeId === 'minecraft:iron_bars' && cell(0, 0).typeId !== 'minecraft:iron_bars', 'решётка опускается по рядам (сначала верхний)');
+    ticks(10);
+    expect(G.rows.every((row) => row.every((c) => blockAt(W(c)).typeId === 'minecraft:iron_bars')), 'решётка опущена до земли');
+    pull(); ticks(10);
+    expect(G.rows.every((row) => row.every((c) => blockAt(W(c)).typeId === 'minecraft:air')), 'решётка поднята рычагом');
+    // в проёме стоит игрок — нижний ряд ждёт
+    const was = { ...player.location }; player.location = { ...W(G.rows[0][2]), x: W(G.rows[0][2]).x + 0.5, z: W(G.rows[0][2]).z + 0.5 };
+    pull(); ticks(10);
+    expect(cell(2, 2).typeId === 'minecraft:iron_bars' && cell(1, 2).typeId === 'minecraft:air' && cell(0, 2).typeId === 'minecraft:air', 'решётка не опускается на игрока (ни на ноги, ни на голову)');
+    player.location = was; ticks(10);
+    expect(cell(0, 2).typeId === 'minecraft:iron_bars', 'игрок ушёл — решётка опустилась');
+    pull(); ticks(10);
+  }
+  // --- Строитель --- (игрок освобождает склад: Васька натаскал туда камня)
+  for (const c of CASTLE.works.yard.store) { const ci = blockAt(W(c)).getComponent('minecraft:inventory').container; for (let i = 0; i < ci.size; i++) ci.setItem(i); }
+  work('fill');
+  const O1 = CASTLE.orders.find((o) => o.step === 'wood');
+  await talkW('miron', O1.title, 'Берись');
+  expect(ws().build.order === O1.id, 'Мирон взял заказ ' + O1.title + ': ' + ws().build.order + ' / ' + (ws().errs || []).join('; '));
+  n = runUntil(() => ws().build.done[O1.id], 20000, 'частокол поставлен');
+  const match = (o) => { let bad = 0, all = 0; for (const [name, x1, y1, z1] of o.pieces) for (const [x, y, z, nm, sts] of DUMP[name].cells) { all++; const b = blockAt(W([x1 + x, y1 + y, z1 + z])); if (b.typeId !== nm || JSON.stringify(b.permutation.getAllStates()) !== JSON.stringify(sts)) bad++; } return [bad, all]; };
+  let [bad, all] = match(O1);
+  console.log(`Строитель, ${O1.title}: ${n} шагов прогона, поставлено ${ws().build.placed}, клеток заплатки ${all}, не совпало ${bad}, лесов ${ws().build.scaff.length}`);
+  expect(!bad, `частокол совпадает с заплаткой (${bad} из ${all} не так)`);
+  const O2 = CASTLE.orders.find((o) => o.id === O1.unit + ':stone');
+  await talkW('miron', O2.title, 'Берись');
+  n = runUntil(() => ws().build.done[O2.id], 60000, 'каменный пролёт сложен');
+  [bad, all] = match(O2);
+  console.log(`Строитель, ${O2.title}: ${n} шагов прогона, поставлено ${ws().build.placed}, разобрано ${ws().build.removed}, клеток ${all}, не совпало ${bad}, лесов поставлено ${ws().build.scaffTotal || 0}, путь не найден ${ws().dbgNoPath || 0} раз, шагов сквозь стену ${ws().dbgWall || 0}, по воздуху ${ws().dbgFly || 0}`);
+  expect(!ws().dbgWall && !ws().dbgFly, `Мирон не ходит сквозь стены и по воздуху (сквозь стену ${ws().dbgWall || 0}, по воздуху ${ws().dbgFly || 0})`);
+  expect((ws().build.scaffTotal || 0) > 0, 'на высоте Мирон ставит леса');
+  console.log('  путь не найден (последние): ' + (ws().dbgLast || []).map((t) => t.split(' → ').map((q) => q.split(' ').map(Number).map((v, i) => v - [O.x - CASTLE.origin[0], O.y, O.z - CASTLE.origin[2]][i]).join(',')).join(' → ')).join(' | '));
+  expect(!bad, `каменный пролёт совпадает с заплаткой (${bad} из ${all} не так)`);
+  expect(![...blocks.values()].some((b) => b.typeId === 'minecraft:scaffolding'), 'леса разобраны');
+  // угловая башня (высокая: у башни у шахты стена рухнула до середины) — тоже с лесов
+  {
+    work('fill');
+    const OT = CASTLE.orders.find((o) => o.id === 'tower_sw:stone'), w0 = ws().dbgWall || 0, f0 = ws().dbgFly || 0, sc0 = ws().build.scaffTotal || 0;
+    // в макете нет уцелевшего низа башни: лестница внутри — от пола до пролома (как в игре)
+    for (let y = 0; y <= 6; y++) blockAt(W([1, y, 125])).setType('minecraft:ladder');
+    work('order ' + OT.id);
+    const T0 = Date.now();
+    n = runUntil(() => { if (Date.now() - T0 > 240000) return true; return ws().build.done[OT.id]; }, 40000, 'башня сложена');
+    if (!ws().build.done[OT.id]) console.log('Башня: не закончена, ' + ws().build.st + ' ' + ws().build.msg + ' | ' + (ws().dbgWhy || []).slice(0, 4).join(' | '));
+    [bad, all] = match(OT);
+
+    console.log(`Строитель, ${OT.title}: ${n} шагов прогона, клеток ${all}, не совпало ${bad}, лесов поставлено ${(ws().build.scaffTotal || 0) - sc0}, сквозь стену ${(ws().dbgWall || 0) - w0}, по воздуху ${(ws().dbgFly || 0) - f0}`);
+    expect(!bad, `башня совпадает с заплаткой (${bad} из ${all} не так)`);
+    expect((ws().dbgWall || 0) === w0 && (ws().dbgFly || 0) === f0, 'на башне Мирон не ходит сквозь стены и по воздуху');
+    expect(![...blocks.values()].some((b) => b.typeId === 'minecraft:scaffolding'), 'леса у башни разобраны');
+  }
+  msgs.length = 0; work('ledger');
+  expect(msgs.some((m) => /Счёт сходится/.test(m)), 'счёт строителя сходится: ' + msgs.join(' / ').slice(0, 300));
+  msgs.length = 0; work('status');
+  expect(msgs.some((m) => /Работники/.test(m)) && !(ws().errs || []).length, 'status без ошибок: ' + (ws().errs || []).join(' | '));
+}
 // ===== Побочные задания: тайники с реликвиями =====
 {
   const open = (slot) => { const at = W(CASTLE.slots[slot]); for (const h of handlers.block) h({ player, block: blockAt(at), itemStack: undefined }); ticks(2); };
