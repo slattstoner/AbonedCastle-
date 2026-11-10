@@ -26,7 +26,7 @@ const PACK = {
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 9, 0],
+  version: [0, 10, 0],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -327,7 +327,8 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     const { placed, light, walk, inside } = b.lighting;
     const P = CastlePhysics;
     const near = (m) => { for (let dy = 0; dy <= 1; dy++) for (let dx = -3; dx <= 3; dx++) for (let dz = -3; dz <= 3; dz++) if (walk.has(m.x + dx, m.y + dy, m.z + dz)) return true; return false; };
-    const BEHIND_SECRET = ['Древнее святилище'];
+    const BEHIND_SECRET = ['Древнее святилище', 'Палата основателя'];
+    if (b.styleStats) console.log(`Северный детинец: подкосов ${b.styleStats.struts}, бытовых наборов во дворе ${b.styleStats.props}; в донжоне лавок ${b.furnishStats.bench}, столбов ${b.furnishStats.post}, печей ${b.furnishStats.stove}, красных углов ${b.furnishStats.icon}, дорожек ${b.furnishStats.rug}; в подземелье цепей ${b.dungeonStats.chains}, корней ${b.dungeonStats.roots}, костей ${b.dungeonStats.bones}`);
     for (const m of b.marks) if (m.type === 'room' && !BEHIND_SECRET.includes(m.title) && (m.y < -1 || b.keepArea(m.x, m.z)) && !near(m)) warn(`замок: не дойти до «${m.title}» (${m.x},${m.y},${m.z})`);
     let doors = 0;
     for (const v of b.blocks.values()) {
@@ -621,6 +622,7 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     const standOk = (x, y, z) => free(x, y, z) && free(x, y + 1, z) && freeFull(x, y, z) && freeFull(x, y + 1, z) && !/_door$/.test((map.get(K(x, y, z)) || {}).id || '') && !taken.has(K(x, y, z));
     const roomAt = (title) => b.marks.find((mk) => mk.type === 'room' && mk.title === title);
     const homeOf = (spec) => {
+      if (Array.isArray(spec.at)) { const [x, y, z] = spec.at; if (!free(x, y, z) || !free(x, y + 1, z) || !solid(x, y - 1, z)) warn(`замок: место жителя (${spec.at}) занято или без пола`); return spec.at; }
       const title = typeof spec === 'string' ? spec : spec.room;
       const m = roomAt(title);
       if (!m) { warn(`замок: нет помещения «${title}» для жителя`); return null; }

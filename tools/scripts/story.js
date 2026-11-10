@@ -3,7 +3,7 @@
 // Движок — main.js; здесь только что говорят жители и что считается сделанным.
 // В разговорах не называем стороны света: по приметам («у ворот», «на башне с колоколом»).
 import { world } from '@minecraft/server';
-import { SIDE_QUESTS, sideTalk, sideEvent } from './sides.js';
+import { SIDE_QUESTS, SIDE_NPCS, sideTalk, sideEvent, sideDialog, sideBark } from './sides.js';
 import { LATE_NPCS, LATE_CONTRACTS, LATE_QUESTS, STARTS, lateDialog, lateEvent, lateBark, jumpLate } from './stages.js';
 
 // ---------- Жители ----------
@@ -20,6 +20,7 @@ export const NPCS = {
   demyan: { name: 'Капитан Демьян Беляк', start: null, gate: [63, 0, 118] },
   yaroslav: { name: 'Сотник Ярослав Беляк', start: null },
   ...LATE_NPCS,
+  ...SIDE_NPCS,
 };
 
 // ---------- Подряды: что положить в сундук ----------
@@ -136,7 +137,7 @@ function lostBook(api) {
 
 // Разговор: обычные ответы жителя и к ним — ответы побочных заданий (sides.js)
 export function dialog(id, api, pl) {
-  const node = mainDialog(id, api, pl);
+  const node = sideDialog(id, api, pl) || mainDialog(id, api, pl);
   let extra = [];
   try { extra = sideTalk(id, api, pl); } catch (e) { extra = []; }
   if (!extra.length || !node) return node;
@@ -339,6 +340,8 @@ const BARKS = {
 export function bark(id, api, pl) {
   const late = lateBark(id, api, pl);
   if (late) return late;
+  const side = sideBark(id, api, pl);
+  if (side) return side;
   if (id === 'ostap' && night() && api.has('s0_night')) return 'Стой у ворот! Сейчас пойдут!';
   const list = BARKS[id];
   return list && Math.random() < 0.6 ? list[Math.floor(Math.random() * list.length)] : null;

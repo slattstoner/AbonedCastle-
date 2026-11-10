@@ -847,6 +847,21 @@ const NPC = [
     W.furHat(K, '#1e1a18', '#2a2024');
     return K;
   } },
+  // Тени подземелья (0.10.0): бледные, выцветшие, будто из тумана
+  { id: 'shade_vseslav', group: 'other', name: 'Тень князя Всеслава', stage: 0, role: 'основатель детинца; стоит в своей палате', draw: (s) => {
+    const K = person({ skin: '#b9cdd6', hair: '#e4eef2', hairStyle: 'long', beard: 'long', beardColor: '#eef4f6', eyes: '#8fd8e8', age: 1 }, s);
+    W.shirt(K, '#9fb4c0', { slit: false }); W.trousers(K, '#7d93a0'); W.boots(K, '#6a7f8c', 6);
+    W.mail(K); W.kaftan(K, '#8aa0ae', { trim: '#d6e6ec', len: 10 });
+    W.cloak(K, '#a9bdc8', { clasp: '#e6f4f8', fur: '#dfeaee', len: 11 });
+    W.belt(K, '#c8dbe2', { y: 8, buckle: '#eef8fa', part: 'jacket' }); W.crown(K, '#d6e6ec', '#b9cdd6');
+    return K;
+  } },
+  { id: 'shade_ratmir', group: 'other', name: 'Тень капитана Ратмира', stage: 0, role: 'последний капитан стражи; умер в нижнем каземате', draw: (s) => {
+    const K = person({ skin: '#b4c4cc', hair: '#cfd8dc', hairStyle: 'short', beard: 'short', beardColor: '#d8e0e4', eyes: '#9ad0dc', age: 1, scar: 'cheek' }, s);
+    W.trousers(K, '#74868f'); W.mail(K); W.gloves(K, '#7f929c'); W.boots(K, '#667882', 6, { cuff: '#8194a0' });
+    W.tabard(K, '#8799a6', '#cfe0e6'); W.belt(K, '#a8bac4', { y: 8, buckle: '#e0eef2' });
+    return K;
+  } },
 ];
 
 const skinPng = (id) => { const i = NPC.findIndex((n) => n.id === id); if (i < 0) throw new Error('нет скина ' + id); return NPC[i].draw(1000 + i * 7919).png(); };

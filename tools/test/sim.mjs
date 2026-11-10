@@ -618,6 +618,19 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
   expect(z.burning, '«Заря» поджигает нежить'); z.remove();
   for (const k of Object.keys(worn)) delete worn[k];
 }
+// ===== Тени подземелья =====
+{
+  goTo(CASTLE.homes.shade_ratmir); ticks(8);
+  expect(npc('shade_ratmir') && npc('shade_ratmir').typeId === 'acastle:npc', 'тень Ратмира стоит в нижнем каземате');
+  await talk('shade_ratmir', 'За что тебя', 'Я найду');
+  await talk('shade_ratmir', 'Сын Клима');
+  expect(state().f.shade_r_rest, 'Ратмир узнал о сыне Клима');
+  goTo(CASTLE.homes.shade_vseslav); ticks(8);
+  expect(!!npc('shade_vseslav'), 'тень Всеслава стоит в палате основателя');
+  await talk('shade_vseslav', 'Кто ты', 'Прощай');
+  await talk('shade_vseslav', 'Благослови');
+  expect(state().f.shade_v_bless && player.effects.regeneration, 'благословение основателя');
+}
 // ===== Замок по Королевской грамоте (без команды) =====
 {
   placed.length = 0; inv.clearAll();
