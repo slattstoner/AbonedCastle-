@@ -69,13 +69,16 @@ export function buildTick() {
   try { world.structureManager.place(P[B.i][0], DIM(), a); } catch (e) { console.warn('acastle стройка: ' + e); }
   runCmd(`tickingarea remove acastle_build_${(B.i + 1) % 2}`);
   B.i++; B.wait = 8; save();
-  for (const pl of players()) pl.onScreenDisplay.setActionBar(`§6Строится замок: ${B.i} из ${P.length}`);
+  const main = CASTLE.mainPieces || P.length;
+  for (const pl of players()) pl.onScreenDisplay.setActionBar(B.i <= main ? `§6Строится замок: ${B.i} из ${main}` : `§6Зажигаем огни и вешаем знамёна: ${B.i - main} из ${P.length - main}`);
   if (B.i % 4 === 0) flush();
 }
 function finishBuild() {
   const B = S.build;
   runCmd('tickingarea remove acastle_build_0'); runCmd('tickingarea remove acastle_build_1');
   const h = { x: B.o[0] + CASTLE.heart[0], y: B.o[1] + CASTLE.heart[1], z: B.o[2] + CASTLE.heart[2] };
+  // Что осыпалось при стройке (факелы на швах кусков до второго прохода) — убрать с пола
+  if (CASTLE.box) { const [x1, y1, z1, x2, y2, z2] = CASTLE.box; runCmd(`kill @e[type=item,x=${B.o[0] + x1},y=${B.o[1] + y1},z=${B.o[2] + z1},dx=${x2 - x1},dy=${y2 - y1},dz=${z2 - z1}]`); }
   runCmd('kill @e[type=armor_stand,name=acastle_heart]');
   runCmd(`summon armor_stand acastle_heart ${h.x + 0.5} ${h.y} ${h.z + 0.5}`);
   for (const pl of players()) pl.onScreenDisplay.setTitle('§6Замок встал', { subtitle: 'Жители выходят на свои места', fadeInDuration: 10, stayDuration: 50, fadeOutDuration: 20 });
@@ -112,4 +115,31 @@ export function status() {
     if (away.length) lines.push('Нет на месте: ' + away.join(', '));
   }
   world.sendMessage(lines.join('\n'));
+}
+
+// ---------- Королевская грамота ----------
+// Предмет вместо команды /function castle: замок встаёт там, где стоит игрок (площадь у ворот),
+// донжон — к северу. Работает в выживании, читы не нужны.
+export function clearOld() {
+  for (const t of ['acastle:guard', 'acastle:npc', 'acastle:bandit']) {
+    let list = []; try { list = DIM().getEntities({ type: t }); } catch (e) { list = []; }
+    for (const e of list) try { e.triggerEvent('acastle:despawn'); } catch (err) { /* уже нет */ }
+  }
+  runCmd('kill @e[type=armor_stand,name=acastle_heart]');
+}
+export function charterCheck(pl) {
+  if (!S) load();
+  if (S.build) return 'Замок уже строится — подождите.';
+  if (S.origin) return 'Замок уже стоит. Грамота своё дело сделала.';
+  if (pl.dimension.id !== 'minecraft:overworld') return 'Замок можно поставить только в обычном мире.';
+  const y = Math.floor(pl.location.y);
+  let lo = -64, hi = 320; try { lo = pl.dimension.heightRange.min; hi = pl.dimension.heightRange.max; } catch (e) { /* по умолчанию */ }
+  if (y + CASTLE.box[1] - CASTLE.origin[1] < lo + 1) return 'Здесь слишком низко: под замком подземелье в 25 блоков. Поднимитесь выше.';
+  if (y + CASTLE.box[4] - CASTLE.origin[1] > hi - 2) return 'Здесь слишком высоко для башен замка. Спуститесь ниже.';
+  return null;
+}
+export function charterBuild(pl) {
+  clearOld();
+  beginBuild(pl.location);
+  world.sendMessage(`§6Королевская грамота развёрнута. Замок строится: около минуты, ход стройки внизу экрана. Стойте на месте — вы на площади у ворот, донжон встанет к северу.`);
 }

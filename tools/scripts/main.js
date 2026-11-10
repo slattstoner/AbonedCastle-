@@ -15,16 +15,17 @@
 // Команды для проверки: /scriptevent acastle:status (что знают скрипты),
 // /scriptevent acastle:jump <этап> (сразу к началу этапа).
 import { world, system } from '@minecraft/server';
-import { S, load, flush, DIM, players } from './state.js';
+import { S, load, flush, DIM, players, setS, fresh } from './state.js';
 import { NPCS, QUESTS, onEvent, bark, jump } from './story.js';
 import { npcIdOf, ensureNpcs } from './people.js';
 import { api } from './api.js';
-import { talk, openBook } from './talk.js';
-import { beginBuild, placedByCommand, buildTick, measureTick, findHeart, status } from './castle_build.js';
+import { talk, openBook, openCharter } from './talk.js';
+import { beginBuild, placedByCommand, buildTick, measureTick, findHeart, status, clearOld } from './castle_build.js';
 import { contractTick, morningTick } from './repairs.js';
 import { placesTick } from './places.js';
 import { guideTick } from './guide.js';
 import { CASTLE } from './castle_data.js';
+import { relicTick, relicHit } from './relics.js';
 
 const story = () => !!(S && S.origin); // сюжет идёт (замок поставлен)
 const warn = (what, e) => console.warn(`acastle ${what}: ${e}${e && e.stack ? '\n' + e.stack : ''}`);
@@ -39,6 +40,7 @@ world.afterEvents.playerInteractWithEntity.subscribe(({ player, target }) => {
 // поэтому касание открывает разговор; с людьми Рыжего — только если игрок пригнулся.
 // Посреди боя (монстр рядом) касание остаётся ударом мимо: окно не открывается.
 world.afterEvents.entityHitEntity.subscribe(({ damagingEntity, hitEntity }) => {
+  if (damagingEntity && damagingEntity.typeId === 'minecraft:player') relicHit(damagingEntity, hitEntity);
   if (!story() || !damagingEntity || damagingEntity.typeId !== 'minecraft:player') return;
   const id = npcIdOf(hitEntity);
   if (!id || !NPCS[id]) return;
@@ -51,11 +53,14 @@ world.afterEvents.entityHitEntity.subscribe(({ damagingEntity, hitEntity }) => {
 
 // ---------- Книга заданий ----------
 world.afterEvents.itemUse.subscribe(({ source, itemStack }) => {
+  if (itemStack.typeId === 'acastle:charter') { openCharter(source); return; }
   if (story() && itemStack.typeId === 'acastle:quest_book') openBook(source);
 });
 // Блоки, у которых своё действие: с книгой в руке их открывают, а не книгу
 const OWN_ACTION = /chest|barrel|door|gate|lever|button|lectern|bed|table|furnace|smoker|anvil|grindstone|loom|stonecutter|brewing|cauldron|campfire|bell|shelf|frame|sign|composter|hopper|dispenser|dropper|jukebox|noteblock|beehive|pot|shulker/;
 world.afterEvents.playerInteractWithBlock.subscribe((ev) => {
+  // Запасной путь для грамоты и книги: на телефоне — долгое нажатие по земле с предметом в руке
+  if (ev.itemStack && ev.itemStack.typeId === 'acastle:charter' && !OWN_ACTION.test(ev.block.typeId)) { openCharter(ev.player); return; }
   if (!story()) return;
   // Запасной путь для книги: на телефоне долгое нажатие по земле с книгой в руке
   if (ev.itemStack && ev.itemStack.typeId === 'acastle:quest_book' && !OWN_ACTION.test(ev.block.typeId)) openBook(ev.player);
@@ -68,6 +73,11 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
     if (ev.id === 'acastle:status') status();
     else if (ev.id === 'acastle:jump' && story()) { jump(parseInt(ev.message, 10) || 0, api); flush(); }
     else if (ev.id === 'acastle:castle_build' && ev.sourceEntity) beginBuild(ev.sourceEntity.location);
+    // Забыть замок и вернуть грамоту (для проверки: замок в мире остаётся, сюжет начнётся заново на новом месте)
+    else if (ev.id === 'acastle:reset') {
+      clearOld(); setS(fresh()); flush();
+      if (ev.sourceEntity && ev.sourceEntity.typeId === 'minecraft:player') { api.give(ev.sourceEntity, 'acastle:charter'); ev.sourceEntity.sendMessage('§7[Замок] Прежний замок забыт. Королевская грамота снова у вас.'); }
+    }
     else if (ev.id === 'acastle:castle_placed' && ev.sourceEntity) placedByCommand(ev.sourceEntity.location);
   } catch (e) { warn(ev.id, e); }
 });
@@ -76,7 +86,14 @@ world.afterEvents.playerSpawn.subscribe(({ player, initialSpawn }) => {
   if (!initialSpawn) return;
   system.runTimeout(() => {
     if (!S) load();
-    try { player.sendMessage(`§7[Замок] Аддон ${CASTLE.version}: скрипты работают.${S.origin ? '' : S.build ? ' Замок строится.' : ' Замок ещё не поставлен: /function castle'}`); } catch (e) { /* игрок вышел */ }
+    try {
+      player.sendMessage(`§7[Замок] Аддон ${CASTLE.version}: скрипты работают.${S.origin ? '' : S.build ? ' Замок строится.' : ' Замок ещё не поставлен.'}`);
+      // Королевская грамота — один раз каждому игроку, пока замка нет
+      if (!S.origin && !S.build && !player.hasTag('acastle_charter')) {
+        api.give(player, 'acastle:charter'); player.addTag('acastle_charter');
+        player.sendMessage('§6У вас в сумке Королевская грамота. Найдите ровное открытое место, возьмите её в руку и примените (долгое нажатие) — там встанет замок.');
+      }
+    } catch (e) { /* игрок вышел */ }
   }, 100);
 });
 
@@ -116,6 +133,8 @@ system.runInterval(() => {
   if (tick % 2 === 0) for (const fn of SECOND) { try { fn(); } catch (e) { warn('цикл', e); } }
   flush();
 }, 10);
+// Реликвии: бонус полного комплекта брони (работает и без замка — броню можно взять в творческом режиме)
+system.runInterval(() => { try { relicTick(); } catch (e) { warn('реликвии', e); } }, 40);
 // Короткие реплики, когда игрок проходит рядом (не чаще раза в полминуты от жителя)
 const barked = {};
 system.runInterval(() => {

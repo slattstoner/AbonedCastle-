@@ -13,19 +13,20 @@ const { toBedrock, jigsaw, paletteEntry } = require('./bedrock');
 const loot = require('./loot');
 const npc = require('./npc');
 const { skinPng } = require('./skins');
+const items = require('./items');
 
 const ROOT = path.resolve(__dirname, '..');
 const NS = 'acastle';
 const PACK = {
-  name: 'Abandoned Castle: Тайга',
-  description: 'Постройки хвойного биома: хижины, лагеря, ориентиры, хутора, острог и скит. С тайниками и историями. Пробный замок со стражей: /function castle',
+  name: 'Abandoned Castle: Студёный детинец',
+  description: 'Заброшенный замок, который оживает: жители, задания, тайные комнаты, реликвии. Примените Королевскую грамоту на ровном месте — замок встанет там.',
   header: '6f3d2a8e-4c1b-4f7a-9e2d-5b8c1a7f3e90',
   module: 'a2c94e17-8b3f-4d6a-b1e5-0f7d9c3a2b48',
   // Ресурсный пакет: внешность жителей замка
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 8, 3],
+  version: [0, 9, 0],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -77,7 +78,7 @@ function checkBlock(b) {
   for (const k of Object.keys(ref)) if (!(k in b.states)) warn(`${b.name}: не задано состояние ${k}`);
 }
 function checkTable(t, where) {
-  for (const pool of t.pools) for (const e of pool.entries) if (!VANILLA_ITEMS.has(e.name)) warn(`${where}: неизвестный предмет ${e.name}`);
+  for (const pool of t.pools) for (const e of pool.entries) if (!VANILLA_ITEMS.has(e.name) && !items.ITEM_IDS.includes(e.name)) warn(`${where}: неизвестный предмет ${e.name}`);
 }
 
 // ---------- .mcstructure ----------
@@ -136,6 +137,7 @@ const CONTAINERS = new Set(['chest', 'barrel', 'decorated_pot', 'suspicious_grav
 const NEEDS_FLOOR = /fern|grass$|bush|mushroom|poppy|sapling|candle|carpet|flower_pot|cake|potatoes|carrots|beetroot|deadbush|suspicious_gravel|spruce_door|campfire|lantern|stand|torch|lever|pressure_plate/;
 const ATTACHED = new Set(['ladder', 'item_frame', 'vine', 'spruce_sign', 'brown_banner', 'red_banner', 'blue_banner', 'white_banner', 'painting']);
 const OPPOSITE = { n: 's', s: 'n', e: 'w', w: 'e' };
+const WEAK_WALL = /leaves|glass|slab|stairs|fence|_wall$|pane|bars|door|trapdoor|carpet|sign|banner|ladder|frame|lantern|candle|torch|chain|_bed$|chest|campfire|cauldron|lectern|pot|skull|web|water|cake|vine|shelf$|bell|anvil|grindstone|composter|enchanting|brewing|hopper|farmland|grass_path|azalea/;
 const STEP = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
 function checkSupport(sid, blocks, get) {
   for (const v of blocks) {
@@ -145,7 +147,10 @@ function checkSupport(sid, blocks, get) {
     if ((v.id === 'lantern' || v.id === 'soul_lantern') && v.hang) { if (!get(v.x, v.y + 1, v.z)) warn(`${at}: висит в воздухе`); continue; }
     if ((v.id === 'torch' && v.f) || v.id.endsWith('_shelf')) {
       const [dx, dz] = STEP[v.id === 'torch' ? v.f : OPPOSITE[v.f || 's']];
-      if (!get(v.x + dx, v.y, v.z + dz)) warn(`${at}: не к чему крепиться`);
+      const wall = get(v.x + dx, v.y, v.z + dz);
+      if (!wall) warn(`${at}: не к чему крепиться`);
+      // В игре факел держится только на сплошном блоке: со ступеней, плит, заборов и стёкол он падает
+      else if (v.id === 'torch' && WEAK_WALL.test(wall.id)) warn(`${at}: факел на «${wall.id}» — в игре отвалится`);
       continue;
     }
     if (v.id === 'item_frame' && v.f === 'u') { if (!below) warn(`${at}: нет опоры снизу`); continue; }
@@ -338,12 +343,45 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     console.log(`Замок: проверено дверей ${doors}, комнат ${b.marks.filter((m) => m.type === 'room').length}; клеток пола под крышей ${inside.length}, автофакелов ${placed.length}, тёмных клеток ${dark.length}`);
     console.log('Свет по уровням: ' + Object.entries(levels).sort().map(([k, e]) => `${k}: мин ${e.min}, ср ${(e.sum / e.n).toFixed(1)}`).join('; '));
     for (const [x, y, z] of dark.slice(0, 15)) warn(`замок: темно (${light.at(x, y, z)}) в (${x},${y},${z})`);
+    // Открытый двор: где ночью нет света фонарей, заводятся монстры
+    {
+      const open = walk.cells.filter(([x, y, z]) => y >= 0 && y <= 1 && x >= 5 && x <= 122 && z >= 5 && z <= 126 && !P.roofed(b, x, y, z, 44));
+      const dk = open.filter((c) => light.at(...c) < 1);
+      console.log(`Двор под открытым небом: клеток ${open.length}, без света фонарей ${dk.length}; фонарей на столбиках добавлено ${b.yardLamps.placed.length}`);
+      if (dk.length > 150) warn(`замок: во дворе ${dk.length} клеток без света фонарей`);
+      global.YARD_DARK = dk;
+    }
     // Тайники под сюжеты: имена слотов должны быть разными, иначе история не поймёт, куда класть
     const slots = {};
     for (const v of b.blocks.values()) if (v.slot) (slots[v.slot] = slots[v.slot] || []).push(`${v.id} (${v.x},${v.y},${v.z})`);
     for (const [k, list] of Object.entries(slots)) if (list.length > 1) warn(`замок: слот «${k}» встречается ${list.length} раза: ${list.join(', ')}`);
     console.log(`Тайники замка: ${Object.keys(slots).length} слотов — ${Object.keys(slots).join(', ')}`);
   }
+  // Содержимое тайников замка — из историй (design/stories/castle.js): сундуки и бочки получают
+  // таблицу лута с книгами и предметами, кафедры — книгу, таблички — текст.
+  const CS = (STORIES.castle && STORIES.castle[0].slots) || {};
+  const castleTables = {};
+  {
+    const have = new Set([...b.blocks.values()].filter((v) => v.slot).map((v) => v.slot));
+    for (const k of Object.keys(CS)) if (!have.has(k)) warn(`замок: в историях есть слот «${k}», а в замке его нет`);
+  }
+  const castleSlot = (blk) => {
+    const v = blk.slot ? CS[blk.slot] : undefined;
+    if (CONTAINERS.has(blk.id)) {
+      if (v && (v.loot || v.book)) {
+        if (!castleTables[blk.slot]) {
+          const spec = v.loot ? { loot: { ...v.loot, theme: v.loot.theme || (blk.id === 'suspicious_gravel' ? undefined : blk.theme) } } : v;
+          castleTables[blk.slot] = storyTable(`castle/${blk.slot}`, spec);
+        }
+        return { lootTable: castleTables[blk.slot] };
+      }
+      return blk.theme ? { lootTable: themeTable(blk.theme) } : {};
+    }
+    if (v && v.book) { checkBook(v.book, 'замок/' + blk.slot); return { book: v.book }; }
+    if (v && v.sign !== undefined) return { sign: v.sign };
+    return {};
+  };
+  console.log(`Истории замка: заполнено тайников ${Object.keys(CS).length}`);
   // Восстановленный замок (конец сюжета) — для проверок и заплаток этапов
   const tmplFull = [...b.blocks.values()].filter((v) => !v.env);
   const mapFull = new Map(tmplFull.map((v) => [v.x + ',' + v.y + ',' + v.z, v]));
@@ -355,6 +393,10 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
   const map = new Map(tmpl.map((v) => [v.x + ',' + v.y + ',' + v.z, v]));
   const get = (x, y, z) => { const v = map.get(x + ',' + y + ',' + z); return v && v.id !== 'air' ? v : undefined; };
   checkSupport('замок в упадке', tmpl.filter((v) => v.id !== 'air'), get);
+  if (R.relit) {
+    console.log(`Замок в упадке: оставлено гореть светильников ${R.relit.n}, совсем тёмных клеток пола под крышей ${R.relit.dark} из ${R.relit.cells}`);
+    if (R.relit.dark) warn(`замок в упадке: ${R.relit.dark} клеток пола под крышей в полной темноте — там заведутся монстры`);
+  }
   {
     // В упадке до жилых помещений этапа 0 и по главному пути всё равно можно дойти
     const W = CastlePhysics.walk({ get: (x, y, z) => map.get(x + ',' + y + ',' + z) }, b.walkOpts.box, b.walkOpts.starts);
@@ -381,6 +423,12 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
   // от площади у ворот к краям, каждый — только когда его участок мира прогружен.
   const BODY = 32;
   const bodyPieces = [];
+  // «Второй проход»: всё, что крепится к соседнему блоку (факелы, фонари, лестницы, знамёна,
+  // рамки, плющ, рычаги, кровати), ставится ещё раз после всех кусков. Иначе факел на шве кусков
+  // падает: его стена в соседнем куске ещё не встала. Остальные клетки таких шаблонов пустые.
+  const FRAGILE = /torch|lantern|ladder|_banner$|item_frame|vine|_sign$|lever|_shelf$|_bed$|button|candle|iron_chain|bell$|hanging_roots/;
+  const fixPieces = [];
+  let fragileCount = 0;
   let parts = 0;
   for (let x0 = lo[0]; x0 <= hi[0]; x0 += BODY) for (let z0 = lo[2]; z0 <= hi[2]; z0 += BODY) {
     const size = [Math.min(BODY, hi[0] - x0 + 1), hi[1] - lo[1] + 1, Math.min(BODY, hi[2] - z0 + 1)];
@@ -395,17 +443,36 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
         continue;
       }
       if (blk.id === 'air') { cells.push({ x, y, z, block: { name: 'minecraft:air', states: {} } }); continue; }
-      const slotData = CONTAINERS.has(blk.id) && blk.theme ? { lootTable: themeTable(blk.theme) } : {};
-      cells.push({ x, y, z, block: toBedrock(blk, get, BLOCKS, slotData) });
+      cells.push({ x, y, z, block: toBedrock(blk, get, BLOCKS, castleSlot(blk)) });
     }
     const name = `castle_${parts}`;
     write(`structures/${NS}/${name}.mcstructure`, mcstructure(size, cells));
     bodyPieces.push([`${NS}:${name}`, x0, lo[1], z0, size[0], size[1], size[2]]);
+    {
+      const fr = [];
+      for (let x = 0; x < size[0]; x++) for (let y = 0; y < size[1]; y++) for (let z = 0; z < size[2]; z++) {
+        const blk = map.get((x0 + x) + ',' + (lo[1] + y) + ',' + (z0 + z));
+        if (blk && !blk.env && FRAGILE.test(blk.id) && !blk.slot) fr.push([x, y, z, blk]);
+      }
+      if (fr.length) {
+        const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+        for (const c of fr) for (let q = 0; q < 3; q++) { mn[q] = Math.min(mn[q], c[q]); mx[q] = Math.max(mx[q], c[q]); }
+        const fcells = fr.map(([x, y, z, blk]) => ({ x: x - mn[0], y: y - mn[1], z: z - mn[2], block: toBedrock(blk, get, BLOCKS, {}) }));
+        const fname = `castle_fix_${parts}`;
+        write(`structures/${NS}/${fname}.mcstructure`, mcstructure([mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], fcells));
+        fixPieces.push([`${NS}:${fname}`, x0 + mn[0], lo[1] + mn[1], z0 + mn[2], mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1]);
+        fragileCount += fr.length;
+      }
+    }
     parts++;
   }
   // Порядок стройки: сначала куски у площади, где стоит игрок, потом дальше
   const pieceDist = (q) => Math.hypot(q[1] + q[4] / 2 - ORIGIN[0], q[3] + q[6] / 2 - ORIGIN[2]);
   bodyPieces.sort((a, b) => pieceDist(a) - pieceDist(b));
+  fixPieces.sort((a, b) => pieceDist(a) - pieceDist(b));
+  const mainPieces = bodyPieces.length;
+  bodyPieces.push(...fixPieces);
+  console.log(`Второй проход стройки: ${fixPieces.length} кусков, ${fragileCount} факелов, фонарей и прочего, что крепится к стенам`);
   // «Сердце замка» — метка в каменной камере под площадью, от неё работают функции этапов.
   // Ставят его скрипты в конце стройки.
   const HEART = [ORIGIN[0], -20, ORIGIN[2]];
@@ -462,7 +529,7 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
         if (!blk && y <= -2) continue; // ниже земли пусто — это грунт, его не трогаем
         const at = { x: x - mn[0], y: y - mn[1], z: z - mn[2] };
         if (!blk || blk.env || blk.id === 'air') cells.push({ ...at, block: { name: 'minecraft:air', states: {} } });
-        else cells.push({ ...at, block: toBedrock(blk, getFull, BLOCKS, CONTAINERS.has(blk.id) && blk.theme ? { lootTable: themeTable(blk.theme) } : {}) });
+        else cells.push({ ...at, block: toBedrock(blk, getFull, BLOCKS, castleSlot(blk)) });
       }
       const name = `castle_s${st.n}_${k++}`;
       write(`structures/${NS}/${name}.mcstructure`, mcstructure([mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells));
@@ -523,7 +590,7 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
           if (!blk && y <= -2) continue;
           const at = { x: x - mn[0], y: y - mn[1], z: z - mn[2] };
           if (!blk || blk.env || blk.id === 'air') cells.push({ ...at, block: { name: 'minecraft:air', states: {} } });
-          else cells.push({ ...at, block: toBedrock(blk, getFull, BLOCKS, CONTAINERS.has(blk.id) && blk.theme ? { lootTable: themeTable(blk.theme) } : {}) });
+          else cells.push({ ...at, block: toBedrock(blk, getFull, BLOCKS, castleSlot(blk)) });
         }
         const name = `castle_u_${u.id}_${k++}`;
         write(`structures/${NS}/${name}.mcstructure`, mcstructure([mx[0] - mn[0] + 1, mx[1] - mn[1] + 1, mx[2] - mn[2] + 1], cells));
@@ -591,7 +658,7 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
       for (let c = g; c; c = parent.get(K(...c))) out.push(c);
       return out.reverse().flat();
     };
-    const signal = [...b.blocks.values()].find((v) => v.id === 'campfire' && v.y === 31 && v.x === info.KX && v.z === info.KZ);
+    const signal = [...b.blocks.values()].find((v) => v.id === 'campfire' && v.y === 39 && v.x === info.KX && v.z === info.KZ);
     if (!signal) warn('замок: нет сигнального костра');
     const signalAt = signal ? [signal.x, signal.y, signal.z] : null;
     const slots = {};
@@ -599,13 +666,13 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     const paths = {};
     for (const id of ['vsevolod', 'agafya', 'frol', 'demyan']) paths['home_' + id] = pathTo(homes[id], id);
     for (const [id, u] of Object.entries(units)) if (u.chest) paths['chest_' + id] = pathTo(u.chest, u.title);
-    paths.signal = pathTo(signalAt && [signalAt[0], signalAt[1], signalAt[2] + 1], 'сигнальный костёр');
+    paths.signal = pathTo(signalAt && [signalAt[0], signalAt[1] - 1, signalAt[2] + 2], 'сигнальный костёр');
     for (const id of ['prokhor', 'varlaam', 'ignat', 'gordey', 'evsey', 'marfa', 'timosha', 'semka', 'lenz', 'dunya']) if (homes[id]) paths['home_' + id] = pathTo(homes[id], id);
     paths.crypt = pathTo(lairs.crypt[0], 'склеп часовни');
     paths.catacombs = pathTo(lairs.catacombs[0], 'катакомбы');
     paths.throne = pathTo(homes.ryzhy, 'трон');
     for (const k of ['ledger', 'steward_book', 'priest', 'vault', 'master_diary', 'sealed', 'grave']) if (slots[k]) paths['slot_' + k] = pathTo(slots[k], 'тайник ' + k);
-    const data = { version: PACK.version.join('.'), build: bodyPieces, origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
+    const data = { version: PACK.version.join('.'), build: bodyPieces, mainPieces, box: [...lo, ...hi], origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
     write('scripts/castle_data.js', '// Собрано tools/build.js — не править руками\nexport const CASTLE = ' + JSON.stringify(data) + ';\n');
     const contracts = Object.entries(units).filter(([, u]) => u.chest).map(([id]) => id);
     console.log(`Ремонт: ${Object.keys(units).length} единиц, подрядов ${contracts.length}, путей ${Object.values(paths).filter(Boolean).length}, дома: ${Object.entries(homes).map(([k, v]) => k + (v ? '' : '?')).join(', ')}`);
@@ -651,9 +718,10 @@ write('worldgen/processors/weathering.json', {
 });
 
 // Жители замка: поведение в пакете поведения, внешность в ресурсном
-npc.writePacks(write, writeRP, skinPng, checkTable);
+npc.writePacks(write, writeRP, skinPng, checkTable, items.writeItems(write, writeRP));
 // Скрипты заданий (tools/scripts) — только стабильные модули игры
 for (const f of fs.readdirSync(path.join(__dirname, 'scripts'))) write(`scripts/${f}`, fs.readFileSync(path.join(__dirname, 'scripts', f), 'utf8'));
+write('pack_icon.png', items.packIcon()); writeRP('pack_icon.png', items.packIcon());
 write('manifest.json', {
   format_version: 2,
   header: { name: PACK.name, description: PACK.description, uuid: PACK.header, version: PACK.version, min_engine_version: PACK.minEngine },
@@ -663,7 +731,7 @@ write('manifest.json', {
 });
 writeRP('manifest.json', {
   format_version: 2,
-  header: { name: PACK.name + ' (внешность)', description: 'Внешность жителей замка', uuid: PACK.rpHeader, version: PACK.version, min_engine_version: PACK.minEngine },
+  header: { name: PACK.name + ' (внешность)', description: 'Внешность жителей замка, броня и клинки', uuid: PACK.rpHeader, version: PACK.version, min_engine_version: PACK.minEngine },
   modules: [{ type: 'resources', uuid: PACK.rpModule, version: PACK.version }],
   dependencies: [{ uuid: PACK.header, version: PACK.version }],
   metadata: { authors: ['Abandoned Castle'] },

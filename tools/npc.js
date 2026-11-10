@@ -337,7 +337,7 @@ function bookIcon() {
 }
 
 // writeBP / writeRP(rel, data); skinPng(id) → Buffer; checkTable(t, where) — сверка предметов
-function writePacks(writeBP, writeRP, skinPng, checkTable) {
+function writePacks(writeBP, writeRP, skinPng, checkTable, extra = { textures: {}, lang: [] }) {
   writeBP('entities/guard.json', guardEntity());
   writeBP('entities/npc.json', npcEntity());
   writeBP('entities/bandit.json', banditEntity());
@@ -360,7 +360,7 @@ function writePacks(writeBP, writeRP, skinPng, checkTable) {
   });
   for (const s of SKIN_IDS) writeRP(`textures/entity/${NS}/${s}.png`, skinPng(s));
   writeRP(`textures/items/${NS}/quest_book.png`, bookIcon());
-  writeRP('textures/item_texture.json', { resource_pack_name: NS, texture_name: 'atlas.items', texture_data: { [`${NS}_quest_book`]: { textures: `textures/items/${NS}/quest_book` } } });
+  writeRP('textures/item_texture.json', { resource_pack_name: NS, texture_name: 'atlas.items', texture_data: { [`${NS}_quest_book`]: { textures: `textures/items/${NS}/quest_book` }, ...extra.textures } });
   writeRP(`entity/guard.entity.json`, client('guard', { base_color: '#8a1e1e', overlay_color: '#d8b040' }));
   writeRP(`entity/npc.entity.json`, client('npc'));
   writeRP(`entity/bandit.entity.json`, client('bandit'));
@@ -382,6 +382,7 @@ function writePacks(writeBP, writeRP, skinPng, checkTable) {
     `item.spawn_egg.entity.${NS}:guard.name=Призвать стражника замка`,
     `item.${NS}:quest_book=Книга заданий`,
     `action.interact.${NS}_talk=Говорить`,
+    ...extra.lang,
   ].join('\n') + '\n';
   writeRP('texts/ru_RU.lang', lang);
   writeRP('texts/en_US.lang', lang);

@@ -62,6 +62,19 @@ function applyRepair(unit) {
     try { DIM().runCommand(`structure load acastle:${name} ${a.x} ${a.y} ${a.z}`); st.pieces[name] = 1; save(); } catch (e) { /* позже */ }
   }
   if (!u.pieces.every(([name]) => st.pieces[name])) return;
+  // Второй проход: факел или фонарь на шве двух заплаток падает, если его стена встала позже.
+  // Когда встали все заплатки, ставим их ещё раз — теперь всё, к чему крепится свет, на месте.
+  if (!st.again) { st.again = 1; st.pieces = {}; save(); return; }
+  const c = u.pieces.reduce((m, q) => [Math.min(m[0], q[1]), Math.min(m[1], q[2]), Math.min(m[2], q[3]), Math.max(m[3], q[4]), Math.max(m[4], q[5]), Math.max(m[5], q[6])], [1e9, 1e9, 1e9, -1e9, -1e9, -1e9]);
+  if (u.pieces.length) {
+    // осыпавшиеся при починке факелы и фонари — убрать с пола
+    try {
+      for (const e of DIM().getEntities({ type: 'minecraft:item', location: W([c[0], c[1], c[2]]), volume: { x: c[3] - c[0] + 1, y: c[4] - c[1] + 1, z: c[5] - c[2] + 1 } })) {
+        const it = e.getComponent('minecraft:item');
+        if (it && /torch|lantern|ladder|banner|carpet|frame/.test(it.itemStack.typeId)) e.remove();
+      }
+    } catch (e) { /* участок не загружен */ }
+  }
   // Сундук-подряд и табличка больше не нужны; лишнее выпадает рядом
   if (u.chest) {
     const cb = blockAt(W(u.chest)), sb = blockAt(W(u.sign));

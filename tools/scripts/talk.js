@@ -7,6 +7,7 @@ import { S, save } from './state.js';
 import { NPCS, QUESTS, dialog } from './story.js';
 import { residentsNear } from './people.js';
 import { api } from './api.js';
+import { charterCheck, charterBuild } from './castle_build.js';
 
 const wait = (t) => new Promise((r) => system.runTimeout(r, t));
 // Окно не показывается, пока у игрока открыт другой экран (игра отвечает «занят»):
@@ -76,3 +77,19 @@ async function bookInner(pl) {
 
 export const talk = guarded(talkInner);
 export const openBook = guarded(bookInner);
+
+// Королевская грамота: поставить замок там, где стоит игрок
+async function charterInner(pl) {
+  const err = charterCheck(pl);
+  if (err) { pl.sendMessage('§7[Замок] ' + err); return; }
+  const form = new ActionFormData().title('Королевская грамота')
+    .body('«Сим повелеваю: быть на этом месте Студёному детинцу».\n\nЗамок встанет здесь: вы окажетесь на площади у ворот, донжон — к северу от вас. Нужно ровное открытое место вдали от вашего дома: замок с холмом занимает 190 на 190 блоков, под ним подземелье. В плоском мире ставить нельзя.\n\nСтройка идёт около минуты. Стойте на месте.')
+    .button('Поставить замок здесь').button('Не сейчас');
+  const r = await show(pl, form);
+  if (r.canceled || r.selection !== 0) return;
+  const again = charterCheck(pl);
+  if (again) { pl.sendMessage('§7[Замок] ' + again); return; }
+  api.take(pl, [['acastle:charter', 1]]);
+  charterBuild(pl);
+}
+export const openCharter = guarded(charterInner);

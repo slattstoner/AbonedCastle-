@@ -902,7 +902,7 @@ for(const[g,title]of Object.entries(GROUPS)){
   fs.writeFileSync(path.join(outDir, 'lineup.html'), html);
 }
 
-module.exports = { NPC, render, skinPng, png };
+module.exports = { NPC, render, skinPng, png, tone, mix };
 if (require.main === module) {
   const out = path.resolve(__dirname, '../design/skins');
   render(out); lineup(out);

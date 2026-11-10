@@ -3,6 +3,7 @@
 // Движок — main.js; здесь только что говорят жители и что считается сделанным.
 // В разговорах не называем стороны света: по приметам («у ворот», «на башне с колоколом»).
 import { world } from '@minecraft/server';
+import { SIDE_QUESTS, sideTalk, sideEvent } from './sides.js';
 import { LATE_NPCS, LATE_CONTRACTS, LATE_QUESTS, STARTS, lateDialog, lateEvent, lateBark, jumpLate } from './stages.js';
 
 // ---------- Жители ----------
@@ -97,7 +98,7 @@ export const QUESTS = {
     target: () => ({ path: 'home_frol', label: 'Конюшня' }) },
   s0_roof: { title: 'Крыша над головой', target: () => ({ path: 'chest_shell', label: 'Сундук у входа в донжон' }),
     hint: (api) => (api.S.rep.shell && api.S.rep.shell.st !== 'open' ? 'Всё собрано. Ложитесь спать — к утру корпус донжона починят.' : 'Положите в сундук-подряд у входа в донжон: 64 каменного кирпича, 32 стекла, 32 еловые доски. Табличка рядом показывает, сколько уже собрано.') },
-  s0_signal: { title: 'Сигнальный огонь', hint: 'Зажгите огнивом сигнальный костёр на верху башни донжона, где висит колокол. Огоньки покажут дорогу.',
+  s0_signal: { title: 'Сигнальный огонь', hint: 'Зажгите огнивом сигнальный огонь на вышке — на самом верху башни донжона. В верхней комнате башни висит колокол; оттуда по стремянке на площадку, там под каменным навесом жаровня. Огоньки покажут дорогу.',
     target: () => ({ path: 'signal', label: 'Сигнальный костёр' }),
     tick(api) {
       const b = api.blockAt(api.W(C(api).signal));
@@ -123,6 +124,7 @@ export const QUESTS = {
   s1_seal: { title: 'Чужая печать', hint: 'Сравните печать на приказе с печатью на старой грамоте: она в сундуке у лебёдки решётки, в надвратной башне справа, если стоять во дворе лицом к воротам.',
     target: () => ({ at: [62, 0, 125], label: 'Надвратная башня' }) },
   ...LATE_QUESTS,
+  ...SIDE_QUESTS,
 };
 
 // ---------- Разговоры ----------
@@ -132,7 +134,17 @@ function lostBook(api) {
   return { text: 'Я потерял книгу заданий.', run: (a, pl) => { a.give(pl, 'acastle:quest_book'); a.flag('book', 1); }, next: { text: 'Держи новую. Береги — в ней всё, что тебе поручено.' } };
 }
 
+// Разговор: обычные ответы жителя и к ним — ответы побочных заданий (sides.js)
 export function dialog(id, api, pl) {
+  const node = mainDialog(id, api, pl);
+  let extra = [];
+  try { extra = sideTalk(id, api, pl); } catch (e) { extra = []; }
+  if (!extra.length || !node) return node;
+  const opts = node.options && node.options.length ? node.options : [bye];
+  const last = opts[opts.length - 1] === bye ? opts.slice(0, -1) : opts;
+  return { ...node, options: [...last, ...extra, bye] };
+}
+function mainDialog(id, api, pl) {
   const late = lateDialog(id, api, pl);
   if (late) return late;
   const has = api.has, done = api.done;
@@ -168,10 +180,10 @@ export function dialog(id, api, pl) {
       };
       if (has('s0_roof')) return { text: 'Камень, стекло, доски — в сундук у входа в донжон. Как соберёшь, ложись спать: к утру будет сделано.', options: [bye] };
       if (done('s0_roof') && !S.q.s0_signal) return {
-        text: 'Слышишь? Ветер больше не воет в окнах. Хорошо… Теперь нам нужны люди. На башне с колоколом стоит сигнальный костёр. Зажги его — в остроге увидят и пришлют подмогу.',
+        text: 'Слышишь? Ветер больше не воет в окнах. Хорошо… Теперь нам нужны люди. На башне с колоколом, на самом верху, стоит сигнальная вышка. Зажги на ней огонь — в остроге увидят и пришлют подмогу.',
         options: [{ text: 'Зажгу.', run: (a) => a.start('s0_signal') }],
       };
-      if (has('s0_signal')) return { text: 'Сигнальный костёр — на самом верху башни донжона, где колокол. Возьми огниво.', options: [{ text: 'У меня нет огнива.', run: (a, p) => a.give(p, 'minecraft:flint_and_steel'), next: { text: 'Возьми моё. Только верни… хотя что уж там. Оставь себе.' } }, bye] };
+      if (has('s0_signal')) return { text: 'Сигнальная вышка — на самой верхней площадке башни донжона: из комнаты с колоколом вверх по стремянке. Возьми огниво.', options: [{ text: 'У меня нет огнива.', run: (a, p) => a.give(p, 'minecraft:flint_and_steel'), next: { text: 'Возьми моё. Только верни… хотя что уж там. Оставь себе.' } }, bye] };
       if (has('s0_wait')) return { text: 'Огонь горит. Ярослав Беляк в остроге — человек честный, он придёт. Отдохни до утра.', options: [bye] };
       if (S.f.tidy_vsevolod) return { text: 'Спасибо тебе. Впервые за двадцать лет в замке слышны голоса.', options: [bye] };
       return { text: ['Королева любила эту комнату. Здесь пахло яблоками…', 'Сын мой… Ефрем… Ему было семь. Он боялся темноты.', 'Казначей мой, Ножов, ушёл в ту же ночь. Я тогда не придал значения…'][Math.floor(Math.random() * 3)], options: [bye] };
@@ -262,6 +274,7 @@ function stage1Check(a) {
 export function onEvent(name, api, ev) {
   const S = api.S;
   lateEvent(name, api, ev);
+  sideEvent(name, api, ev);
   switch (name) {
     case 'castle': api.start('s0_halt'); break;
     case 'done:s0_night':

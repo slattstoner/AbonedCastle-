@@ -34,7 +34,7 @@ function itemEntry(name, weight, cnt = 1, opt = {}) {
   if (opt.data !== undefined) functions.push({ function: 'set_data', data: opt.data });
   if (opt.name) functions.push({ function: 'set_name', name: opt.name });
   if (opt.lore) functions.push({ function: 'set_lore', lore: opt.lore });
-  const e = { type: 'item', name: 'minecraft:' + name, weight };
+  const e = { type: 'item', name: name.includes(':') ? name : 'minecraft:' + name, weight };
   if (functions.length) e.functions = functions;
   return e;
 }

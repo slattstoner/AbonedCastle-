@@ -109,7 +109,17 @@ const player = {
     if (c === 'minecraft:equippable') return { getEquipment: () => inv.getItem(0), setEquipment: (slot, it) => inv.setItem(0, it) };
   },
   onScreenDisplay: { setTitle: (t, o) => msgs.push(`[титр] ${t} ${o && o.subtitle || ''}`), setActionBar: (t) => { lastBar = t; } },
-  sendMessage: (m) => msgs.push(m), playSound() {}, getTags: () => [],
+  sendMessage: (m) => msgs.push(m), playSound() {}, getTags: () => [...ptags],
+  hasTag: (t) => ptags.has(t), addTag: (t) => ptags.add(t), effects: {},
+  addEffect(fx, dur) { this.effects[fx] = dur; },
+  dimension: { id: 'minecraft:overworld', heightRange: { min: -64, max: 320 } },
+};
+const ptags = new Set();
+// Что надето: по умолчанию — предмет из первого слота (как раньше), для проверки брони — worn
+const worn = {};
+player.getComponent = (c) => {
+  if (c === 'minecraft:inventory') return { container: inv };
+  if (c === 'minecraft:equippable') return { getEquipment: (slot) => (slot && worn[slot] ? worn[slot] : inv.getItem(0)), setEquipment: (slot, it) => inv.setItem(0, it) };
 };
 let lastBar = '';
 const ev = (arr) => ({ subscribe: (fn) => arr.push(fn) });
@@ -189,6 +199,10 @@ const nightFall = () => { time = 14000; };
 // Приветствие при входе в мир
 for (const h of handlers.spawn) h({ player, initialSpawn: true });
 expect(msgs.some((m) => /Аддон \d+\.\d+\.\d+: скрипты работают/.test(m)), 'приветствие с версией при входе');
+// Королевская грамота выдаётся при входе, пока замка нет
+expect(inv.slots.some((x) => x && x.typeId === 'acastle:charter') && ptags.has('acastle_charter'), 'Королевская грамота выдана при входе в мир');
+for (const h of handlers.spawn) h({ player, initialSpawn: true });
+expect(inv.slots.filter((x) => x && x.typeId === 'acastle:charter').length === 1, 'вторую грамоту не выдают');
 // Сигнал от /function castle не дошёл: скрипты находят замок по «сердцу замка»
 makeEntity('minecraft:armor_stand', W(CASTLE.heart)).nameTag = 'acastle_heart';
 ticks(24);
@@ -567,6 +581,59 @@ ticks(6);
 expect(q('s5_carto') === 'active' && q('s4_crypt') === 'done' && state().rank === 'Рыцарь', 'переход к этапу 5');
 morning(); ticks(4);
 expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после перехода починка прежних этапов встала');
+// ===== Побочные задания: тайники с реликвиями =====
+{
+  const open = (slot) => { const at = W(CASTLE.slots[slot]); for (const h of handlers.block) h({ player, block: blockAt(at), itemStack: undefined }); ticks(2); };
+  for (const k of ['signal_cache', 'porch_chest', 'porch_book', 'under_stairs', 'forge_cellar', 'forge_ledger', 'lady', 'keykeeper', 'barn_loft', 'dovecote', 'attic_trunk', 'attic_map', 'throne', 'founder', 'founder_hall', 'founder_book']) expect(!!CASTLE.slots[k], 'в замке есть тайник ' + k);
+  // «Последний дозор»: начало от Остапа, четыре тайника, развязка у Митьки
+  goTo([61, 0, 127]); ticks(8);
+  await talk('ostap', 'старой стражей');
+  expect(q('x_watch') === 'active', 'Остап рассказал о старой страже');
+  open('signal_cache'); open('porch_chest'); open('porch_book'); open('under_stairs');
+  expect(q('x_watch') === 'active' && state().f.w3 && !state().f.w4, 'три тайника стражи найдены');
+  open('forge_cellar');
+  await talk('mitka', 'записки твоего отца');
+  expect(q('x_watch') === 'done', '«Последний дозор» пройден');
+  // «Охотница»: игрок сам наткнулся на сундук королевы — цепочка началась с него
+  open('lady');
+  expect(q('x_hunt') === 'active' && state().f.h1, 'сундук королевы начал «Охотницу»');
+  open('keykeeper'); open('barn_loft'); open('dovecote');
+  goTo(CASTLE.homes.agafya); ticks(8);
+  await talk('agafya', 'охотничий доспех');
+  expect(q('x_hunt') === 'done' && inv.slots.some((x) => x && x.typeId === 'acastle:hunter_cleaver'), '«Охотница» пройдена, тесак у игрока');
+  // «Латы основателя»
+  open('attic_trunk'); open('throne'); open('founder');
+  expect(q('x_founder') === 'active', '«Латы основателя» идут');
+  open('founder_hall');
+  expect(q('x_founder') === 'done', '«Латы основателя» собраны');
+  // Бонус полного комплекта и меч «Заря»
+  for (const [slot, piece] of [['Head', 'helmet'], ['Chest', 'chestplate'], ['Legs', 'leggings'], ['Feet', 'boots']]) worn[slot] = new ItemStack('acastle:founder_' + piece);
+  ticks(8);
+  expect(player.effects.strength && player.effects.resistance && player.effects.fire_resistance, 'полный комплект лат основателя даёт бонус');
+  worn.Feet = new ItemStack('acastle:watch_boots'); player.effects = {}; ticks(8);
+  expect(!player.effects.strength, 'смешанный комплект бонуса не даёт');
+  worn.Mainhand = new ItemStack('acastle:dawn');
+  const z = makeEntity('minecraft:zombie', player.location); z.matches = () => true; z.setOnFire = function () { this.burning = true; }; z.addEffect = () => {};
+  for (const h of handlers.hit) h({ damagingEntity: player, hitEntity: z });
+  expect(z.burning, '«Заря» поджигает нежить'); z.remove();
+  for (const k of Object.keys(worn)) delete worn[k];
+}
+// ===== Замок по Королевской грамоте (без команды) =====
+{
+  placed.length = 0; inv.clearAll();
+  for (const h of handlers.script) h({ id: 'acastle:reset', message: '', sourceEntity: player });
+  expect(!state().origin && inv.slots.some((x) => x && x.typeId === 'acastle:charter') && !entities.some((e) => /acastle:/.test(e.typeId)), 'acastle:reset забыл замок и вернул грамоту');
+  player.location = { ...O };
+  answers.push('Поставить замок здесь');
+  ticks(2);
+  for (const h of handlers.itemUse) h({ source: player, itemStack: new ItemStack('acastle:charter') });
+  await new Promise((r) => setTimeout(r, 5));
+  expect(props['acastle:state'] && state().build, 'грамота начала стройку');
+  expect(!inv.slots.some((x) => x && x.typeId === 'acastle:charter'), 'грамота израсходована');
+  for (let i = 0; i < 3000 && !state().origin; i++) ticks(1);
+  expect(state().origin && q('s0_halt') === 'active', 'замок по грамоте встал, сюжет начался');
+  expect(placed.length === CASTLE.build.length && CASTLE.build.length > CASTLE.mainPieces, 'поставлены все куски и второй проход (' + placed.length + ' из ' + CASTLE.build.length + ')');
+}
 console.log(dialogLog.slice(0, 6).join('\n'));
 console.log('…');
 console.log(`Сообщений игроку: ${msgs.length}, команд: ${log.length}, жителей: ${entities.filter((e) => /acastle/.test(e.typeId)).length}`);
