@@ -1078,6 +1078,29 @@
     w.mark('slot', 9, -9, -14, 'Ларь основателя', 'Каменный ларь на возвышении в палате основателя.');
   }
 
+  // ======================= ХОЗЯЙСТВО: ЗАГОН И МЕСТО ПАХАРЯ (0.11.0) =======================
+  // Загон для скота в огороде, на свободной траве между грядками и цветником; рядом сундук
+  // пахаря (туда он носит урожай) и колода. Координаты — в b.farm, сборщик кладёт их в castle_data.
+  function farmYard(b) {
+    const empty = (x, y, z) => { const v = b.get(x, y, z); return !v || v.id === 'air'; };
+    const ok = (x1, z1, x2, z2) => { for (let x = x1; x <= x2; x++) for (let z = z1; z <= z2; z++) { const g = b.get(x, -1, z); if (!g || !g.g || /farmland|water/.test(g.id)) return false; for (let y = 0; y <= 2; y++) if (!empty(x, y, z)) return false; } return true; };
+    let pen = null;
+    for (const [W2, D2] of [[8, 6], [7, 5], [6, 5], [5, 5]]) { for (let z = 44; z + D2 - 1 <= 51 && !pen; z++) for (let x = 28 - W2 + 1; x >= 9 && !pen; x--) if (ok(x - 1, z, x + W2, z + D2 - 1)) pen = [x, z, x + W2 - 1, z + D2 - 1]; if (pen) break; }
+    if (!pen) { console.warn('замок: нет места для загона'); return; }
+    const [x1, z1, x2, z2] = pen, gx = x1 - 1 >= 9 ? x1 : x1 + 1;
+    for (let x = x1; x <= x2; x++) for (let z = z1; z <= z2; z++) if (x === x1 || x === x2 || z === z1 || z === z2) b.set(x, 0, z, 'spruce_fence');
+    const gate = [x1, 0, Math.round((z1 + z2) / 2)];
+    b.set(...gate, 'spruce_fence_gate', { f: 'w' });
+    b.set(x2 - 1, 0, z1 + 1, 'cauldron', { water: 1 }); b.set(x2 - 1, 0, z2 - 1, 'hay_block'); b.set(x2 - 2, 0, z2 - 1, 'hay_block');
+    for (const [x, z] of [[x1, z1], [x2, z1], [x1, z2], [x2, z2]]) { b.set(x, 1, z, 'spruce_fence'); b.set(x, 2, z, 'lantern'); }
+    // сундук пахаря и колода — снаружи у калитки
+    const chest = [x1 - 1, 0, gate[2] - 2], home = [x1 - 1, 0, gate[2] + 1];
+    if (empty(...chest)) b.set(...chest, 'chest', { f: 'w' });
+    if (empty(chest[0], 0, chest[2] - 1)) b.set(chest[0], 0, chest[2] - 1, 'composter');
+    b.farm = { pen: [x1 + 1, z1 + 1, x2 - 1, z2 - 1], gate, chest, home, garden: [9, 31, 29, 57] };
+    b.mark('room', home[0], 0, home[2], 'Загон', 'Загон для скота в огороде: коровы, овцы, куры. У калитки сундук пахаря с урожаем.');
+  }
+
   // ======================= «СЕВЕРНЫЙ ДЕТИНЕЦ» (0.10.0) =======================
   // Стиль, выбранный пользователем: камень и тёмное дерево с русским характером плюс рабочий быт
   // двора. Планировка не меняется: добавляются шатры, тесовые кровли, срубные верхи, резные
@@ -1665,7 +1688,7 @@
     lamp(b, 14, 4, 25); lamp(b, 17, 4, 25); overgrow(b, 8, 12, 22, 24, 6, 10);
     b.mark('room', 15, 0, 18, 'Амбар', 'Склад зерна и сена.');
     // Огород
-    b.walls(8, 0, 30, 30, 0, 58, 'spruce_fence'); b.set(19, 0, 30, 'spruce_fence_gate', { f: 'n' });
+    b.walls(8, 0, 30, 30, 0, 58, 'spruce_fence'); b.set(19, 0, 30, 'spruce_fence_gate', { f: 'n', open: 1 });
     for (const [z, c] of [[33, 'potatoes'], [34, 'carrots'], [36, 'beetroot'], [37, 'potatoes'], [39, 'carrots'], [40, 'beetroot'], [42, 'potatoes'], [43, 'carrots']]) b.crops(10, z, 28, z, c);
     for (const z of [35, 38, 41]) b.surface(10, z, 28, z, 'water');
     b.set(19, 0, 47, 'spruce_fence'); b.set(19, 1, 47, 'hay_block'); b.set(19, 2, 47, 'carved_pumpkin', { f: 's' });
@@ -2008,6 +2031,8 @@
     const wallTop = (x1, z1, x2, z2) => [x1, -1, z1, x2, 12, z2];
     const ctower = (x1, z1) => [x1, -1, z1, x1 + 8, 28, z1 + 8];
     const banner = (x, y1, z, y2) => [x, y1, z, x, y2, z];
+    // С 0.11.0 в упадке только донжон, подземелье и стены: дворовые здания целы и работают
+    const INTACT = new Set(['Казарма', 'Кузница', 'Ристалище', 'Дом управителя', 'Амбар', 'Площадь у ворот', 'Часовня, склеп и кладбище', 'Огород', 'Двор']);
     return [
       // Этап 0 — здесь живут с самого начала, не разрушено
       Z(0, 'Кухня', 'lock', [room(0, 2, 19, 14, 36)]),
@@ -2106,7 +2131,7 @@
       Z(8, 'Покои гостя', 'room', [room(3, 14, 24, 24, 36)]),
       // Двор целиком — последним: трава, кусты, заросшие дорожки, погасшие фонари
       Z(3, 'Двор', 'yard', [[-6, -1, -6, X2 + 6, 3, Z2 + 6]]),
-    ];
+    ].filter((z) => !INTACT.has(z.title));
   }
 
   // Накладывает запустение на восстановленный замок. Возвращает карту блоков в
@@ -2271,7 +2296,7 @@
     });
     // Кровля над боевым ходом падает вместе со стеной: каждая её клетка держится на своём
     // столбце парапета. Нет парапета — нет кровли и стоек (вернутся, когда зодчий сложит пролёт).
-    const wallZone = zones.findIndex((z) => z.title === 'Крепостные стены'), yardZone = zones.findIndex((z) => z.title === 'Двор');
+    const wallZone = zones.findIndex((z) => z.title === 'Крепостные стены');
     const drop = (k, v, toZone) => { blocks.set(k, { x: v.x, y: v.y, z: v.z, id: 'air' }); owner.set(k, toZone); };
     let roofDown = 0;
     for (const [k, v] of [...blocks]) {
@@ -2291,8 +2316,12 @@
       for (let h = 0; h < q.length; h++) { const c = q[h]; for (const [dx, dy, dz] of D6) { const kk = key(c.x + dx, c.y + dy, c.z + dz); if (seen.has(kk)) continue; const n = blocks.get(kk); if (!n || n.id === 'air' || n.env) continue; seen.add(kk); q.push(n); } }
       for (const [k, v] of [...blocks]) {
         if (v.y < 0 || v.id === 'air' || v.env || seen.has(k) || locked.has(k)) continue;
-        const o = owner.get(k);
-        drop(k, v, o !== undefined ? o : (v.x <= 6 || v.x >= 121 || v.z <= 6 || v.z >= 125) ? wallZone : yardZone); floating++; fl[v.id] = (fl[v.id] || 0) + 1;
+        // кому достанется (кто вернёт при починке): своей зоне, зоне соседней поломки или стенам
+        let o = owner.get(k);
+        for (let r2 = 1; o === undefined && r2 <= 3; r2++) for (const [dx, dy, dz] of D6) { const q = owner.get(key(v.x + dx * r2, v.y + dy * r2, v.z + dz * r2)); if (q !== undefined) { o = q; break; } }
+        if (o === undefined && (v.x <= 6 || v.x >= 121 || v.z <= 6 || v.z >= 125)) o = wallZone;
+        if (o === undefined || o < 0) continue;
+        drop(k, v, o); floating++; fl[v.id] = (fl[v.id] || 0) + 1;
       }
       if (typeof process !== 'undefined' && process.env.FLOAT) console.log(fl);
     }
@@ -2626,6 +2655,7 @@
       yardLife(b, CX, Z2 - 4);
       works(b);
       secrets(b, KX, KZ);
+      farmYard(b);
       northStyle(b, KX, KZ, X2, Z2, CX);
       if (window.CastlePhysics) { furnishKeep(b, KX, KZ); dungeon(b, KX, KZ); }
       overgrow(b, KX, KZ, KX + 38, KZ + 38, 28, 70);

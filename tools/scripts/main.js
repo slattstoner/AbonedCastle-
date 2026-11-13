@@ -28,6 +28,9 @@ import { placesTick } from './places.js';
 import { guideTick } from './guide.js';
 import { CASTLE } from './castle_data.js';
 import { relicTick, relicHit } from './relics.js';
+import { routineTick, routineLine } from './routine.js';
+import { farmerTick, farmMorning } from './farmer.js';
+import { raidTick } from './raids.js';
 import { workTick, workCommand, workerTalk, workerIdOf } from './workers.js';
 import { isGateLever, toggleGate, gateTick, gateCommand } from './gate.js';
 import { garrisonTick, garrisonMove, guardCommand } from './garrison.js';
@@ -85,6 +88,8 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
     else if (ev.id === 'acastle:work') workCommand(ev.message, ev.sourceEntity);
     else if (ev.id === 'acastle:gate') gateCommand(ev.message, ev.sourceEntity);
     else if (ev.id === 'acastle:guard') guardCommand(ev.message, ev.sourceEntity);
+    // отладка: засчитать задание (для прогона и проверки в игре)
+    else if (ev.id === 'acastle:test_done' && story() && QUESTS[ev.message]) { S.q[ev.message] = 'done'; api.save(); flush(); }
     else if (ev.id === 'acastle:castle_build' && ev.sourceEntity) beginBuild(ev.sourceEntity.location);
     // Забыть замок и вернуть грамоту (для проверки: замок в мире остаётся, сюжет начнётся заново на новом месте)
     else if (ev.id === 'acastle:reset') {
@@ -150,6 +155,14 @@ system.runInterval(() => {
   if (tick % 2 === 0) for (const fn of SECOND) { try { fn(); } catch (e) { warn('цикл', e); } }
   flush();
 }, 10);
+// Распорядок жителей и пахарь: шаги каждые 4 тика; налёты — раз в секунду; утром — молоко и яйца
+system.runInterval(() => { try { routineTick(); farmerTick(); } catch (e) { warn('распорядок', e); } }, 4);
+let farmDay = -1;
+system.runInterval(() => {
+  if (!story()) return;
+  try { raidTick(api); } catch (e) { warn('налёт', e); }
+  try { const d = world.getDay(); if (farmDay < 0) farmDay = d; else if (d !== farmDay) { farmDay = d; farmMorning(); } } catch (e) { warn('хозяйство', e); }
+}, 20);
 // Реликвии: бонус полного комплекта брони (работает и без замка — броню можно взять в творческом режиме)
 system.runInterval(() => { try { relicTick(); } catch (e) { warn('реликвии', e); } }, 40);
 // Короткие реплики, когда игрок проходит рядом (не чаще раза в полминуты от жителя)
@@ -165,6 +178,9 @@ system.runInterval(() => {
       if (!id || !NPCS[id] || (barked[id] && now - barked[id] < 600)) continue;
       barked[id] = now;
       let line = null;
+      // у рабочего места житель говорит о своём деле — в чат, чтобы успеть прочесть
+      let work = null; try { work = routineLine(id); } catch (err) { work = null; }
+      if (work) { pl.sendMessage(`§e${NPCS[id].name}:§r ${work}`); break; }
       try { line = bark(id, api, pl); } catch (err) { warn('реплика', err); }
       if (line) { pl.onScreenDisplay.setActionBar(`§e${NPCS[id].name}:§r ${line}`); break; }
     }

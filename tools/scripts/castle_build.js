@@ -26,6 +26,8 @@ export function startCastle(origin) {
   const st = fresh();
   st.origin = origin;
   for (const p of CASTLE.posts) if (p.stage === 0) st.npcs[p.guard] = 'post';
+  // С 0.11.0 гарнизон на постах с первого дня (кроме дозорных башен: те ждут, пока башню сложат)
+  for (const g of (CASTLE.garrison ? CASTLE.garrison.roster : [])) if (!g.needs || g.needs === 'barracks') st.npcs[g.id] = 'post';
   setS(st);
   onEvent('castle', api);
   flush();

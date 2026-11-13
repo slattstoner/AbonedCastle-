@@ -26,7 +26,7 @@ const PACK = {
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 10, 1],
+  version: [0, 11, 0],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -796,7 +796,7 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     // Гарнизон: койки в казарме, посты, обходы, пути от койки к посту
     const beds = [...b.blocks.values()].filter((v) => /_bed$/.test(v.id) && !v.head && v.x >= 10 && v.x <= 34 && v.z >= 70 && v.z <= 80).sort((p2, q3) => p2.y - q3.y || p2.x - q3.x);
     if (beds.length !== 14) warn(`замок: в казарме ${beds.length} коек, а гарнизону нужно 14`);
-    const bedStand = beds.map((v, i) => nearest([v.x, v.y, v.z + 2], (x, y, z) => y === v.y && standOk(x, y, z), 8) || warn(`замок: у койки ${i} нет места`));
+    const bedStand = beds.map((v, i) => nearest([v.x, v.y, v.z + 2], (x, y, z) => y === v.y && standOk(x, y, z) && W.has(x, y, z), 8) || warn(`замок: у койки ${i} нет места`));
     const info2 = b.castleInfo, X2c = info2.X2, Z2c = info2.Z2, CXc = info2.CX;
     const posts = {
       gate_l: npc.POSTS.find((q3) => q3.guard === 'ostap').at, gate_r: npc.POSTS.find((q3) => q3.guard === 'mitka').at,
@@ -824,11 +824,17 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
       else { posts.king = best.at; posts.kingDoor = best.door; taken.add(K(...best.at)); }
       // Койки гридней — в казарме донжона (этаж над жилым, y 24)
       const kb = [...b.blocks.values()].filter((v) => /_bed$/.test(v.id) && !v.head && v.y === 24 && v.x >= info.KX && v.x <= info.KX + 38 && v.z >= info.KZ && v.z <= info.KZ + 20).sort((p2, q3) => p2.x - q3.x || p2.z - q3.z);
-      const kbeds = kb.slice(0, 2).map((v, i) => nearest([v.x, v.y, v.z + 2], (x, y, z) => y === v.y && standOk(x, y, z) && W.has(x, y, z), 6) || warn(`замок: у койки гридня ${i} нет места`));
-      if (kbeds.length < 2) warn('замок: в казарме донжона нет двух коек для гридней');
+      const kbeds = kb.slice(0, 8).map((v, i) => nearest([v.x, v.y, v.z + 2], (x, y, z) => y === v.y && standOk(x, y, z) && W.has(x, y, z), 6) || warn(`замок: у койки гридня ${i} нет места`));
+      if (kbeds.filter(Boolean).length < 8) warn('замок: в казарме донжона нет восьми коек для гридней и стражи подземелья');
       for (const c of kbeds) if (c) taken.add(K(...c));
       posts.kbeds = kbeds;
     }
+    // Стража подземелья и Большого зала (0.11.0)
+    { const t = roomAt('Темница'), c = roomAt('Нижние казематы'), h = roomAt('Большой зал');
+      const nr = (m, dz = 0) => nearest([m.x, m.y, m.z + dz], (x, y, z) => y === m.y && standOk(x, y, z) && W.has(x, y, z), 6);
+      posts.dungeon = nr(t); posts.cells = nr(c); posts.hall = nr(h, 8);
+      for (const k of ['dungeon', 'cells', 'hall']) if (!posts[k]) warn('замок: нет места для поста ' + k);
+      for (const k of ['dungeon', 'cells', 'hall']) if (posts[k]) taken.add(K(...posts[k])); }
     // Ворота ночью (с 0.9.4): решётка опущена, ночной караул сидит в караулках надвратных башен
     // (у лебёдки) и выходит, когда нужно открыть игроку или нежить пролезла во двор
     posts.gate_l_night = snap([56, 0, 126], 'ночной караул в левой надвратной башне');
@@ -886,7 +892,46 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
     console.log(`Гарнизон: ${roster.length} стражников (смены ${roster.filter((g) => g.bed !== undefined).length}, коек ${beds.length}), обходы: ${Object.entries(routes).map(([k, r]) => k + ' ' + r.path.length / 3).join(', ')} клеток; кузня — путей подмастерья ${[forge.toMine, forge.toYard].filter(Boolean).length}/2`);
     if (!b.gate) warn('замок: нет решётки ворот');
     else for (const c of b.gate.levers) { const v = map.get(K(...c)); if (!v || v.id !== 'lever') warn(`замок: рычаг решётки (${c.join(',')}) не встал`); }
-    const data = { version: PACK.version.join('.'), build: bodyPieces, mainPieces, box: [...lo, ...hi], works, orders, protect, portcullis: b.gate, forge, garrison, origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
+    // ---------- Рабочие места жителей (0.11.0) ----------
+    // У каждого жителя — до четырёх мест рядом с домом, куда он ходит по делу: верстак, кафедра,
+    // очаг, котёл, полки… Путь от дома до места — по клеткам, где можно пройти (не дальше 12 шагов).
+    const KINDS = [[/cartography_table/, 'map'], [/lectern/, 'book'], [/bookshelf/, 'shelf'], [/furnace|smoker|campfire/, 'fire'], [/brewing_stand/, 'brew'], [/cauldron/, 'cauldron'],
+      [/loom/, 'loom'], [/anvil|grindstone|smithing|fletching/, 'tools'], [/enchanting/, 'stars'], [/noteblock|jukebox/, 'music'], [/bell$/, 'bell'], [/hay_block|composter/, 'hay'],
+      [/barrel|chest/, 'store'], [/candle/, 'candle'], [/flower_pot/, 'plant'], [/item_frame/, 'wall'], [/_banner$/, 'banner']];
+    const workSpots = {};
+    for (const [id, home] of Object.entries(homes)) {
+      if (!home || ['nozhov', 'trader', 'ryzhy', 'gordey', 'vaska', 'shade_vseslav', 'shade_ratmir'].includes(id)) continue;
+      // поиск в ширину от дома по клеткам, где можно стоять
+      const prev = new Map([[K(...home), null]]), q2 = [home], reach = [];
+      for (let h2 = 0; h2 < q2.length; h2++) {
+        const c = q2[h2]; let depth = 0; for (let t = c; prev.get(K(...t)); t = prev.get(K(...t))) depth++;
+        reach.push([c, depth]);
+        if (depth >= 12) continue;
+        for (const [dx, dz] of N4) { const n = [c[0] + dx, c[1], c[2] + dz]; if (prev.has(K(...n)) || !W.has(...n) || !standOk(...n) && K(...n) !== K(...home)) continue; prev.set(K(...n), c); q2.push(n); }
+      }
+      const found = [];
+      for (const [c, depth] of reach) {
+        if (depth < 2) continue;
+        for (const [dx, dz] of N4) for (const dy of [0, 1]) {
+          const v = mapFull.get(K(c[0] + dx, c[1] + dy, c[2] + dz)); if (!v) continue;
+          const kind = (KINDS.find(([re]) => re.test(v.id)) || [])[1]; if (!kind || found.some((f) => f.kind === kind) || found.some((f) => Math.abs(f.c[0] - c[0]) + Math.abs(f.c[2] - c[2]) < 2)) continue;
+          const path = []; for (let t = c; t; t = prev.get(K(...t))) path.unshift(t);
+          found.push({ kind, c, face: [c[0] + dx, c[2] + dz], path });
+        }
+        if (found.length >= 4) break;
+      }
+      if (found.length) workSpots[id] = found.map((f) => [f.kind, f.face[0], f.face[1], ...f.path.flat()]);
+    }
+    console.log(`Рабочие места жителей: ${Object.entries(workSpots).map(([id, l]) => id + ' ' + l.map((x) => x[0]).join('/')).join(', ')}`);
+    // ---------- Хозяйство: грядки, загон, сундук пахаря ----------
+    let farm = null;
+    if (b.farm) {
+      const fields = [];
+      for (const v of mapFull.values()) if (/^(potatoes|carrots|beetroot|wheat)$/.test(v.id) && v.y === 0 && v.x >= b.farm.garden[0] && v.x <= b.farm.garden[2] && v.z >= b.farm.garden[1] && v.z <= b.farm.garden[3]) fields.push([v.x, v.z, v.id]);
+      farm = { ...b.farm, fields };
+      console.log(`Хозяйство: грядок ${fields.length}, загон ${b.farm.pen.join(',')}, сундук ${b.farm.chest.join(',')}`);
+    } else warn('замок: нет загона (farm)');
+    const data = { version: PACK.version.join('.'), build: bodyPieces, mainPieces, box: [...lo, ...hi], spots: workSpots, farm, works, orders, protect, portcullis: b.gate, forge, garrison, origin: ORIGIN, heart: [ORIGIN[0], -20, ORIGIN[2]], gate: info.gate, square: info.square, signal: signalAt, units, homes, paths, posts: npc.POSTS, slots, feast, lairs, rooms, gang: npc.GANG };
     fs.mkdirSync(path.join(ROOT, 'build/sim'), { recursive: true });
     fs.writeFileSync(path.join(ROOT, 'build/sim/structures.json'), JSON.stringify(SIM_DUMP));
     // Что ставит строитель: клетки заказа в координатах замка и палитра блоков. Строитель

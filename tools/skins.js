@@ -926,6 +926,38 @@ const NPC = [
     W.tabard(K, '#8799a6', '#cfe0e6'); W.belt(K, '#a8bac4', { y: 8, buckle: '#e0eef2' });
     return K;
   } },
+  // ===== 0.11.0: стража подземелья и зала, храм, пахарь (в конце списка) =====
+  ...[
+    ['ermil', 'Надзиратель Ермил', 'темница, днём', { skin: SKIN.weather, hair: '#3a3028', hairStyle: 'bald', beard: 'full', beardColor: '#3a3028', eyes: '#3a3020', scar: 'cheek' }, 'dungeon'],
+    ['zakhar', 'Надзиратель Захар', 'темница, ночью', { skin: SKIN.pale, hair: '#1e1a18', hairStyle: 'short', beard: 'stubble', eyes: '#4a4a5a' }, 'dungeon'],
+    ['pimen', 'Стражник Пимен', 'нижние казематы, днём', { skin: SKIN.tan, hair: '#5a4630', hairStyle: 'shaggy', beard: 'short', beardColor: '#4a3624', eyes: '#3a2a1a' }, 'dungeon'],
+    ['sidor', 'Стражник Сидор', 'нижние казематы, ночью', { skin: SKIN.old, hair: '#8a8a84', hairStyle: 'short', beard: 'droop', beardColor: '#a8a8a0', eyes: '#5a5a6a', age: 1 }, 'dungeon'],
+    ['matvey', 'Стражник Матвей', 'Большой зал, днём', { skin: SKIN.fair, hair: '#a87840', hairStyle: 'parted', beard: 'mustache', beardColor: '#8a5a30', eyes: '#4a6a9a' }, 'hall'],
+    ['naum', 'Стражник Наум', 'Большой зал, ночью', { skin: SKIN.ruddy, hair: '#2a2018', hairStyle: 'short', beard: 'goatee', beardColor: '#2a2018', eyes: '#3a2a1a' }, 'hall'],
+  ].map(([id, name, role, face, kind]) => ({ id, group: 'castle', name, stage: 0, role, draw: (s) => {
+    const K = person(face, s);
+    GUARD(K, kind === 'dungeon' ? { field: '#3a3a40', trim: '#8a8a90', steel: '#80868e' } : { field: '#8a1e1e', trim: '#d8b040' });
+    return K;
+  } })),
+  { id: 'onisim', group: 'castle', name: 'Звонарь Онисим', stage: 0, role: 'звонит в колокол часовни, следит за свечами', draw: (s) => {
+    const K = person({ skin: SKIN.old, hair: '#b8b4ac', hairStyle: 'bowl', beard: 'long', beardColor: '#c8c4bc', eyes: '#5a5a4a', age: 1 }, s);
+    W.shirt(K, '#8a7a5e', { slit: false }); W.trousers(K, '#4a4034'); W.lapti(K);
+    W.kaftan(K, '#5a4a36', { len: 11 }); W.belt(K, '#a08a5a', { y: 8, part: 'jacket' }); W.cap(K, '#4a3a2a'); W.keys(K, 6, 9);
+    return K;
+  } },
+  { id: 'feodor', group: 'castle', name: 'Инок Феодор', stage: 0, role: 'молодой инок при часовне: поминальник, лампады, кладбище', draw: (s) => {
+    const K = person({ skin: SKIN.pale, hair: '#3a2a1e', hairStyle: 'long', beard: 'short', beardColor: '#3a2a1e', eyes: '#4a5a4a' }, s);
+    W.shirt(K, '#2a2622', { slit: false }); W.trousers(K, '#1e1a18'); W.boots(K, '#1a1612', 5);
+    W.kaftan(K, '#24201c', { len: 12 }); W.belt(K, '#6a5a3a', { y: 8, part: 'jacket' }); W.hood(K, '#1e1a18', { cape: false }); W.cross(K, '#c8c0a8', 4);
+    return K;
+  } },
+  { id: 'nazar', group: 'castle', name: 'Пахарь Назар', stage: 0, role: 'огород и скот: сеет, жнёт, носит урожай в сундук', draw: (s) => {
+    const K = person({ skin: SKIN.weather, hair: '#b08a4a', hairStyle: 'bowl', beard: 'full', beardColor: '#a07a3a', eyes: '#4a6a3a', freckles: 1 }, s);
+    W.shirt(K, '#d8ccb0', { emb: '#9c2a22', sleeves: 'rolled', skin: SKIN.weather }); W.trousers(K, '#6a5a44'); W.lapti(K);
+    W.apron(K, '#7a6a4a', { top: 4, len: 7, stains: '#4a3a24' }); W.belt(K, '#5a3a20', { y: 8 }); W.pouch(K, '#6a4a28', 5, 9);
+    W.cap(K, '#c8b070', { brim: '#a89050' });
+    return K;
+  } },
 ];
 
 const skinPng = (id) => { const i = NPC.findIndex((n) => n.id === id); if (i < 0) throw new Error('нет скина ' + id); return NPC[i].draw(1000 + i * 7919).png(); };

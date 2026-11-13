@@ -3,7 +3,7 @@
 // Движок — main.js; здесь только что говорят жители и что считается сделанным.
 // В разговорах не называем стороны света: по приметам («у ворот», «на башне с колоколом»).
 import { world } from '@minecraft/server';
-import { SIDE_QUESTS, SIDE_NPCS, sideTalk, sideEvent, sideDialog, sideBark } from './sides.js';
+import { SIDE_QUESTS, SIDE_NPCS, sideTalkAll as sideTalk, sideEvent, sideDialogAll as sideDialog, sideBark } from './sides.js';
 import { LATE_NPCS, LATE_CONTRACTS, LATE_QUESTS, STARTS, lateDialog, lateEvent, lateBark, jumpLate } from './stages.js';
 
 // ---------- Жители ----------
@@ -19,7 +19,7 @@ export const NPCS = {
   vsevolod: { name: 'Король Всеволод', start: 'home' },
   agafya: { name: 'Повариха Агафья', start: 'home' },
   frol: { name: 'Конюх Фрол', start: 'home' },
-  demyan: { name: 'Капитан Демьян Беляк', start: null, gate: [63, 0, 118] },
+  demyan: { name: 'Капитан Демьян Беляк', start: 'home', gate: [63, 0, 118] }, // с 0.11.0 все жители в замке с начала
   yaroslav: { name: 'Сотник Ярослав Беляк', start: null },
   ...LATE_NPCS,
   ...SIDE_NPCS,
@@ -29,8 +29,6 @@ export const NPCS = {
 export const CONTRACTS = {
   shell: { title: 'Корпус донжона', who: 'vsevolod', items: [['minecraft:stone_bricks', 64, 'Каменный кирпич'], ['minecraft:glass', 32, 'Стекло'], ['minecraft:spruce_planks', 32, 'Еловые доски']],
     done: 'Всё собрано. Остап с Фролом ночью залезут на крышу, а к утру окна будут целы.' },
-  barracks: { title: 'Казарма', who: 'demyan', items: [['minecraft:spruce_planks', 32, 'Еловые доски'], ['minecraft:spruce_stairs', 16, 'Еловые ступени']],
-    done: 'Доски на месте. Ребята ночью перекроют крышу казармы.' },
   ...LATE_CONTRACTS,
 };
 
@@ -115,8 +113,6 @@ export const QUESTS = {
   s0_wait: { title: 'Подмога из острога', hint: 'Острог увидел огонь. Дождитесь утра (можно лечь спать) — к воротам придут люди.', target: () => ({ at: [63, 0, 120], label: 'Ворота замка' }) },
   // ===== Этап 1 =====
   s1_captain: { title: 'Капитан', hint: 'У ворот ждёт капитан Демьян Беляк. Поговорите с ним.', target: () => ({ at: [63, 0, 118], label: 'Ворота замка' }) },
-  s1_barracks: { title: 'Где спать людям', hint: 'Сундук-подряд у казармы во дворе: 32 еловые доски и 16 еловых ступеней — перекрыть крышу.',
-    target: () => ({ path: 'chest_barracks', label: 'Казарма' }) },
   s1_ostrog: { title: 'Весть в острог', target: () => ({ place: 'stockade_hunt', label: 'Острог' }),
     hint: (api) => (api.flag('copy') ? 'Отнесите копию приказа капитану Демьяну.' : 'Отнесите донесение сотнику Ярославу Беляку в острог. Держите в руке компас или эту книгу — внизу экрана видно, куда идти.') },
   s1_seal: { title: 'Чужая печать', hint: 'Сравните печать на приказе с печатью на старой грамоте: она в сундуке у лебёдки решётки, в надвратной башне справа, если стоять во дворе лицом к воротам.',
@@ -283,7 +279,12 @@ export function onEvent(name, api, ev) {
       api.finish('s0_roof');
       api.tell('§6Наутро корпус донжона цел: окна застеклены, крыши залатаны. Король хочет вас видеть.');
       break;
-    case 'done:s0_signal': api.start('s0_wait'); api.flag('help_day', world.getDay()); break;
+    case 'done:s0_signal':
+      // С 0.11.0 подмогу из острога не ждём: гарнизон и жители в замке с начала. Глава первая пройдена.
+      api.rank('Оруженосец');
+      api.tell('§6Огонь на вышке виден до самого острога: замок жив. Глава первая пройдена. Теперь поговорите с жителями — у каждого своё дело.');
+      api.start('m_alive');
+      break;
     case 'morning':
       if (api.has('s0_night') && world.getDifficulty() === 'Peaceful') api.finish('s0_night');
       if (api.has('s0_wait') && world.getDay() > S.f.help_day) {

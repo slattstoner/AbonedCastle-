@@ -147,6 +147,7 @@ function ensureWorkers() {
   try { all = DIM().getEntities({ type: 'acastle:worker' }); } catch (e) { all = []; }
   const seen = {};
   for (const e of all) {
+    if (e.hasTag('acastle_free')) continue; // пахарь и прочие, кого ведут другие модули
     const id = workerIdOf(e);
     if (!id || !WORKERS[id] || seen[id]) { try { e.triggerEvent('acastle:despawn'); } catch (err) { /* нет */ } continue; }
     seen[id] = e; ents[id] = e;

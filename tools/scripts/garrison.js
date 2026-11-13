@@ -61,7 +61,7 @@ const RANK_ORDER = { десятник: 0, гридень: 1, стражник: 2
 // Капитан и стражники по званию — в таком порядке кузнец их и одевает
 export function byRank() {
   const list = ROSTER().filter((g) => recruited(g.id)).sort((a, b) => RANK_ORDER[a.rank] - RANK_ORDER[b.rank] || ROSTER().indexOf(a) - ROSTER().indexOf(b));
-  return [...(S.npcs.demyan ? [{ id: 'demyan', name: 'Капитан Демьян Беляк', rank: 'капитан' }] : []), ...list];
+  return [...(S.npcs.demyan !== null ? [{ id: 'demyan', name: 'Капитан Демьян Беляк', rank: 'капитан' }] : []), ...list];
 }
 const slotKey = (g) => g.post + ':' + (g.slot || 0);
 function slots() {
@@ -77,6 +77,7 @@ function onDuty(list) {
   return (rec.find((g) => !g.shift || g.shift === want) || rec[0]).id;
 }
 const POST_TITLE = {
+  dungeon: 'темница', cells: 'нижние казематы', hall: 'Большой зал',
   gate_l: 'ворота', gate_r: 'ворота', keep_l: 'вход в донжон', keep_r: 'вход в донжон', patrol_yard: 'дозор по двору', patrol_keep: 'обход донжона',
   king: 'у покоев короля', tower_nw: 'башня за амбаром', tower_ne: 'башня за домом управителя', tower_sw: 'башня у шахты', tower_se: 'башня у двора строителя', arch_l: 'левая надвратная башня', arch_r: 'правая надвратная башня',
 };
@@ -152,7 +153,7 @@ function applyGear(id, e) {
 // ---------- Набор ----------
 function needsMet(g) {
   if (!g.needs) return true;
-  if (g.needs === 'barracks') return !!(S.rep.barracks && S.rep.barracks.st === 'done');
+  if (g.needs === 'barracks') return !CASTLE.units.barracks || !!(S.rep.barracks && S.rep.barracks.st === 'done'); // с 0.11.0 казарма цела с начала
   let done = {};
   try { done = (JSON.parse(world.getDynamicProperty('acastle:work') || '{}').build || {}).done || {}; } catch (e) { done = {}; }
   return !!done[g.needs];
@@ -438,8 +439,13 @@ export function garrisonMove() {
       // к койке: сначала по найденному пути до начала дороги, потом по дороге в казарму
       const back = pts(GR().paths[g.id] || []).reverse();
       if (!back.length) { despawn(g.id); G.st[g.id] = 'rest'; gsave(); continue; }
-      const h = e.location;
-      if (Math.hypot(h.x - back[0].x - 0.5, h.z - back[0].z - 0.5) < 1.2 && Math.abs(h.y - back[0].y) < 1.5) walk(g.id, back, () => { despawn(g.id); G.st[g.id] = 'rest'; gsave(); });
+      const h = e.location, bedP = back[back.length - 1];
+      // уже у своей койки (смена кончилась раньше, чем он ушёл на пост) — ложится сразу
+      if (Math.hypot(h.x - bedP.x - 0.5, h.z - bedP.z - 0.5) < 1.6 && Math.abs(h.y - bedP.y) < 1.5) { despawn(g.id); G.st[g.id] = 'rest'; gsave(); continue; }
+      // стоит где-то на своей дороге (смена кончилась на полпути) — возвращается по ней же, без поиска пути
+      let ki = -1, kd = 1.6;
+      for (let k = 0; k < back.length; k++) { const d = Math.hypot(h.x - back[k].x - 0.5, h.z - back[k].z - 0.5); if (d < kd && Math.abs(h.y - back[k].y) < 1.5) { kd = d; ki = k; } }
+      if (ki >= 0) walk(g.id, back.slice(ki), () => { despawn(g.id); G.st[g.id] = 'rest'; gsave(); });
       else if (scan || seek[g.id]) goTo(g.id, e, back[0]);
       continue;
     }
@@ -519,10 +525,11 @@ export function guardCommand(msg, src) {
     out.push(`§6[Гарнизон]§r ${isNight() ? 'ночь' : 'день'}, набрано ${ROSTER().filter((g) => recruited(g.id)).length} из ${ROSTER().length}`);
     for (const g of ROSTER()) if (recruited(g.id) || G.want[g.id]) { const e = entOf(g.id); out.push(`${g.name}: ${G.want[g.id] && !recruited(g.id) ? 'ждёт меч' : (G.st[g.id] || 'rest')}${mode[g.id] === 'alert' ? ', в бою' : ''}${e ? ' (' + [e.location.x, e.location.y, e.location.z].map(Math.floor).join(' ') + ')' : ''}${movers[g.id] ? ', идёт' : ''}; ${gearText(g.id)}`); }
   } else if (cmd === 'all') { for (const g of ROSTER()) if (!recruited(g.id)) { S.npcs[g.id] = 'post'; G.st[g.id] = 'rest'; } save(); gsave(); out.push('Весь гарнизон набран (для проверки).'); }
+  else if (cmd === 'dismiss') { const g = byId(arg); if (!g) out.push('Нет такого стражника.'); else { S.npcs[arg] = null; delete G.st[arg]; save(); gsave(); const e = entOf(arg); if (e) try { e.triggerEvent('acastle:despawn'); } catch (err) { /* нет */ } out.push('Отпущен: ' + g.name + ' (набрать снова — у капитана).'); } }
   else if (cmd === 'day') { runCmd('time set 1000'); out.push('Утро: дневная смена.'); }
   else if (cmd === 'night') { runCmd('time set 13000'); out.push('Ночь: ночная смена.'); }
   else if (cmd === 'tp') { const e = entOf(arg); if (e && src) { src.teleport(e.location); out.push('Перенёс к ' + byId(arg).name); } else out.push('Стражника не видно.'); }
-  else out.push('Команды: status | all | day | night | tp <id>');
+  else out.push('Команды: status | all | dismiss <id> | day | night | tp <id>');
   gflush();
   const text = out.join('\n');
   if (src && src.sendMessage) src.sendMessage(text); else world.sendMessage(text);

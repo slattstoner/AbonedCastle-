@@ -327,58 +327,7 @@ await talk('vsevolod', 'Зажгу');
 expect(q('s0_signal') === 'active', 'сигнальный огонь');
 const sb = blockAt(W(CASTLE.signal)); sb.setType('minecraft:campfire'); blocks.get(K(W(CASTLE.signal))).states.extinguished = false;
 ticks(4);
-expect(q('s0_signal') === 'done' && q('s0_wait') === 'active', 'огонь горит, ждём подмогу');
-morning(); ticks(8);
-expect(q('s1_captain') === 'active' && npc('demyan'), 'капитан Демьян у ворот');
-expect(npc('zhdan') && npc('gavrila') && npc('luka'), 'стражники этапа 1 на постах');
-// ===== Этап 1 =====
-await talk('demyan', 'защита');
-expect(q('s1_barracks') === 'active' && q('s1_ostrog') === 'active', 'капитан дал задания');
-ticks(4);
-fillChest('barracks', [['minecraft:spruce_planks', 32], ['minecraft:spruce_stairs', 16]]);
-ticks(4);
-morning(); ticks(4);
-expect(q('s1_barracks') === 'done', 'казарма починена');
-expect(state().npcs.demyan === 'home' && state().rep.rooms_1 && state().rep.rooms_1.st === 'done', 'Демьян переехал, его комнаты прибраны');
-ticks(8);
-expect(npc('demyan') && Math.hypot(npc('demyan').location.x - W(CASTLE.homes.demyan).x, npc('demyan').location.z - W(CASTLE.homes.demyan).z) < 2, 'Демьян в своей комнате');
-await talk('demyan', 'Прощай'); // «я тут порядок навёл»
-// Острог по компасу
-const place = state().places.stockade_hunt;
-expect(place && !place.placed, 'место острога выбрано');
-inv.setItem(0, new ItemStack('minecraft:compass'));
-lastBar = ''; ticks(2);
-expect(/Острог — \d+ бл\./.test(lastBar), 'компас показывает путь к острогу: ' + lastBar);
-player.location = { x: place.x + 30, y: 64, z: place.z + 10 }; ticks(10);
-expect(state().places.stockade_hunt.placed && log.some((c) => c.startsWith('place structure acastle:q_stockade_hunt')), 'острог встал');
-ticks(8);
-expect(npc('yaroslav'), 'сотник Ярослав в остроге');
-await talk('yaroslav', 'Донесение');
-expect(state().f.copy, 'копия приказа получена');
-await talk('demyan', 'Копию');
-expect(q('s1_ostrog') === 'done' && q('s1_seal') === 'active', 'чужая печать');
-for (const h of handlers.block) h({ player, block: blockAt(W(CASTLE.slots.gatehouse)) });
-ticks(2);
-expect(q('s1_seal') === 'done', 'печать сравнена');
-await talk('demyan', 'дальше');
-expect(state().f.stage1_done && state().rank === 'Оруженосец', 'этап 1 пройден, звание Оруженосец');
-// Книга заданий открывается
-answers.push('Закрыть'); for (const h of handlers.itemUse) h({ source: player, itemStack: new ItemStack('acastle:quest_book') }); await new Promise((r) => setTimeout(r, 5)); answers.length = 0;
-
-// ===== Помощники для этапов 2–9 =====
-const placeOf = (id) => state().places[id];
-async function goPlace(id, label) {
-  const p = placeOf(id);
-  expect(p, `место «${label}» выбрано`);
-  if (!p) return;
-  player.location = { x: p.x + 20, y: 64, z: p.z + 10 }; ticks(10);
-  expect(placeOf(id).placed && log.some((c) => c.startsWith('place structure ' + (id.startsWith('mark_') || id.includes('_') ? 'acastle:q_' + id : ''))), `«${label}» встало`);
-  ticks(8);
-  const h = placeOf(id).host;
-  if (h) player.location = { x: h[0] + 1, y: h[1], z: h[2] + 1 };
-  ticks(6);
-}
-const morningAt = (c) => { if (c) goTo(c); morning(); ticks(8); };
+expect(q('s0_signal') === 'done' && q('m_alive') === 'active' && state().rank === 'Оруженосец', 'глава первая пройдена, начата «Замок оживает»');
 const hasItem = (name) => inv.slots.some((s) => s && s.nameTag === name);
 // У каждого жителя в описании существа есть событие появления со своим обликом
 {
@@ -397,235 +346,101 @@ for (const [u, c] of Object.entries(CONTRACTS)) {
   if (u !== 'shell') expect(CASTLE.units[u] && CASTLE.units[u].chest, `подряд ${u}: есть место для сундука`);
 }
 for (const [q, v] of Object.entries(QUESTS)) { const t = v.target && v.target({ S: state(), castle: CASTLE, flag: () => 0, repaired: () => false }); if (t && t.path) expect(CASTLE.paths[t.path], `путь «${t.path}» для задания ${q}`); }
-const stage = (n) => state().f[`stage${n}_done`];
-const fill = (unit) => fillChest(unit, CONTRACTS[unit].items.map(([id, n]) => [id, n]));
-async function fight(tag, waves) {
-  for (let w = 0; w < waves; w++) {
-    ticks(12);
-    const mobs = entities.filter((e) => e.hasTag(tag));
-    expect(mobs.length > 0, `бой ${tag}: волна ${w + 1}`);
-    for (const m of mobs) m.remove();
-  }
-  ticks(12);
+
+// ===== 0.11.0: все жители в замке с первого дня =====
+for (const id of ['demyan', 'ignat', 'dunya', 'varlaam', 'evsey', 'lenz', 'semka', 'marfa', 'prokhor', 'timosha', 'onisim', 'feodor']) {
+  goTo(CASTLE.homes[id]); ticks(8);
+  expect(npc(id) && npc(id).typeId === 'acastle:npc', `житель ${id} дома с начала`);
 }
-
-// ===== Этап 2. Кузня =====
-await talk('demyan', 'Схожу');
-expect(q('s2_smith') === 'active', 'этап 2 начат');
-await goPlace('camp_hunters_bear', 'стан охотников');
-expect(npc('kuzma') && npc('gordey') && npc('vaska') && npc('hunter'), 'в стане Кузьма, Ерофей, Гордей и Васька');
-await talk('kuzma', 'Помогу');
-expect(q('s2_bear') === 'active', 'шатун');
-ticks(4);
-const bear = entities.find((e) => e.hasTag('acastle_shatun'));
-expect(bear && bear.typeId === 'minecraft:polar_bear', 'шатун вышел');
-if (bear) { for (const h of handlers.die) h({ deadEntity: bear }); bear.remove(); }
-ticks(2);
-expect(q('s2_bear') === 'done' && q('s2_knife') === 'active', 'шатун убит, нож с клеймом');
-await talk('kuzma', 'Спасибо');
-await talk('hunter', 'воз');
-await talk('gordey', 'Жду');
-expect(q('s2_wait') === 'active', 'Гордей идёт в замок');
-morningAt([63, 0, 110]);
-expect(state().npcs.gordey === 'home' && q('s2_forge') === 'active' && q('s2_hammer') === 'active', 'Гордей в замке, подряды кузни');
-ticks(8);
-expect(entities.filter((e) => e.hasTag('acastle_npc_gordey')).length === 1, 'Гордей один (без двойника)');
-// старая копия Гордея осталась в стане (переезд случился, пока стан был далеко) — исчезает
-{ const h = placeOf('camp_hunters_bear').host; const old = makeEntity('acastle:npc', { x: h[0], y: h[1], z: h[2] }); old.addTag('acastle_npc_gordey'); ticks(8);
-  expect(!old.isValid && entities.filter((e) => e.hasTag('acastle_npc_gordey')).length === 1, 'старая копия Гордея в стане убрана'); }
-for (const h of handlers.block) h({ player, block: blockAt(W(CASTLE.rooms['Арсенал'])) }); ticks(2);
-// в макете любой блок в арсенале — камень; сундук ставим
-{ const c = W(CASTLE.rooms['Арсенал']); blockAt(c).setType('minecraft:chest'); for (const h of handlers.block) h({ player, block: blockAt(c) }); ticks(2); }
-expect(hasItem('Молот деда'), 'молот деда найден');
-await talk('vaska', 'Держи');
-ticks(4);
-fill('forge'); fill('tiltyard'); ticks(4);
-morningAt(); ticks(4);
-expect(stage(2), 'этап 2 пройден');
-expect(hasItem('Меч замковой ковки'), 'меч от Гордея');
-inv.setItem(0, Object.assign(new ItemStack('minecraft:iron_sword'), { getComponent: (c) => (c === 'minecraft:durability' ? { damage: 40 } : undefined) }));
-give('minecraft:iron_ingot', 2);
-await talk('gordey', 'Почини');
-
-// ===== Этап 3. Хозяйство =====
-goTo(CASTLE.homes.agafya); ticks(2);
-await talk('agafya', 'Приведу');
-await goPlace('farmstead_voronin', 'хутор Ворониных');
-await talk('ignat', 'прогоню');
-expect(q('s3_lights') === 'active', 'огни в лесу');
-nightFall();
-await fight('acastle_farm', 2);
-expect(q('s3_lights') === 'done', 'люди Рыжего прогнаны с хутора');
-time = 1000;
-await talk('nastya', 'Спасибо');
-await talk('ignat', 'Жду');
-morningAt([63, 0, 110]);
-expect(q('s3_works') === 'active' && q('s3_books') === 'active' && npc('trader'), 'Игнат в замке, торговка на площади');
-for (const k of ['ledger', 'steward_book']) for (const h of handlers.block) h({ player, block: blockAt(W(CASTLE.slots[k])) }); ticks(2);
-expect(q('s3_books') === 'done', 'книга податей и бумаги управителя');
-for (const u of ['steward', 'barn', 'square', 'yard']) fill(u);
-ticks(4); morningAt(); ticks(4);
-expect(stage(3), 'этап 3 пройден');
-for (let i = 0; i < 3; i++) await talk('trader', 'Прощай');
-expect(state().f.trader_spy, 'торговка выспрашивает');
-
-// ===== Этап 4. Вера =====
-await talk('ignat', 'Позову');
-await goPlace('hermitage_nikodim', 'скит');
-await talk('varlaam', 'Хорошо');
-await talk('nikodim', 'Бог простит');
-morningAt([63, 0, 110]);
-expect(state().npcs.varlaam === 'home' && q('s4_crypt') === 'active', 'Варлаам в часовне, склеп');
-goTo(CASTLE.lairs.crypt[0]);
-await fight('acastle_crypt', 2);
-expect(q('s4_crypt') === 'done', 'склеп очищен');
-for (const h of handlers.block) h({ player, block: blockAt(W(CASTLE.slots.priest)) }); ticks(2);
-fill('chapel'); ticks(4); morningAt(); ticks(4);
-expect(stage(4) && state().rank === 'Рыцарь', 'этап 4 пройден, звание Рыцарь');
-
-// ===== Этап 5. Знание =====
-await talk('varlaam', 'Евсея');
-await goPlace('hut_cartographer_liza', 'дом картографа');
-await talk('liza', 'Прощай');
-await talk('evsey', 'Найду');
-await goPlace('mine_g7', 'рудник Г-7');
-await talk('lenz', 'Идём');
-expect(hasItem('Карта квадрата Г-7'), 'карта Ленца');
-await goPlace('hut_living_grach', 'хижина лесника');
-await talk('grach', 'Возьму');
-morningAt([63, 0, 110]);
-expect(['evsey', 'lenz', 'semka'].every((id) => state().npcs[id] === 'home'), 'Евсей, Ленц, Сёмка в замке');
-morningAt();
-expect(state().f.pigeon, 'голубь с письмом');
-await talk('semka', 'Иду');
-expect(q('s5_camp') === 'active' && !npc('trader'), 'логово; торговка ушла с площади');
-await goPlace('outlaw_camp', 'лагерь Рыжего');
-expect(['ryzhy', 'sych', 'pakhom', 'shilo', 'kunitsa'].every((id) => npc(id) && npc(id).typeId === 'acastle:bandit'), 'шайка в лагере');
-await talk('sych', 'атаману');
-await talk('ryzhy', 'Зачем', 'песня');
-expect(q('s5_lullaby') === 'active', 'колыбельная');
-// Шило ворует из сумки
-inv.setItem(20, new ItemStack('minecraft:bread', 5));
-{ const sh = npc('shilo'); player.location = { ...sh.location }; ticks(8); }
-expect(q('x_shilo') === 'active', 'Шило стащил мелочь');
-await talk('shilo', 'балуй');
-expect(q('x_shilo') === 'done', 'пропажа возвращена');
-// нападение на лагерь и мир через Пахома
-for (const h of handlers.hurt) h({ hurtEntity: npc('grinya'), damageSource: { damagingEntity: player } }); ticks(2);
-ticks(2);
-expect(q('x_peace') === 'active' && npc('grinya').state === 'hostile' && !npc('ryzhy'), 'лагерь враждебен, атаман ушёл');
-give('minecraft:bread', 8); give('minecraft:cooked_beef', 8);
-await talk('pakhom', 'дар');
-ticks(6);
-expect(q('x_peace') === 'done' && !npc('grinya').state && npc('ryzhy'), 'мир с атаманом');
-goTo(CASTLE.homes.agafya); ticks(2);
-await talk('agafya', 'Насвистеть');
-await talk('evsey', 'Найду');
-for (const h of handlers.block) h({ player, block: blockAt(W(CASTLE.slots.vault)) }); ticks(2);
-await talk('evsey', 'договоре');
-expect(stage(5), 'этап 5 пройден');
-
-// ===== Этап 6. Исцеление =====
-morningAt([63, 0, 110]);
-goTo(CASTLE.homes.vsevolod); ticks(4);
-await talk('vsevolod', 'лекаря');
-await goPlace('hermitage_nikodim', 'скит');
-await talk('nikodim', 'Спасибо');
-await goPlace('hut_burned_marfa', 'пепелище');
-await talk('marfa', 'Будет');
-morningAt([63, 0, 110]);
-for (const h of handlers.block) h({ player, block: blockAt(W(CASTLE.slots.master_diary)) }); ticks(2);
-goTo(CASTLE.homes.marfa); ticks(4);
-await talk('marfa', 'лечить');
-give('minecraft:sweet_berries', 8); give('minecraft:honey_bottle', 1); give('minecraft:glistering_melon_slice', 1);
-await talk('marfa', 'Вот всё');
-expect(q('s6_cure') === 'done' && state().npcs.vsevolod === 'feast:0', 'король встал и спустился в зал');
-goTo(CASTLE.feast[0]); ticks(8);
-{ const k = npc('vsevolod'), c = W(CASTLE.feast[0]); expect(k && Math.hypot(k.location.x - c.x - 0.5, k.location.z - c.z - 0.5) < 2 && Math.abs(k.location.y - c.y) < 1, 'король правда перешёл в Большой зал'); }
-await talk('marfa', 'Помогу');
-fill('garden'); ticks(4); morningAt(); ticks(4);
-expect(stage(6) && state().rank === 'Кастелян', 'этап 6 пройден, звание Кастелян');
-
-// ===== Этап 7. Подземелье =====
-goTo(CASTLE.homes.demyan); ticks(4);
-await talk('demyan', 'Найду');
-await goPlace('charcoal_prokhor', 'углежоги');
-await talk('prokhor', 'гать');
-await goPlace('gat_amulet', 'Старая гать');
-{ const h = placeOf('gat_amulet').host; const c = { x: h[0], y: h[1] - 1, z: h[2] - 2 }; blockAt(c).setType('minecraft:chest'); for (const f of handlers.block) f({ player, block: blockAt(c) }); ticks(2); }
-expect(hasItem('Оберег-башня'), 'оберег найден');
-morningAt([63, 0, 110]);
-goTo(CASTLE.homes.prokhor); ticks(4);
-await talk('prokhor', 'Возьмусь');
-fill('catacombs');
-goTo(CASTLE.lairs.catacombs[0]);
-await fight('acastle_cata', 2);
-for (const h of handlers.block) h({ player, block: blockAt(W(CASTLE.slots.sealed)) }); ticks(2);
-expect(hasItem('Письмо королевы'), 'письмо королевы');
-morningAt(); ticks(4);
-expect(stage(7) && !npc('ryzhy'), 'этап 7 пройден, лагерь опустел');
-
-// ===== Этап 8. Пир и осада =====
-goTo(CASTLE.homes.ignat); ticks(4);
-await talk('ignat', 'Созываем');
-await goPlace('sawmill_books', 'лесопилка');
-await talk('watchman', 'Спасибо');
-expect(hasItem('Счета Ножова'), 'счета Ножова');
-give('minecraft:bread', 16); give('minecraft:cooked_mutton', 16); give('minecraft:cake', 2);
-goTo(CASTLE.homes.agafya); ticks(2);
-await talk('agafya', 'для пира');
-expect(q('s8_siege') === 'active', 'осада');
-morningAt([63, 0, 110]);
-expect(state().npcs.timosha === 'home', 'Тимоша пришёл');
-goTo([63, 0, 130]); nightFall(); ticks(12);
-expect(state().npcs.vsevolod.startsWith('feast:') && state().npcs.agafya.startsWith('feast:'), 'жители собрались в Большом зале');
-expect(entities.some((e) => e.hasTag('acastle_siege') && e.state === 'hostile'), 'шайка идёт на ворота');
-ticks(4);
-expect(npc('ryzhy') && npc('nozhov'), 'Рыжий у костра, Ножов позади');
-await talk('ryzhy', 'оберег', 'Буду ждать');
-expect(q('s8_siege') === 'done' && q('s8_nozhov') === 'active' && npc('nozhov').state === 'flee', 'Рыжий уводит шайку, Ножов бежит');
-expect(!entities.some((e) => e.hasTag('acastle_siege')), 'нападающие ушли');
-for (const h of handlers.trigger) h({ entity: npc('nozhov'), eventId: 'acastle:caught' }); ticks(2);
-expect(npc('nozhov').state === 'captive', 'Ножов сдался');
-npc('nozhov').location = { ...W(CASTLE.homes.prokhor) }; ticks(4);
-expect(q('s8_nozhov') === 'done' && stage(8), 'Ножов в темнице, этап 8 пройден');
-
-// ===== Этап 9. Наследие =====
-time = 1000; morningAt([63, 6, 30]);
-expect(q('s9_heir') === 'active' && state().npcs.ryzhy === 'home', 'Рыжий в замке');
-ticks(8);
-expect(npc('ryzhy') && npc('ryzhy').typeId === 'acastle:bandit', 'Рыжий у трона');
-await talk('vsevolod', 'говорит', 'Отнесу');
-expect(hasItem('Перстень основателя'), 'перстень основателя');
-await goPlace('mark_shrine_master', 'капище');
-ticks(4);
-expect(q('s9_shrine') === 'done' && q('s9_return') === 'active', 'белый лось');
-goTo([63, 6, 28]); ticks(6);
-await talk('vsevolod', 'подведу');
-expect(state().rank === 'Хозяин замка' && q('s9_heritage') === 'active', 'замок передан игроку');
-fill('heritage'); ticks(4); morningAt(); ticks(6);
-expect(state().f.king_dead && !npc('vsevolod'), 'король умер на рассвете');
-expect(state().f.stage9_done, 'сюжет пройден');
-expect(Object.entries(state().rep).every(([u, r]) => r.st === 'done' || (CASTLE.units[u] && CASTLE.units[u].kind === 'build')), 'все единицы ремонта починены: ' + Object.entries(state().rep).filter(([, r]) => r.st !== 'done').map(([k]) => k).join(', '));
-const missing = Object.keys(CASTLE.units).filter((u) => CASTLE.units[u].kind !== 'build' && !state().rep[u]);
-expect(!missing.length, 'все единицы ремонта задействованы: не хватает ' + missing.join(', '));
-
+// ===== Личные задания =====
+{
+  const { PERSONAL } = await import(pathToFileURL(path.join(DIR, 'sides.js')));
+  for (const [id, P] of Object.entries(PERSONAL)) { for (const [it] of [...P.items, ...(P.reward || [])]) expect(ITEMS.has(it), `задание ${id}: предмет ${it} есть в игре`); if (P.unit) expect(CASTLE.units[P.unit], `задание ${id}: есть единица ремонта ${P.unit}`); }
+  const at = (id) => (id === 'ostap' ? [61, 0, 127] : id === 'nazar' ? CASTLE.farm.home : CASTLE.homes[id]);
+  async function personal(id) {
+    goTo(at(id)); ticks(8);
+    await talk(id, 'Чем помочь');
+    expect(q('p_' + id) === 'active', `личное задание ${id} взято`);
+    for (const [it, n] of PERSONAL[id].items) give(it, n);
+    await talk(id, 'Вот, принёс');
+    expect(q('p_' + id) === 'done', `личное задание ${id} выполнено`);
+    inv.clearAll(); give('acastle:quest_book', 1);
+  }
+  // Тимоша ждёт, пока поможешь четверым; Остап — после капитана
+  goTo(CASTLE.homes.timosha); ticks(8); await talk('timosha', 'Чем помочь'); expect(!q('p_timosha'), 'Тимоша просит сперва помочь другим');
+  await personal('demyan');
+  expect(state().rep.rooms_1 && state().rep.rooms_1.st === 'paid', 'комнаты капитана приберут к утру');
+  const b4 = log.length; morning(); ticks(8);
+  expect(log.slice(b4).some((c) => c.startsWith('structure load acastle:castle_u_rooms_1_')) && state().rep.rooms_1.st === 'done', 'наутро караульный этаж прибран');
+  await personal('ostap'); await personal('ignat'); await personal('evsey'); await personal('marfa');
+  expect(q('m_alive') === 'done' && state().rank === 'Рыцарь', '«Замок оживает»: помог пятерым — рыцарь');
+  await personal('prokhor'); await personal('timosha'); await personal('varlaam'); await personal('dunya'); await personal('lenz'); await personal('semka'); await personal('onisim'); await personal('feodor');
+  morning(); ticks(8);
+  expect(['rooms_2', 'rooms_3', 'rooms_4', 'rooms_5', 'rooms_6', 'rooms_7', 'rooms_8'].every((u) => !CASTLE.units[u] || (state().rep[u] && state().rep[u].st === 'done')), 'все комнаты донжона прибраны личными заданиями');
+  goTo(CASTLE.homes.marfa); ticks(8); player.effects = {}; await talk('marfa', 'Подлечи');
+  expect(player.effects.regeneration, 'Марфа лечит');
+  goTo(CASTLE.homes.prokhor); ticks(8); await talk('prokhor', 'завалами');
+  expect(q('s7_catacombs') === 'active' && state().rep.catacombs && state().rep.catacombs.st === 'open', 'Прохор берётся за завалы: сундук-подряд в подземелье');
+}
+// ===== Распорядок: житель идёт к рабочему месту и говорит о деле =====
+{
+  expect(Object.keys(CASTLE.spots).length >= 12, 'рабочие места есть у жителей');
+  const home = W(CASTLE.homes.lenz); goTo(CASTLE.homes.lenz); ticks(8);
+  let moved = false, spoke = false; msgs.length = 0;
+  for (let i = 0; i < 1500 && !(moved && spoke); i++) { ticks(1); const e = npc('lenz'); if (e && Math.abs(e.location.x - home.x - 0.5) + Math.abs(e.location.z - home.z - 0.5) > 1.5) moved = true; if (msgs.some((m) => /Звездочёт Ленц:/.test(m))) spoke = true; }
+  expect(moved, 'Ленц уходит от своего места к рабочему');
+  expect(spoke, 'у рабочего места Ленц говорит о своём деле');
+}
+// ===== Пахарь и скот =====
+{
+  const F = CASTLE.farm; goTo(F.home); ticks(30);
+  const nz = entities.find((e) => e.hasTag('acastle_npc_nazar'));
+  expect(nz && nz.typeId === 'acastle:worker', 'пахарь Назар на месте');
+  expect(entities.filter((e) => e.hasTag('acastle_stock')).length >= 6, 'скот в загоне');
+  blockAt(W(F.chest)).setType('minecraft:chest');
+  for (const [x, z, kind] of F.fields.slice(0, 30)) blockAt(W([x, 0, z])).setPermutation(BlockPermutation.resolve('minecraft:' + kind, { growth: 7 }));
+  const chest = blockAt(W(F.chest)).getComponent('minecraft:inventory').container;
+  let got = false, walked = false; const p0 = nz ? { ...nz.location } : null;
+  for (let i = 0; i < 4000 && !got; i++) { ticks(1); if (nz && Math.abs(nz.location.x - p0.x) + Math.abs(nz.location.z - p0.z) > 2) walked = true; got = chest.slots.some((x) => x && /potato|carrot|beetroot/.test(x.typeId)); }
+  expect(walked, 'Назар сам ходит по грядкам');
+  expect(got, 'урожай в сундуке у загона');
+  expect(F.fields.slice(0, 30).some(([x, z]) => blockAt(W([x, 0, z])).permutation.getState('growth') === 0), 'сжатое посеяно заново');
+  morning(); ticks(30);
+  expect(chest.slots.some((x) => x && /milk_bucket|egg|wool/.test(x.typeId)), 'утром в сундуке молоко, яйца или шерсть');
+}
+// ===== Ночной налёт =====
+{
+  const rnd = Math.random; goTo([63, 0, 126]);
+  Math.random = () => 0.9; time = 14000; ticks(6); Math.random = rnd;
+  expect(!entities.some((e) => e.hasTag('acastle_nightraid')), 'ночь без налёта, когда не выпало');
+  day++; time = 100; ticks(6); Math.random = () => 0.1; time = 14000; ticks(6); Math.random = rnd;
+  const raiders = entities.filter((e) => e.hasTag('acastle_nightraid'));
+  expect(raiders.length >= 3 && raiders.every((e) => e.state === 'hostile'), 'ночью к воротам вышли разбойники');
+  for (const e of [...raiders]) e.remove(); ticks(6);
+  expect(state().f.raids === 1 && !state().f.raid_on, 'налёт отбит и засчитан');
+  time = 1000;
+}
+// ===== Гарнизон на постах с первого дня, стража подземелья =====
+{
+  const r = CASTLE.garrison.roster;
+  expect(r.filter((g) => !g.needs || g.needs === 'barracks').every((g) => state().npcs[g.id] === 'post'), 'гарнизон на постах с начала');
+  expect(['dungeon', 'cells', 'hall'].every((k) => CASTLE.garrison.posts[k]), 'посты в темнице, казематах и Большом зале');
+}
 // ===== Книга рядом с жителем: «Говорить» =====
 goTo(CASTLE.homes.agafya); ticks(4);
+{ const ag = npc('agafya'); if (ag) player.location = { ...ag.location }; } // она могла уйти к очагу или котлу
 ticks(1); answers.push('Говорить: Повариха', 'Прощай'); for (const h of handlers.itemUse) h({ source: player, itemStack: new ItemStack('acastle:quest_book') });
 await new Promise((r) => setTimeout(r, 5)); expect(!answers.length, 'книга рядом с Агафьей предлагает поговорить'); answers.length = 0;
 // ===== Команда status =====
 msgs.length = 0; for (const h of handlers.script) h({ id: 'acastle:status', message: '' });
 expect(msgs.some((m) => /аддон \d+\.\d+\.\d+, скрипты работают/.test(m)), 'acastle:status отвечает');
-// ===== Переход к этапу командой =====
+// ===== Новый замок для проверки работников =====
 player.location = { ...O };
 await buildCastle();
 ticks(4);
-for (const h of handlers.script) h({ id: 'acastle:jump', message: '5', sourceEntity: player });
-ticks(6);
-expect(q('s5_carto') === 'active' && q('s4_crypt') === 'done' && state().rank === 'Рыцарь', 'переход к этапу 5');
-morning(); ticks(4);
-expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после перехода починка прежних этапов встала');
+// начало сюжета пройдено (ночь у ворот позади): стража живёт по распорядку, а не держит ворота открытыми
+for (const k of ['s0_halt', 's0_night', 's0_king', 's0_kitchen']) for (const h of handlers.script) h({ id: 'acastle:test_done', message: k });
+ticks(4);
 // ===== Работники: рудокоп Кондрат и зодчий Мирон (docs/workers.md) =====
 {
   const work = (m) => { for (const h of handlers.script) h({ id: 'acastle:work', message: m, sourceEntity: player }); };
@@ -806,6 +621,8 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
     runUntil(() => { const b = inv(CASTLE.works.mine.barrel); let n3 = 0; for (let i = 0; i < b.size; i++) { const it = b.getItem(i); if (it && it.typeId === 'minecraft:rail') n3 += it.amount; } return n3 >= r0 + 16; }, 8000, 'Васька отнёс рельсы к копру');
     // капитан набирает новобранца, кузнец куёт ему меч — новобранец на посту
     fc.addItem(new ItemStack('minecraft:iron_ingot', 4));
+    // с 0.11.0 гарнизон на постах с первого дня: отпускаем Богдана, чтобы проверить набор
+    for (const h of handlers.script) h({ id: 'acastle:guard', message: 'dismiss bogdan', sourceEntity: player }); ticks(8);
     await talk('demyan', 'Гарнизон', 'Набрать: Стражник Богдан');
     expect((g0().want && g0().want.bogdan) || state().npcs.bogdan === 'post', 'капитан ждёт меч для Богдана (или кузнец уже сковал)');
     runUntil(() => state().npcs.bogdan === 'post', 8000, 'Богдан получил меч и заступил');
@@ -816,11 +633,13 @@ expect(state().rep.chapel && state().rep.chapel.st === 'done', 'после пе�
     const g0 = () => JSON.parse(props['acastle:garrison'] || '{}');
     const R = CASTLE.garrison.roster, guard = (id) => entities.find((e) => e.hasTag('acastle_npc_' + id) && e.typeId === 'acastle:guard');
     for (const h of handlers.script) h({ id: 'acastle:guard', message: 'all', sourceEntity: player });
-    time = 1000; ticks(40);
+    time = 1000; ticks(600); // ночная смена с первого дня на ногах — даём ей дойти до коек
     const day = R.filter((g) => g.shift !== 'night').map((g) => g.id), night = R.filter((g) => g.shift === 'night').map((g) => g.id);
     const present = (ids) => ids.filter((id) => guard(id));
     console.log(`Гарнизон днём: на постах ${present(day).length} из ${day.length}, ночная смена спит: ${night.length - present(night).length} из ${night.length}`);
     expect(present(day).length === day.length, 'днём на постах вся дневная смена, дозорные и лучники: нет ' + day.filter((id) => !guard(id)).join(', '));
+    if (present(night).length) console.log('  копий: ' + present(night).map((id) => id + '×' + entities.filter((e) => e.hasTag('acastle_npc_' + id)).length + ' типы ' + entities.filter((e) => e.hasTag('acastle_npc_' + id)).map((e) => e.typeId + (e.isValid ? '' : '(нет)')).join('/')).join(' | ') + ' W0=' + JSON.stringify(W([0, 0, 0])) + ' bed7=' + JSON.stringify(W(CASTLE.garrison.beds[7])) + ' vlas=' + JSON.stringify(guard('vlas').location));
+    if (present(night).length) console.log('  не спят: ' + present(night).map((id) => id + '=' + g0().st[id] + '@' + ['x', 'y', 'z'].map((k) => Math.round(guard(id).location[k] - W([0, 0, 0])[k])).join(',')).join(' | ') + ' sched=' + g0().sched + ' время=' + time);
     expect(!present(night).length, 'ночная смена днём спит в казарме: не спят ' + present(night).join(', '));
     // на посту стоит, а не топчется: скрипт его не двигает (в 0.9.3 — тянул туда-сюда)
     { const o = guard('ostap'), p0 = W(CASTLE.garrison.posts.gate_l); let n = 0; const tp = o.teleport; o.teleport = function (l, opt) { n++; return tp.call(this, l, opt); };

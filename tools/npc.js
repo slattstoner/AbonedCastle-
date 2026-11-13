@@ -32,6 +32,9 @@ const GUARDS = [
   { id: 'khariton', name: 'Дозорный Харитон' }, { id: 'lyubim', name: 'Лучник Любим' },
   // личная стража короля (с 0.9.4): у двери опочивальни, днём и ночью
   { id: 'ratibor', name: 'Гридень Ратибор' }, { id: 'tverdyata', name: 'Гридень Твердята' },
+  // стража подземелья и Большого зала (с 0.11.0): живут в казарме донжона
+  { id: 'ermil', name: 'Надзиратель Ермил' }, { id: 'zakhar', name: 'Надзиратель Захар' }, { id: 'pimen', name: 'Стражник Пимен' },
+  { id: 'sidor', name: 'Стражник Сидор' }, { id: 'matvey', name: 'Стражник Матвей' }, { id: 'naum', name: 'Стражник Наум' },
 ];
 // Гарнизон (docs/workers.md, раздел «Стража»). Две смены по 7 человек живут в казарме во дворе —
 // по койке на каждого (в казарме 14 коек). Смена: ворота ×2, вход в донжон ×2, дозор по двору
@@ -65,6 +68,13 @@ const GARRISON = [
   // Ратибор приходит с отрядом из острога, Твердяту набирает капитан.
   { id: 'ratibor', rank: 'гридень', post: 'king', shift: 'day', kbed: 0, from: 'story', stage: 1 },
   { id: 'tverdyata', rank: 'гридень', post: 'king', shift: 'night', kbed: 1, needs: 'barracks' },
+  // Подземелье и Большой зал (0.11.0): темница, нижние казематы, зал — днём и ночью
+  { id: 'ermil', rank: 'стражник', post: 'dungeon', shift: 'day', kbed: 2 },
+  { id: 'zakhar', rank: 'стражник', post: 'dungeon', shift: 'night', kbed: 3 },
+  { id: 'pimen', rank: 'стражник', post: 'cells', shift: 'day', kbed: 4 },
+  { id: 'sidor', rank: 'стражник', post: 'cells', shift: 'night', kbed: 5 },
+  { id: 'matvey', rank: 'стражник', post: 'hall', shift: 'day', kbed: 6 },
+  { id: 'naum', rank: 'стражник', post: 'hall', shift: 'night', kbed: 7 },
 ];
 for (const g of GARRISON) { const n = GUARDS.find((q) => q.id === g.id); if (!n) throw new Error('нет стражника ' + g.id); g.name = n.name; }
 // Посты в координатах замка (как в castle.js): x — восток, z — юг; f — поворот (0 — лицом на юг, наружу).
@@ -89,6 +99,8 @@ const HOMES = {
   trader: 'Колодец', ryzhy: { room: 'Большой зал', near: [63, 6, 25] },
   // тени подземелья: точное место (мировые координаты шаблона)
   shade_vseslav: { at: [57, -10, 3] }, shade_ratmir: { at: [58, -10, 55] },
+  // храм (0.11.0)
+  onisim: 'Часовня', feodor: 'Часовня',
 };
 const GUARD_SEL = `@e[type=${NS}:guard]`;
 // Скины шайки: из них же набираются безымянные «люди Рыжего» в набегах и осаде

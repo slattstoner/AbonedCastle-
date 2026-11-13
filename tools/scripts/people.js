@@ -14,7 +14,7 @@ import { NPCS } from './story.js';
 export const tagOf = (id) => 'acastle_npc_' + id;
 // Кого ведут другие модули: кузнец и подмастерье — работники (workers.js), стражники на посту —
 // гарнизон (garrison.js). Их здесь не ставят и не переселяют.
-const WORKER_NPC = new Set(['gordey', 'vaska']);
+const WORKER_NPC = new Set(['gordey', 'vaska', 'nazar']); // nazar — пахарь, его ведёт farmer.js
 const GARR = new Set((CASTLE.garrison ? CASTLE.garrison.roster : []).map((g) => g.id));
 const elsewhere = (id) => WORKER_NPC.has(id) || (GARR.has(id) && whereOf(id) === 'post');
 export function npcIdOf(e) {

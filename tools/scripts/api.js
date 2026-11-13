@@ -16,7 +16,7 @@ export const api = {
   done: (q) => S.q[q] === 'done',
   seen: (q) => !!S.q[q],
   start(q) {
-    if (S.q[q]) return;
+    if (S.q[q] || !QUESTS[q]) return; // задания, убранного из сюжета, нет
     S.q[q] = 'active'; S.guide = q; save();
     for (const pl of players()) { pl.onScreenDisplay.setTitle('§6Новое задание', { subtitle: QUESTS[q].title, fadeInDuration: 10, stayDuration: 50, fadeOutDuration: 10 }); pl.playSound('random.orb'); }
   },
@@ -124,6 +124,7 @@ export const api = {
   // Игрок рядом с точкой замка
   near(pl, c, r = 6, dy = 3) { const p = W(c); return flat(pl.location, p) < r && Math.abs(pl.location.y - p.y) < dy; },
   absTime: () => world.getAbsoluteTime(),
+  day: () => world.getDay(),
   W: (c) => W(c), dim: () => DIM(), players: () => players(), nearest: (p) => nearest(p), topAt,
   loaded: (p) => loaded(p), blockAt: (p) => blockAt(p), dist, flat, save: () => save(),
 };
