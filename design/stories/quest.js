@@ -1,5 +1,5 @@
 // Истории мест сюжета замка (design/preview/structures/quest.js). По одной на место:
-// эти места ставит задание, у каждого своя роль в сюжете (docs/castle-story.md).
+// эти места ставит задание, у каждого своя роль в сюжете (docs/STORY.md).
 
 defineStories('outlaw', [
   {
