@@ -1112,9 +1112,10 @@
       box(line[0], 0, line[1], line[2], 0, line[3], (x, _, z) => {
         const t = alongX ? x : z;
         // стойка на зубце через каждые четыре блока
-        if (t % 4 === 0 && b.get(x, 10, z) && emptyB(x, 11, z)) b.set(x, 11, z, 'spruce_fence');
-        else if (t % 4 === 0 && emptyB(x, 10, z) && b.get(x, 9, z)) { b.set(x, 10, z, 'spruce_fence'); b.set(x, 11, z, 'spruce_fence'); }
-        for (const k of [1, 0, -1, -2]) { const rx = x + ox * k, rz = z + oz * k; if (emptyB(rx, 12, rz)) b.set(rx, 12, rz, k === 1 || k === -2 ? 'spruce_slab' : 'spruce_planks'); }
+        const rf = [x, z]; // столбец парапета, на котором держится эта часть кровли
+        if (t % 4 === 0 && b.get(x, 10, z) && emptyB(x, 11, z)) b.set(x, 11, z, 'spruce_fence', { rf });
+        else if (t % 4 === 0 && emptyB(x, 10, z) && b.get(x, 9, z)) { b.set(x, 10, z, 'spruce_fence', { rf }); b.set(x, 11, z, 'spruce_fence', { rf }); }
+        for (const k of [1, 0, -1, -2]) { const rx = x + ox * k, rz = z + oz * k; if (emptyB(rx, 12, rz)) b.set(rx, 12, rz, k === 1 || k === -2 ? 'spruce_slab' : 'spruce_planks', { rf }); }
       });
     };
     roofWall(9, 3, X2 - 9, 4, 'n'); roofWall(3, 9, 4, Z2 - 9, 'w'); roofWall(E, 9, E + 1, Z2 - 9, 'e');
@@ -1981,19 +1982,17 @@
     let a = 911;
     const r = () => { a = (a * 1103515245 + 12345) & 0x7fffffff; return a / 0x7fffffff; };
     const out = [];
-    const run = (from, to, mk) => {
-      let p = from + Math.floor(r() * 3);
-      while (p < to - 3) {
-        const len = 8 + Math.floor(r() * 8), end = Math.min(to, p + len);
-        out.push([...mk(p, end), r() < 0.65 ? 0 : 1 + Math.floor(r() * 2), 0.5 + r() * 0.4]);
-        p = end + 2 + Math.floor(r() * 3);
-      }
+    // С 0.10.1 — несколько проломов, а не снесённые стены: по одному-два на сторону.
+    // Остальная стена стоит (осыпались только зубцы), чинить её зодчему недолго.
+    const one = (from, to, mk, t) => {
+      const len = 6 + Math.floor(r() * 4), p = Math.round(from + (to - from - len) * t);
+      out.push([...mk(p, p + len), r() < 0.5 ? 0 : 2, 0.6 + r() * 0.3]);
     };
-    run(9, X2 - 9, (p, e) => [p, 3, e, 4]); // за амбаром, донжоном и домом управителя
-    run(9, Z2 - 9, (p, e) => [3, p, 4, e]); // у огорода, казармы и кузни
-    run(9, Z2 - 9, (p, e) => [X2 - 4, p, X2 - 3, e]); // у ристалища, часовни и двора строителя
-    run(9, CX - 10, (p, e) => [p, Z2 - 4, e, Z2 - 3]); // у ворот со стороны кузни
-    run(CX + 10, X2 - 9, (p, e) => [p, Z2 - 4, e, Z2 - 3]); // у ворот со стороны часовни
+    one(9, X2 - 9, (p, e) => [p, 3, e, 4], 0.22); // за амбаром
+    one(9, X2 - 9, (p, e) => [p, 3, e, 4], 0.8); // за домом управителя
+    one(9, Z2 - 9, (p, e) => [3, p, 4, e], 0.45); // между огородом и казармой
+    one(9, Z2 - 9, (p, e) => [X2 - 4, p, X2 - 3, e], 0.35); // у ристалища
+    one(CX + 10, X2 - 9, (p, e) => [p, Z2 - 4, e, Z2 - 3], 0.6); // у ворот со стороны часовни
     return out;
   }
 
@@ -2263,14 +2262,6 @@
       for (const f of z.fills || []) eachBox(f, (x, y, zz) => { const v = get(x, y, zz); if (!v || !PROTECT.test(v.id)) set(x, y, zz, CATA_PICK(r, CAVE)); });
       for (const c of z.cuts || []) eachBox(c, (x, y, zz) => { const v = get(x, y, zz); if (has(v) && !v.slot && !v.theme && !PROTECT.test(v.id) && (c[6] === undefined || r() < c[6])) set(x, y, zz, 'air'); });
       for (const b of z.breaches || []) breach(r, b);
-      // Тесовая кровля над боевым ходом падает вместе со стеной: где под ней не осталось
-      // парапета, кровли и стоек нет (вернутся, когда зодчий сложит пролёт)
-      if (z.title === 'Крепостные стены') for (const [x1, , z1, x2, , z2] of z.boxes) for (let x = x1 - 2; x <= x2 + 2; x++) for (let zz = z1 - 2; zz <= z2 + 2; zz++) {
-        let held = false;
-        for (let dx = -2; dx <= 2 && !held; dx++) for (let dz = -2; dz <= 2 && !held; dz++) if (has(get(x + dx, 9, zz + dz)) && !/spruce/.test(get(x + dx, 9, zz + dz).id)) held = true;
-        if (held) continue;
-        for (let y = 10; y <= 12; y++) { const v = get(x, y, zz); if (v && /^spruce_(slab|planks|fence)$/.test(v.id)) set(x, y, zz, 'air'); }
-      }
       for (const hl of z.holes || []) hole(r, hl);
       for (const [x, y, zz, id, p] of z.place || []) set(x, y, zz, id, p);
       if (z.kind === 'yard') yardOps(z, r);
@@ -2278,6 +2269,33 @@
       if (z.kind === 'wall') erode(z, r, z.erode || 9);
       settle(z);
     });
+    // Кровля над боевым ходом падает вместе со стеной: каждая её клетка держится на своём
+    // столбце парапета. Нет парапета — нет кровли и стоек (вернутся, когда зодчий сложит пролёт).
+    const wallZone = zones.findIndex((z) => z.title === 'Крепостные стены'), yardZone = zones.findIndex((z) => z.title === 'Двор');
+    const drop = (k, v, toZone) => { blocks.set(k, { x: v.x, y: v.y, z: v.z, id: 'air' }); owner.set(k, toZone); };
+    let roofDown = 0;
+    for (const [k, v] of [...blocks]) {
+      if (!v.rf) continue;
+      const cut = [-1, 0, 1].some((d) => !has(get(v.rf[0] + d, 9, v.rf[1])) && !has(get(v.rf[0], 9, v.rf[1] + d)));
+      if (!has(get(v.rf[0], 9, v.rf[1])) || !has(get(v.rf[0], 8, v.rf[1])) || cut) { drop(k, v, wallZone); roofDown++; }
+    }
+    // Ничего не висит в воздухе: всё, что над землёй не связано с землёй через соседние блоки,
+    // в упадке убирается (и возвращается при починке своей зоны)
+    let floating = 0;
+    {
+      const seen = new Set(), q = [];
+      for (const [k, v] of blocks) if (v.y <= -1 && v.id !== 'air' && !v.env) { seen.add(k); q.push(v); }
+      // соседство — и по рёбрам с углами: скаты крыш держатся ступень за ступень наискось
+      const D6 = []; for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) if (dx || dy || dz) D6.push([dx, dy, dz]);
+      const fl = {};
+      for (let h = 0; h < q.length; h++) { const c = q[h]; for (const [dx, dy, dz] of D6) { const kk = key(c.x + dx, c.y + dy, c.z + dz); if (seen.has(kk)) continue; const n = blocks.get(kk); if (!n || n.id === 'air' || n.env) continue; seen.add(kk); q.push(n); } }
+      for (const [k, v] of [...blocks]) {
+        if (v.y < 0 || v.id === 'air' || v.env || seen.has(k) || locked.has(k)) continue;
+        const o = owner.get(k);
+        drop(k, v, o !== undefined ? o : (v.x <= 6 || v.x >= 121 || v.z <= 6 || v.z >= 125) ? wallZone : yardZone); floating++; fl[v.id] = (fl[v.id] || 0) + 1;
+      }
+      if (typeof process !== 'undefined' && process.env.FLOAT) console.log(fl);
+    }
     // В упадке темно, но не кромешно: монстры в игре заводятся только в полной темноте, а в
     // жилом замке под крышей им не место. Где на полу совсем темно, оставляем гореть ближайший
     // светильник из тех, что упадок разбил (его клетка снова как в целом замке).
@@ -2316,7 +2334,7 @@
       relit.dark = cells.filter((c) => light.at(...c) < 1).length;
       relit.cells = cells.length;
     }
-    return { blocks, owner, zones, relit };
+    return { blocks, owner, zones, relit, roofDown, floating };
   }
   // Выбор из палитры [id, вес] собственным генератором зоны
   const CATA_PICK = (r, pal) => { let t = r() * pal.reduce((a, [, w]) => a + w, 0); for (const [id, w] of pal) if ((t -= w) < 0) return id; return pal[0][0]; };
@@ -2416,7 +2434,9 @@
       else if (inKeep(x, zz) && z.kind !== 'yard' && z.kind !== 'crypt') {
         const f = full.blocks.get(k);
         const structural = f && STRUCTURAL.test(f.id) && !f.fur && !f.slot && !f.theme;
-        u = structural ? unit('shell', 'Корпус донжона: окна, крыши, стены', 'shell', 0) : unit('rooms_' + z.stage, 'Комнаты этапа ' + z.stage, 'rooms', z.stage);
+        // трещины и мох на уцелевшей кладке — не поломка: замок так и остаётся замшелым
+        { const rv = R.blocks.get(k); if (structural && rv && /stone_bricks$/.test(f.id) && /stone_bricks$/.test(rv.id)) continue; }
+        u = structural ? unit('shell', 'Донжон: окна, крыши, стены', 'build', 0) : unit('rooms_' + z.stage, 'Комнаты этапа ' + z.stage, 'rooms', z.stage);
       } else u = unit('zone_' + zi, z.title, 'contract', z.stage);
       u.zones.add(z.title); u.cells++; u.sum[0] += x; u.sum[1] += y; u.sum[2] += zz;
       owner.set(k, u.id);

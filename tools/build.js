@@ -26,7 +26,7 @@ const PACK = {
   rpHeader: 'c4e8a1f2-7b3d-4e9a-8c5f-2d1b6a9e3f71',
   rpModule: '9d2f6b3a-1e8c-4a7d-b4f9-6e3c8a1d5b27',
   scriptModule: '3b7e1c94-5a2d-4f8e-9c61-0d4a8b2e7f15',
-  version: [0, 10, 0],
+  version: [0, 10, 1],
   minEngine: [1, 26, 0],
 };
 // Версии стабильных модулей скриптов: @minecraft/server 2.4.0 стабилен с игры 1.26.0
@@ -394,6 +394,7 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
   const map = new Map(tmpl.map((v) => [v.x + ',' + v.y + ',' + v.z, v]));
   const get = (x, y, z) => { const v = map.get(x + ',' + y + ',' + z); return v && v.id !== 'air' ? v : undefined; };
   checkSupport('замок в упадке', tmpl.filter((v) => v.id !== 'air'), get);
+  console.log(`Замок в упадке: кровли стен упало вместе со стеной ${R.roofDown} клеток, висевших в воздухе блоков убрано ${R.floating}`);
   if (R.relit) {
     console.log(`Замок в упадке: оставлено гореть светильников ${R.relit.n}, совсем тёмных клеток пола под крышей ${R.relit.dark} из ${R.relit.cells}`);
     if (R.relit.dark) warn(`замок в упадке: ${R.relit.dark} клеток пола под крышей в полной темноте — там заведутся монстры`);
@@ -734,9 +735,10 @@ write('scripts/places_data.js', '// Собрано tools/build.js — не пр�
         const fid = f && !f.env ? f.id : 'air', pid = prev ? prev.id : 'air';
         if (fid !== pid) stoneIds.push(fid);
       }
-      orders.push({ id: id + ':stone', unit: id, step: 'stone', title: (id.startsWith('tower_') ? 'Каменная кладка: ' : 'Камень: ') + u.title.toLowerCase(), pieces: u.pieces,
+      orders.push({ id: id + ':stone', unit: id, step: 'stone', title: id === 'shell' ? 'Донжон: окна, крыши, проломы' : (id.startsWith('tower_') ? 'Каменная кладка: ' : 'Камень: ') + u.title.toLowerCase(), pieces: u.pieces,
         needs: u.wood && u.wood.length ? [id + ':wood'] : [], at: u.center, cost: costOf(stoneIds) });
     }
+    orders.sort((p, q) => (q.unit === 'shell') - (p.unit === 'shell')); // сначала донжон, потом стены
     const totalCost = {};
     for (const o of orders) for (const [k, n] of Object.entries(o.cost)) totalCost[k] = (totalCost[k] || 0) + n;
     console.log(`Работники: заказов строителя ${orders.length} (${orders.filter((o) => o.step === 'wood').length} частоколов), всего блоков: ${Object.entries(totalCost).map(([k, n]) => k + ' ' + n).join(', ')}`);

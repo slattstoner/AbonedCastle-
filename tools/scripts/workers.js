@@ -961,7 +961,9 @@ function buildTick(now) {
       if (!atHome()) return walkTo(A(Wc(YW().home)), null, () => { if (!near(B.pos, 32)) { setPos('miron', A(Wc(YW().home))); place('miron', B.pos); } bt.until = now + 200; });
       if (!returnCart()) return;
       B.done[o.id] = 1;
-      if (o.step === 'stone' && S.rep) { S.rep[o.unit] = { st: 'done' }; save(); }
+      // Донжон: зубцы башен и коньки крыш, куда не подняться с лесов, Мирон доделывает с верёвок —
+      // их ставит заплатка корпуса (repairs.js), она же сверяет всё блок в блок
+      if (o.step === 'stone' && S.rep) { S.rep[o.unit] = o.unit === 'shell' ? { st: 'due' } : { st: 'done' }; save(); }
       say('miron', `Готово: ${o.title.toLowerCase()}. Поставил ${B.placed} блоков, разобрал ${B.removed}.`);
       for (const pl of players()) pl.onScreenDisplay.setTitle('§6Работа готова', { subtitle: o.title, fadeInDuration: 10, stayDuration: 50, fadeOutDuration: 10 });
       checkBuildLedger();
@@ -999,6 +1001,7 @@ function buildTick(now) {
         const f = (bt.fails[keyOf(j.p)] = (bt.fails[keyOf(j.p)] || 0) + 1);
         // самая макушка (шпиль, конёк), куда не встать: дотягивается с ближнего места длинным шестом
         if (f > 3 && !j.far) { j.far = true; bt.fails[keyOf(j.p)] = 0; bt.jobs.push(bt.jobs.shift()); return; }
+        if (f > 3 && String(WS.build.order).startsWith('shell')) { WS.build.skipped = (WS.build.skipped || 0) + 1; bt.jobs.shift(); return; } // донжон: куда не подняться с лесов — доделает с верёвок (заплаткой)
         if (f > 3) { report('Мирон', `не дойти до блока (${toC({ x: j.p[0], y: j.p[1], z: j.p[2] }).join(' ')}), пропускаю`); bt.jobs.shift(); return; }
         bt.jobs.push(bt.jobs.shift());
       };
@@ -1463,12 +1466,18 @@ export function workCommand(msg, src) {
     out.push(bad.length || bb.length ? '§cСчёт НЕ сходится§r' : '§aСчёт сходится§r: добыто = в сумке + сдано + потрачено; у Мирона взято = поставлено + возвращено + в тележке');
   } else if (cmd === 'fill') {
     const st = containers(YW().store), br = containers([MW().barrel], 'minecraft:barrel');
-    if (st) { for (const inv of st) { putItems(inv, 'minecraft:cobblestone', 1280); putItems(inv, 'minecraft:spruce_log', 256); putItems(inv, 'minecraft:glass', 64); putItems(inv, 'minecraft:iron_ingot', 32); } }
+    if (st) { for (const inv of st) { putItems(inv, 'minecraft:cobblestone', 1280); putItems(inv, 'minecraft:spruce_log', 256); putItems(inv, 'minecraft:glass', 128); putItems(inv, 'minecraft:iron_ingot', 32); } }
     if (br) { putItems(br[0], 'minecraft:iron_pickaxe', 3); putItems(br[0], 'minecraft:rail', 64); putItems(br[0], 'minecraft:torch', 64); }
     const fc = forgeChests(); if (fc) { putItems(fc[0], 'minecraft:iron_ingot', 64); putItems(fc[0], 'minecraft:raw_iron', 32); putItems(fc[0], 'minecraft:coal', 16); putItems(fc[0], 'minecraft:diamond', 24); }
     out.push('Положил на склад строителя камень, брёвна, стекло, железо; в бочку у копра — 3 железные кирки, рельсы и факелы; в сундук кузни — железо, сырое железо, уголь, алмазы.');
   } else if (cmd === 'orders') out.push(ORDERS().map((o) => `${WS.build.done[o.id] ? '✓' : orderOpen(o) ? '•' : '·'} ${o.id}: ${o.title}`).join('\n'));
   else if (cmd === 'order') { const err = startOrder(arg); out.push(err || 'Заказ начат: ' + arg); }
+  else if (cmd === 'finish') {
+    // отладка: считать заказ выполненным (починку ставит заплатка, как после настоящей работы)
+    const o = orderOf(arg);
+    if (!o) out.push('Нет такого заказа. Список: /scriptevent acastle:work orders');
+    else { WS.build.done[o.id] = 1; if (o.step === 'stone' && S.rep) { S.rep[o.unit] = { st: 'due' }; save(); } out.push('Заказ засчитан: ' + o.title); }
+  }
   else if (cmd === 'reset') {
     if (arg === 'miron') { WS.build = wfresh(null).build; WS.bled = wfresh(null).bled; bt.jobs = null; bt.gen = null; delete movers.miron; keepArea('build', null); }
     else { const keepOpen = WS.mine.open; WS.mine = wfresh(null).mine; WS.mine.open = keepOpen; WS.led = wfresh(null).led; mt.q = null; mt.face = null; mt.pending = null; delete movers.kondrat; keepArea('mine', null); }
